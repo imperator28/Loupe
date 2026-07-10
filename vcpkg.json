@@ -1,0 +1,10 @@
+{
+  "name": "loupe",
+  "version-string": "0.0.1",
+  "dependencies": [
+    "catch2",
+    "nlohmann-json",
+    "opencascade",
+    "xxhash"
+  ]
+}
