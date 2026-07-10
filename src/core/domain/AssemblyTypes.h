@@ -36,7 +36,7 @@ enum class LoadStage {
 };
 
 struct Transform {
-    std::array<double, 16> columnMajor;
+    std::array<double, 16> columnMajor{};
 };
 
 struct Warning {
@@ -47,20 +47,20 @@ struct Warning {
 
 struct AssemblyNode {
     std::string id;
-    NodeKind kind;
+    NodeKind kind{};
     std::string name;
     std::string hierarchyPath;
     std::optional<std::string> parentId;
     std::optional<std::string> definitionId;
-    Transform placement;
+    Transform placement{};
     std::vector<std::string> bodyIds;
     std::vector<Warning> warnings;
 };
 
 struct AssemblySnapshot {
     std::string sourceHash;
-    InputClass classification;
-    LoadStage stage;
+    InputClass classification{};
+    LoadStage stage{};
     std::vector<std::string> rootIds;
     std::vector<AssemblyNode> nodes;
     std::vector<Warning> warnings;
