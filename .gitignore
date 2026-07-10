@@ -1,0 +1,17 @@
+# Local brainstorming artifacts
+.superpowers/
+
+# Private/internal CAD corpus
+corpus/private/
+
+# Native build products
+build/
+build-*/
+out/
+
+# Local IDE and operating-system files
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
