@@ -1,5 +1,6 @@
 # Local brainstorming artifacts
 .superpowers/
+.worktrees/
 
 # Private/internal CAD corpus
 corpus/private/
