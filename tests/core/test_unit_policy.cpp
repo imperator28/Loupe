@@ -7,7 +7,7 @@ using namespace loupe::units;
 
 TEST_CASE("inch metadata normalizes to millimeters", "[units]")
 {
-    const UnitEvidence evidence{{LengthUnit::Inch}, LengthUnit::Inch, 4.0, false};
+    const UnitEvidence evidence{{LengthUnit::Inch}, LengthUnit::Inch, 101.6, false};
     const UnitDecision result = decide(evidence, std::nullopt);
 
     REQUIRE(result.effectiveUnit == LengthUnit::Inch);
@@ -36,6 +36,10 @@ TEST_CASE("manual inch override is explicit and traceable", "[units]")
 TEST_CASE("missing or mixed units require resolution", "[units]")
 {
     REQUIRE(decide(UnitEvidence{{}, LengthUnit::Unknown, 120.0, false}, std::nullopt).blocksExport());
+    REQUIRE(decide(
+                UnitEvidence{{LengthUnit::Inch, LengthUnit::Millimeter}, LengthUnit::Millimeter, 120.0, false},
+                std::nullopt)
+                .blocksExport());
     REQUIRE(decide(
                 UnitEvidence{{LengthUnit::Inch, LengthUnit::Millimeter}, LengthUnit::Mixed, 120.0, true},
                 std::nullopt)
