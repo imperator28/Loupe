@@ -1,4 +1,7 @@
-add_library(loupe-core STATIC domain/StableId.cpp)
+add_library(loupe-core STATIC
+    domain/StableId.cpp
+    units/UnitPolicy.cpp
+)
 add_library(loupe::core ALIAS loupe-core)
 
 target_include_directories(loupe-core PUBLIC "${PROJECT_SOURCE_DIR}/src")
