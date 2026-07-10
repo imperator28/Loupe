@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-10
 
-**Status:** Approved in interactive design review; awaiting written-spec review
+**Status:** Approved; implementation plans created
 
 **Source of truth:** [Loupe — STEP Assembly Inspector PRD v0.3](https://app.notion.com/p/399f19f7357c8127a4eecfd097bdd35d)
 
@@ -23,7 +23,7 @@ This design defines:
 - Reliability, validation, performance, and accessibility contracts.
 - The feature goals and exit criteria for Phases 0 through 3.
 
-After this document is approved, four implementation plans will be created: one plan for each phase.
+Four implementation plans accompany this design: one plan for each phase.
 
 ## 2. Confirmed Decisions
 
