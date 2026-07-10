@@ -8,6 +8,7 @@ TEST_CASE("stable IDs repeat for the same assembly occurrence", "[stable IDs]")
     const auto first = loupe::domain::stableId("sha256:file", "/0/2/5", "occurrence");
     const auto second = loupe::domain::stableId("sha256:file", "/0/2/5", "occurrence");
 
+    REQUIRE(first == "9a79bf25cab2aa387297cc320fa8159e");
     REQUIRE(first == second);
 }
 
