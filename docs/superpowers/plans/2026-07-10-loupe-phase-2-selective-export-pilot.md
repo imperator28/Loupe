@@ -10,6 +10,40 @@
 
 ---
 
+## Authoritative Vertical-Gate Execution (2026-07-12)
+
+Phase 2 begins only after the dual-platform Phase 1 inspection gate is committed.
+
+### Gate A: Selection and Dual-View Contract — Tasks 1–3
+
+- Prove checked export state is independent from highlight, present the friendly component list, and synchronize master-context and isolated-part views.
+- Run focused interaction/model tests per change and one integrated Debug gate review.
+- Commit message: `feat: establish Export workspace contract`.
+
+### Gate B: Reviewed Plan and Worker Execution — Tasks 4–6
+
+- Complete naming/collision behavior, unit-resolved immutable plan review, worker execution/cancellation, and mandatory read-back validation.
+- Run full Debug and Release tests because filenames, geometry, units, cancellation, and output recovery cross critical boundaries.
+- Commit message: `feat: execute reviewed export plans`.
+
+### Gate C: Traceability and Internal Pilot — Tasks 7–8
+
+- Produce redacted manifests and recovery UX, package coworker-ready pilot builds, and measure real workflows.
+- Perform one contract review and one quality review for the complete pilot slice.
+- Commit message: `test: close dual-platform export pilot`.
+
+### Dual-Platform Requirement
+
+- Windows 11 and macOS Apple Silicon are required at every Phase 2 gate.
+- Equivalent reviewed plans must produce equivalent stable output rows, fingerprints, validations, and redacted manifests.
+- A platform-specific packaging difference may live behind an adapter, but it may not change geometry or evidence semantics.
+
+### Validation Cadence
+
+- Focused test-first checks per change; full matrices only at gate closure.
+- Gate blockers are wrong/corrupt geometry, unit or placement errors, output collision/data loss, worker crash, privacy leakage, nondeterminism, unbounded resources, workflow failure, or platform divergence.
+- Lower-risk polish becomes a Phase 3 backlog item.
+
 ## Required Skill Preflight
 
 - Invoke `qt-qml`, `qt-ui-design`, `frontend-design`, and `design-motion-principles` before Tasks 1–5.
@@ -535,7 +569,7 @@ git add packaging docs/pilot docs/evidence CMakeLists.txt
 git commit -m "build: package and evaluate Loupe export pilot"
 ```
 
-## Phase 2 Completion Gate
+## Legacy Phase 2 Completion Gate (Superseded)
 
 - Export is a distinct workspace inside the current document session.
 - Highlight and checkbox state remain separate under mouse, keyboard, and filtering.
@@ -546,3 +580,17 @@ git commit -m "build: package and evaluate Loupe export pilot"
 - Every output row has an explicit validation result and recovery path.
 - Signed pilot packages contain all runtime dependencies and notices.
 - At least 90% of pilot users complete part and subassembly export unaided with material time reduction.
+
+## Phase 2 Completion Gate (Authoritative)
+
+- Export is a distinct workspace inside the current document session.
+- Highlight and checkbox state remain separate under mouse, keyboard, filtering, and workspace changes.
+- Master and isolated views identify what the component is and where it lives.
+- STEP mm/in and binary STL mm outputs validate on read-back on Windows and macOS.
+- Equivalent reviewed plans produce equivalent fingerprints and validation outcomes across platforms.
+- Unit overrides and scale factors are recorded in every redacted manifest.
+- Naming preserves UTF-8/CJK, rejects unsafe paths, and blocks platform-specific collisions.
+- Every output row has an explicit validation result and recovery path.
+- Per-user pilot packages contain all runtime dependencies and require no administrator access for normal install/use; machine-wide deployment remains optional.
+- At least 90% of pilot users complete part and subassembly export unaided with material time reduction.
+- Windows 11 and macOS Apple Silicon package, workflow, corpus, Debug, and Release evidence all pass and are committed.

@@ -10,6 +10,34 @@
 
 ---
 
+## Authoritative Vertical-Gate Execution (2026-07-12)
+
+Phase 3 begins only after the dual-platform Phase 2 pilot evidence is committed.
+
+### Gate A: Correctness, Resources, and Recovery — Tasks 1–3
+
+- Convert gate-aligned pilot defects into named regressions, enforce absolute resource budgets, and prove worker/document recovery.
+- Run fault injection and full Debug/Release matrices on Windows and macOS.
+- Commit message: `fix: close pilot correctness and recovery defects`.
+
+### Gate B: Product and Distribution Readiness — Tasks 4–6
+
+- Complete accessibility/theme/DPI/motion behavior, non-admin packaging/signing/notarization/update checks, and license/support boundaries.
+- Test clean-user installation and end-to-end export without development tools.
+- Commit message: `build: complete coworker-ready distribution`.
+
+### Gate C: Automated Dual-Platform Release — Task 7
+
+- One release command and CI workflow must reproduce tests, benchmarks, package checks, evidence, and artifact hashes on Windows 11 and macOS Apple Silicon.
+- Release remains blocked while either platform or any required corpus row is open.
+- Commit message: `ci: enforce dual-platform release gate`.
+
+### Validation Cadence
+
+- Focused regression/fault tests per change; complete Debug/Release/package matrices at gate closure.
+- One contract review and one quality review per gate.
+- No aesthetic polish may displace a correctness, resource, recovery, packaging, privacy, or cross-platform blocker.
+
 ## Required Skill Preflight
 
 - Invoke `systematic-debugging` and `test-driven-development` for every regression and fault-injection task.
@@ -284,6 +312,8 @@ git commit -m "fix: complete accessible cross-platform UX"
 - Modify: `packaging/macos/notarize.ps1`
 - Create: `packaging/common/generate_update_manifest.py`
 - Create: `tests/packaging/test_installed_app.ps1`
+- Create: `tests/packaging/test_standard_user_install.ps1`
+- Create: `tests/packaging/test_standard_user_install.sh`
 - Create: `tests/packaging/test_update_manifest.py`
 
 - [ ] **Step 1: Write failing installed-package and update-manifest tests**
@@ -298,17 +328,31 @@ def test_update_manifest_is_signed_and_version_matches(tmp_path):
 
 PowerShell package smoke test must launch the installed app, open a generated STEP fixture, switch workspaces, and run one validated export through the installed worker.
 
+The standard-user tests run in clean non-administrator accounts. Windows installs per-user under `%LocalAppData%`; macOS installs under `~/Applications`. Both launch Loupe, load a generated STEP file, complete a validated export, update the user-local cache, and uninstall/remove only Loupe-owned files without elevation or development tools.
+
 - [ ] **Step 2: Run package tests and verify release rules fail**
 
 Expected: unsigned/incomplete package and missing manifest failures.
 
 - [ ] **Step 3: Implement final release packaging**
 
-Windows package includes x64 shell/worker, Qt runtime/plugins/QML, OCCT runtime, VC runtime policy, notices, file associations for `.step`/`.stp`, and uninstall cleanup limited to installed files. macOS package is universal only if both architectures are actually built; otherwise explicitly Apple Silicon, hardened runtime, signed nested worker/libraries, notarized, and stapled.
+Windows defaults to a signed per-user installer or portable package under `%LocalAppData%` and includes the x64 shell/worker, Qt runtime/plugins/QML, OCCT runtime, VC runtime policy, notices, user-level file associations for `.step`/`.stp`, and uninstall cleanup limited to installed files. Machine-wide deployment is optional and may require IT elevation. macOS is explicitly Apple Silicon unless both architectures are actually built; it supports installation to `~/Applications` without elevation, uses the hardened runtime, signs nested worker/libraries, is notarized, and is stapled.
 
 - [ ] **Step 4: Implement a passive, privacy-preserving update check**
 
 Fetch only a static signed manifest containing version, channel, URL, SHA-256, signature, and release notes URL. Send no device, file, or usage data. Offer Download update; do not install silently.
+
+Run:
+
+```powershell
+pwsh -NoProfile -File tests/packaging/test_standard_user_install.ps1
+```
+
+```bash
+bash tests/packaging/test_standard_user_install.sh
+```
+
+Expected: both standard-user installation tests pass without an elevation prompt and without Qt, vcpkg, CMake, a compiler, or another developer prerequisite installed.
 
 - [ ] **Step 5: Commit release packaging**
 
@@ -412,7 +456,7 @@ git add tools/release .github/workflows docs/evidence/phase-3-release-report.md 
 git commit -m "ci: enforce Loupe release decision gate"
 ```
 
-## Phase 3 Completion Gate
+## Legacy Phase 3 Completion Gate (Superseded)
 
 - Every blocking/high pilot defect maps to a passing regression.
 - Absolute performance targets and the 10% cold-launch regression rule pass on Windows and real Apple Silicon hardware.
@@ -423,3 +467,16 @@ git commit -m "ci: enforce Loupe release decision gate"
 - Dependency licenses/notices and support boundaries have named human review.
 - The automated release checker reports no open required gates.
 - Release and P1 decisions cite pilot and regression evidence rather than feature speculation.
+
+## Phase 3 Completion Gate (Authoritative)
+
+- Every blocking/high pilot defect maps to a passing regression or an explicitly rejected release.
+- Absolute performance/resource budgets and the cold-launch regression rule pass on Windows 11 and real Apple Silicon hardware.
+- Worker crash recovery preserves document state without silently resuming exports.
+- Logs are local, bounded, redacted, and user-attached only.
+- Light/dark, keyboard, screen reader, UTF-8/CJK, high-DPI, and reduced-motion checks pass on both platforms.
+- Signed/notarized per-user packages install, launch, update-check, export, and uninstall in clean non-admin accounts without development dependencies.
+- Optional machine-wide deployment is documented separately and may require IT administration.
+- Dependency licenses/notices and support boundaries have named human review.
+- The automated dual-platform release checker reports no open required gates and includes artifact hashes.
+- Release decisions cite corpus, pilot, regression, packaging, and platform evidence rather than feature speculation.

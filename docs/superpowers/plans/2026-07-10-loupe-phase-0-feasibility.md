@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prove STEP assembly traversal, unit interpretation, selected export, read-back validation, and the two-workspace interaction contract against a private representative corpus.
+**Goal:** Prove STEP assembly traversal, unit interpretation, selected export, read-back validation, and deterministic evidence against two mandatory private corpus files.
 
-**Architecture:** Build a Qt-independent C++ `loupe-core` around OCCT XDE/XCAF and expose immutable domain values through a headless `loupe-spike` CLI. Build the Inspect/Export experience as a separate browser prototype that consumes deterministic JSON snapshots shaped like the future worker protocol.
+**Architecture:** Build a Qt-independent C++ `loupe-core` around OCCT XDE/XCAF and expose immutable domain values through a headless `loupe-spike` CLI. Close backend model, output, corpus, and evidence gates before beginning the browser prototype or Qt shell in Phase 1.
 
-**Tech Stack:** C++23, CMake 3.28+, Ninja, vcpkg manifests, OCCT, nlohmann/json, xxHash, Catch2, Node.js, Vite, Playwright.
+**Tech Stack:** C++23, CMake 3.28+, Ninja, pinned vcpkg manifests, OCCT, nlohmann/json, xxHash, Catch2, MSVC, and Apple Clang readiness.
 
 ---
 
@@ -14,8 +14,48 @@
 
 - Invoke `qt-cmake-project` before Task 1 and keep its target-first CMake rules active through the native spike.
 - Invoke `test-driven-development` before every implementation task.
-- Invoke `frontend-design`, `web-design-guidelines`, `ui-ux-pro-max`, and `design-motion-principles` before Task 9.
+- Invoke `qt-cmake-project` again before Task 9 updates cross-platform presets and bootstrap entry points.
 - Invoke `verification-before-completion` before Task 10 reports the Phase 0 gate.
+
+## Authoritative Vertical-Gate Execution (2026-07-12)
+
+This section supersedes the original task-by-task sequencing and any browser-prototype requirement later in this file. The detailed task bodies remain implementation references.
+
+### Gate A: Model Integrity — Tasks 1–4
+
+- Bootstrap, stable domain values, unit policy, and STEP/XCAF traversal form one reviewed slice.
+- Each change runs focused Debug tests.
+- Gate closure runs the full Debug suite and one integrated contract/quality review.
+- Commit message: `feat: prove STEP model integrity`.
+
+### Gate B: Output Integrity — Tasks 5–7
+
+- Immutable plans, selected STEP/STL writers, mandatory read-back validation, and evidence safety form one reviewed slice.
+- Each change runs focused Debug tests.
+- Gate closure runs full Debug and Release suites because units, transforms, writers, and optimized code paths are involved.
+- Commit message: `feat: prove selected export integrity`.
+
+### Gate C: Required Corpus Proof — Task 8
+
+- Both files in `corpus/private/` are mandatory acceptance cases.
+- Neither file may close the gate by being marked unsupported.
+- Each must pass import, resolved units, deterministic stable IDs, representative definition and occurrence selection, STEP/STL export, read-back, repeated-run equivalence, source immutability, and evidence redaction.
+- A failure becomes the next backend engineering task; unrelated hardening is recorded for Phase 3.
+- Commit message: `feat: prove required STEP corpus`.
+
+### Gate D: Portability, Evidence, and Handoff — Tasks 9–10
+
+- Add Apple Silicon presets, equivalent Windows/POSIX bootstrap scripts, repository portability rules, and platform-labelled evidence.
+- Run complete Windows Debug and Release verification and the required private corpus.
+- Before the M2 Pro is available, macOS readiness is structural. From the first macOS development session onward, every subsequent gate requires Windows and macOS Debug and Release evidence.
+- Commit message: `docs: close Phase 0 backend gate`.
+
+### Validation Cadence
+
+- Do not run the complete Debug/Release matrix after every helper edit.
+- Run focused test-first checks per change, full Debug at gate closure, and Release for geometry/unit/export/evidence gates.
+- Perform one contract review followed by one quality review per gate.
+- Fix immediately only corruption, silent wrong output, crashes, privacy leaks, nondeterminism, unbounded resource use, required-corpus failures, or cross-platform divergence. Record lower-risk findings for Phase 3.
 
 ## File and Module Map
 
@@ -40,7 +80,8 @@ tests/fixtures/FixtureFactory.*        Generated non-private OCCT fixtures
 tests/core/*.cpp                       Unit and integration tests
 corpus/README.md                       Private-corpus placement and safety rules
 corpus/cases.example.json              Case metadata contract without private paths
-prototype/                             Separate browser interaction prototype
+scripts/bootstrap/                     Equivalent Windows and POSIX setup entry points
+cmake/presets/                         Platform-neutral preset support and checks
 docs/evidence/phase-0-template.md      Evidence-gate report structure
 ```
 
@@ -1016,7 +1057,125 @@ git add corpus src/spike tests src/spike/CMakeLists.txt
 git commit -m "feat: add corpus and spike command harness"
 ```
 
-## Task 9: Build the Separate Inspect/Export Browser Prototype
+## Task 9: Establish Windows/macOS Migration Readiness
+
+**Files:**
+- Modify: `CMakePresets.json`
+- Create: `scripts/bootstrap/windows.ps1`
+- Create: `scripts/bootstrap/macos.sh`
+- Create: `scripts/verify/windows.ps1`
+- Create: `scripts/verify/macos.sh`
+- Create: `.gitattributes`
+- Create: `docs/development/cross-platform.md`
+- Test: `tests/cmake/test_presets.ps1`
+
+- [ ] **Step 1: Add a failing preset-contract test**
+
+```powershell
+$presets = Get-Content "$PSScriptRoot/../../CMakePresets.json" -Raw | ConvertFrom-Json
+$required = @('windows-debug','windows-release','macos-arm64-debug','macos-arm64-release')
+foreach ($name in $required) {
+    if ($name -notin $presets.configurePresets.name) { throw "missing configure preset: $name" }
+    if ($name -notin $presets.buildPresets.name) { throw "missing build preset: $name" }
+    if ($name -notin $presets.testPresets.name) { throw "missing test preset: $name" }
+}
+```
+
+Run:
+
+```powershell
+pwsh -NoProfile -File tests/cmake/test_presets.ps1
+```
+
+Expected: FAIL because Apple Silicon presets are absent.
+
+- [ ] **Step 2: Add platform-neutral configure, build, and test presets**
+
+Add `macos-arm64-debug` and `macos-arm64-release` presets using Ninja, `CMAKE_OSX_ARCHITECTURES=arm64`, the vcpkg toolchain, and platform-local binary directories. Do not commit absolute developer paths. Preserve the existing Windows preset names so current automation remains compatible.
+
+- [ ] **Step 3: Add equivalent bootstrap and verification entry points**
+
+`scripts/bootstrap/windows.ps1` verifies MSVC Build Tools, CMake, Ninja, vcpkg, and the pinned dependency manifest. `scripts/bootstrap/macos.sh` verifies Xcode command-line tools, Apple Clang, CMake, Ninja, vcpkg, and the same manifest. Both fail with a named missing dependency and never install system software without an explicit user action.
+
+`scripts/verify/windows.ps1` runs Windows Debug and Release configure/build/CTest. `scripts/verify/macos.sh` runs Apple Silicon Debug and Release configure/build/CTest. Each writes platform-labelled JSON containing compiler, OCCT, architecture, preset, commit, and test totals.
+
+- [ ] **Step 4: Add repository portability rules**
+
+`.gitattributes` enforces LF for source, CMake, QML, JSON, Markdown, and shell files while allowing CRLF only for Windows batch files. The portability document requires UTF-8 paths, case-correct includes, no committed build/cache/private-corpus artifacts, deterministic stable IDs across compilers, and platform adapters for atomic files/process control/system integration.
+
+- [ ] **Step 5: Verify Windows and record the deferred hardware row**
+
+Run:
+
+```powershell
+pwsh -NoProfile -File scripts/verify/windows.ps1
+```
+
+Expected: Windows Debug and Release pass. Record macOS as `hardware_not_yet_available`, not as a pass. Once the M2 Pro is introduced, run `scripts/verify/macos.sh`; from that point onward macOS is mandatory for every gate.
+
+- [ ] **Step 6: Commit migration readiness**
+
+```powershell
+git add CMakePresets.json scripts .gitattributes docs/development tests/cmake
+git commit -m "build: establish dual-platform development contract"
+```
+
+## Task 10: Close the Backend Evidence Gate
+
+**Files:**
+- Create: `docs/evidence/phase-0-report.md`
+- Create: `docs/evidence/README.md`
+- Create: `docs/evidence/platform/windows.json`
+- Create: `docs/evidence/platform/macos.json` when the M2 Pro is introduced
+- Create: `tools/bench/backend_benchmark.cpp`
+- Modify: `docs/superpowers/specs/2026-07-10-loupe-phase-0-and-roadmap-design.md`
+
+- [ ] **Step 1: Write the gate report before populating results**
+
+The report contains explicit rows for both mandatory private corpus files and columns for import, classification, units, stable IDs, definition export, occurrence export, STEP read-back, STL read-back, repeated-run equivalence, source immutability, privacy, elapsed time, and peak memory. Every cell is `PASS` or a stable failure code; blank cells are gate failures.
+
+- [ ] **Step 2: Run complete Windows verification**
+
+```powershell
+pwsh -NoProfile -File scripts/verify/windows.ps1
+```
+
+Expected: both Windows Debug and Release suites pass and platform evidence is written.
+
+- [ ] **Step 3: Run both required private corpus cases twice**
+
+```powershell
+build/windows-release/src/spike/loupe-spike.exe corpus corpus/private/cases.json --evidence evidence/private-run-1
+build/windows-release/src/spike/loupe-spike.exe corpus corpus/private/cases.json --evidence evidence/private-run-2
+build/windows-release/src/spike/loupe-spike.exe benchmark corpus/private/cases.json --csv evidence/private-run-2/benchmark.csv
+```
+
+Expected: exactly two cases appear in both runs; both complete the full import/export/read-back workflow; stable IDs, classifications, resolved units, and validation results are equivalent; reports contain hashes and redacted metadata but no source path or geometry.
+
+- [ ] **Step 4: Enforce backend resource evidence**
+
+`backend_benchmark` records import acknowledgement, tree ready, export ready, selected STEP, selected STL, read-back, peak memory, and process exit status per source hash. The report records measured values rather than inventing pass claims. Performance target changes require an explicit spec change.
+
+- [ ] **Step 5: Close the platform row**
+
+Before the M2 Pro exists, record `macos-arm64: hardware_not_yet_available` and prove structural readiness through Task 9. As soon as the M2 Pro joins development, run `scripts/verify/macos.sh` and both corpus cases locally; all later phase gates require both platform rows to pass.
+
+- [ ] **Step 6: Perform one final integrated backend review**
+
+Review Gates A–D together. A blocker is limited to corruption, silent wrong output, crash, privacy leakage, nondeterminism, unbounded resources, failure of either mandatory corpus case, or platform divergence. Record lower-risk findings in the Phase 3 regression backlog.
+
+- [ ] **Step 7: Commit Phase 0 evidence**
+
+```powershell
+git add docs/evidence docs/superpowers/specs/2026-07-10-loupe-phase-0-and-roadmap-design.md tools/bench
+git commit -m "docs: close Phase 0 backend gate"
+```
+
+Expected: the branch is clean, both required corpus cases pass, and Phase 1 may begin.
+
+## Deferred Reference: Inspect/Export Browser Prototype (Moved to Phase 1 Task 0)
+
+This prototype is not part of the Phase 0 completion gate. Its historical implementation recipe is retained below until Phase 1 Task 0 is executed.
 
 **Files:**
 - Create: `prototype/package.json`
@@ -1136,7 +1295,7 @@ git add prototype
 git commit -m "feat: prototype Inspect and Export workspaces"
 ```
 
-## Task 10: Produce and Review the Phase 0 Evidence Gate
+## Legacy Reference: Original Phase 0 Evidence Procedure (Superseded by Task 10 Above)
 
 **Files:**
 - Create: `docs/evidence/phase-0-template.md`
@@ -1261,7 +1420,7 @@ git add docs/evidence docs/superpowers/specs/2026-07-10-loupe-phase-0-and-roadma
 git commit -m "docs: record Phase 0 feasibility evidence"
 ```
 
-## Phase 0 Completion Gate
+## Legacy Phase 0 Completion Gate (Superseded)
 
 Do not begin Phase 1 until:
 
@@ -1271,3 +1430,17 @@ Do not begin Phase 1 until:
 - Failures have stable codes and reproduction commands.
 - The Inspect/Export prototype is approved against real fixture content.
 - The Phase 0 evidence report is reviewed and committed.
+
+## Phase 0 Completion Gate (Authoritative)
+
+Do not begin Phase 1 until all of the following are true:
+
+- Gates A–D have one integrated contract review and one quality review each.
+- All generated backend tests pass in Windows Debug and Release.
+- Both mandatory private corpus files pass import, resolved units, deterministic hierarchy/IDs, representative definition and occurrence selection, selected STEP/STL export, read-back, repeated-run equivalence, source immutability, and evidence privacy.
+- Neither mandatory corpus case is accepted as unsupported.
+- Resource and performance evidence is retained by source hash.
+- Apple Silicon presets and bootstrap/verification scripts exist without machine-specific paths.
+- Before M2 availability, the macOS row is explicitly `hardware_not_yet_available`; from the first M2 development session onward, Windows and macOS are both required and must pass.
+- Phase 0 backend evidence is committed and the worktree is clean.
+- The browser prototype remains unstarted until Phase 1 Task 0.

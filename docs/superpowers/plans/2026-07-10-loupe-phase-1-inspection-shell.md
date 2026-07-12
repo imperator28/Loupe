@@ -10,12 +10,48 @@
 
 ---
 
+## Authoritative Vertical-Gate Execution (2026-07-12)
+
+Phase 1 begins only after the Phase 0 backend evidence gate is committed. The browser prototype is the first Phase 1 task because it validates interaction contracts cheaply after backend correctness is proven; it is not an alternative runtime architecture.
+
+### Gate A: Interaction and Process Boundary — Task 0 and Tasks 1–3
+
+- Validate Inspect/Export interaction state with fixture JSON.
+- Establish versioned protocol values, isolated worker lifecycle, cancellation, and shell controller state.
+- Run focused tests per change, then one full Debug suite and one integrated gate review.
+- Commit message: `feat: establish shell and worker contract`.
+
+### Gate B: Inspect Data and Rendering — Tasks 4–7
+
+- Stream the tree, present custom meshes/instances, implement selection/visibility/floating toolbar, and persist unit overrides.
+- Gate tests cover repeated definitions, occurrence picking, progressive readiness, cancellation, and equivalent stable IDs/unit outcomes across platforms.
+- Commit message: `feat: deliver Inspect workspace foundation`.
+
+### Gate C: Inspection Tools and Reopen — Tasks 8–9
+
+- Add measurement, sectioning, capture, cache, invalidation, and progressive reopen.
+- Run full Debug and Release tests because rendering, cache formats, and optimized worker paths are involved.
+- Commit message: `feat: complete inspection workflow`.
+
+### Gate D: Dual-Platform Inspection Evidence — Task 10
+
+- Once the M2 Pro has joined development, Windows 11 and macOS Apple Silicon are both mandatory for Debug, Release, interaction, performance, and corpus-backed inspection evidence.
+- No platform may remain advisory or open.
+- Commit message: `test: close Phase 1 dual-platform gate`.
+
+### Validation Cadence
+
+- Use focused test-first checks per change and one contract/quality review per vertical gate.
+- Do not repeat full matrices after each QML/helper edit.
+- Treat wrong geometry/units, worker crashes, privacy, nondeterminism, unbounded resources, required interaction failure, and platform divergence as blockers. Record lower-risk polish for Phase 3.
+
 ## Required Skill Preflight
 
+- Invoke `frontend-design`, `web-design-guidelines`, `ui-ux-pro-max`, and `design-motion-principles` before Task 0.
 - Invoke `qt-cmake-project` before Task 1.
 - Invoke `qt-qml`, `qt-ui-design`, `frontend-design`, and `design-motion-principles` before Tasks 3–8.
 - Invoke `qt-qml-test` before writing each QML test and `qt-qml-test-run` when executing it.
-- Invoke `qt-qml-review` and `qt-cpp-review` at the commit checkpoint of each UI/native task.
+- Invoke `qt-qml-review` and `qt-cpp-review` at vertical-gate commit checkpoints rather than after every helper task.
 - Invoke `qt-qml-profiler`, `ui-ux-pro-max`, `web-design-guidelines`, and `verification-before-completion` in Task 10.
 
 ## File and Module Map
@@ -42,6 +78,76 @@ tests/protocol/                        Codec and compatibility tests
 tests/worker/                          Worker process and cancellation tests
 tests/app/                             Presentation-model and cache tests
 tests/qml/                             Qt Quick Test interaction tests
+```
+
+## Task 0: Validate the Inspect/Export Interaction Contract
+
+**Files:**
+- Create: `prototype/package.json`
+- Create: `prototype/index.html`
+- Create: `prototype/src/app.js`
+- Create: `prototype/src/styles.css`
+- Create: `prototype/src/fixture/assembly.json`
+- Create: `prototype/tests/workspaces.spec.js`
+- Create: `prototype/playwright.config.js`
+
+- [ ] **Step 1: Write failing accessible interaction tests**
+
+```javascript
+test('Inspect is the default workspace with a floating tool surface', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('tab', { name: 'Inspect' })).toHaveAttribute('aria-selected', 'true');
+  for (const name of ['Fit', 'Isolate', 'Section', 'Measure', 'Ghost', 'Capture'])
+    await expect(page.getByRole('button', { name })).toBeVisible();
+});
+
+test('highlight does not mutate the checked export set', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Export' }).click();
+  await page.getByRole('option', { name: /Front cover/ }).click();
+  await expect(page.getByTestId('master-highlight')).toHaveText('Front cover');
+  await expect(page.getByTestId('isolated-preview')).toHaveText('Front cover');
+  await expect(page.getByRole('checkbox', { name: /Export Front cover/ })).not.toBeChecked();
+});
+
+test('unresolved units block export review', async ({ page }) => {
+  await page.goto('/?fixture=suspicious-units');
+  await page.getByRole('tab', { name: 'Export' }).click();
+  await expect(page.getByRole('button', { name: 'Review export plan' })).toBeDisabled();
+});
+```
+
+- [ ] **Step 2: Verify the tests fail before the prototype exists**
+
+```powershell
+Push-Location prototype
+npm ci
+npx playwright install chromium
+npm test
+Pop-Location
+```
+
+Expected: FAIL because the application contract is absent.
+
+- [ ] **Step 3: Implement only the approved fixture-driven state contract**
+
+Implement semantic workspace tabs, floating Inspect toolbar, component listbox and checkboxes, master context highlight/ghosting, isolated preview, and source-unit review. Keep highlight transient and checked export state persistent. Honor `prefers-reduced-motion` and visible keyboard focus.
+
+- [ ] **Step 4: Run interaction, keyboard, and reduced-motion tests**
+
+```powershell
+Push-Location prototype
+npm test
+Pop-Location
+```
+
+Expected: all interaction-contract tests pass. Review the prototype with representative fixture snapshots before translating it into QML.
+
+- [ ] **Step 5: Commit the interaction contract**
+
+```powershell
+git add prototype
+git commit -m "test: validate workspace interaction contract"
 ```
 
 ## Task 1: Add Qt Targets and Versioned Protocol Types
@@ -746,7 +852,7 @@ git add tests/qml tools/bench docs/evidence
 git commit -m "test: establish Phase 1 inspection gate"
 ```
 
-## Phase 1 Completion Gate
+## Legacy Phase 1 Completion Gate (Superseded)
 
 - Worker failures and cancellation do not take down the shell.
 - Inspect is the default workspace and preserves state.
@@ -756,3 +862,16 @@ git commit -m "test: establish Phase 1 inspection gate"
 - Cache invalidation includes effective unit interpretation.
 - Windows reference measurements are recorded.
 - The macOS gate is closed only after real Apple Silicon verification.
+
+## Phase 1 Completion Gate (Authoritative)
+
+- Phase 0 backend evidence is committed before Task 0 begins.
+- The browser contract is reviewed before QML implementation.
+- Worker failures and cancellation do not take down the shell.
+- Inspect is the default workspace and preserves state.
+- Progressive tree/coarse meshes appear before full refinement.
+- Repeated definitions use shared geometry and pick correct occurrences.
+- Measure, section, isolate, ghost, capture, and unit review pass automated tests.
+- Cache invalidation includes effective unit interpretation.
+- Windows 11 and macOS Apple Silicon both pass Debug, Release, interaction, corpus-backed inspection, and performance gates. No advisory platform row is allowed after macOS development begins.
+- Gate evidence is committed and the worktree is clean.
