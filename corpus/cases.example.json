@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "structured-mm-example",
+      "file": "private/structured-mm.step",
+      "requiredFullFlow": true,
+      "expectedClass": "structured_assembly",
+      "expectedDeclaredUnits": ["mm"],
+      "expectedOutcome": "supported",
+      "tags": ["ap242", "repeated-definitions"]
+    }
+  ]
+}
