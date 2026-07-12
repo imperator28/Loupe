@@ -57,10 +57,14 @@ Phase 1 begins only after the Phase 0 backend evidence gate is committed. The br
 ## Approved Plan Corrections (2026-07-12)
 
 - Task 0 first creates and commits `prototype/package-lock.json` with `npm install`; every later prototype verification uses `npm ci`. This makes the browser contract reproducible.
-- Task 1 adds the Qt 6.8 module set to `vcpkg.json` before CMake configuration and preserves the existing P0 names `macos-arm64-debug` and `macos-arm64-release`; do not introduce a second macOS preset naming scheme.
+- Task 1 adds the Qt 6.8 module set to `vcpkg.json` before CMake configuration and preserves the existing P0 names `macos-arm64-debug` and `macos-arm64-release`; do not introduce a second macOS preset naming scheme. The current shared manifest baseline resolves Qt 6.11.1 (minimum supported API remains Qt 6.8); Windows and Apple Silicon must use the same manifest baseline.
 - Task 2 treats server lifecycle as a protocol contract: a server name is per-user and per-launch, stale local endpoints are removed only after ownership/liveness validation, every request receives one terminal event, event queues are bounded, and cancellation acknowledgement is explicit.
 - Tasks 8 and 9 use the P0 platform-adapter rule for offscreen capture and durable atomic cache replacement. No cache or capture code may embed Windows-only paths or APIs in the shared core.
 - Task 0 uses a semantic component list with separate native selection buttons and export checkboxes, not an ARIA listbox. A listbox cannot validly contain independent checkbox controls; the export workflow requires both controls to remain keyboard-operable.
+- Browser review feedback: put the two-workspace switcher in the top application bar; do not expose a command-search affordance until the native command registry supplies real commands and enablement reasons.
+- Browser review feedback: Inspect starts with no component selected and a full-assembly viewport. The right inspector shows document properties in that state and switches automatically to component properties on selection; it has no redundant "Show properties" action.
+- Browser review feedback: keep the inspection toolbar bottom-centered inside the viewport/canvas, not fixed to the application window. Use labeled Lucide outline icons, with text tooltips and accessible command names.
+- Browser review feedback: replace the passive unit chip with a compact overall-bounds/effective-unit control that opens source-unit review. It must keep the current unit state visible and retain export blocking for unresolved units.
 
 ## File and Module Map
 

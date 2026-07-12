@@ -19,3 +19,12 @@ loupe_enable_warnings(loupe-core-tests)
 
 include(Catch)
 catch_discover_tests(loupe-core-tests)
+
+add_executable(loupe-protocol-tests
+    protocol/test_protocol.cpp
+)
+target_link_libraries(loupe-protocol-tests PRIVATE Qt6::Test loupe::protocol)
+target_include_directories(loupe-protocol-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-protocol-tests)
+
+add_test(NAME protocol COMMAND loupe-protocol-tests)

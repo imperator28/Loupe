@@ -5,6 +5,20 @@
     "catch2",
     "nlohmann-json",
     "opencascade",
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "gui",
+        "network",
+        "sql",
+        "sql-sqlite",
+        "testlib"
+      ]
+    },
+    "qtdeclarative",
+    "qtquick3d",
+    "qttools",
     "xxhash"
   ]
 }
