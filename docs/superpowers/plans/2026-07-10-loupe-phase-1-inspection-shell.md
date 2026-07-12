@@ -54,6 +54,13 @@ Phase 1 begins only after the Phase 0 backend evidence gate is committed. The br
 - Invoke `qt-qml-review` and `qt-cpp-review` at vertical-gate commit checkpoints rather than after every helper task.
 - Invoke `qt-qml-profiler`, `ui-ux-pro-max`, `web-design-guidelines`, and `verification-before-completion` in Task 10.
 
+## Approved Plan Corrections (2026-07-12)
+
+- Task 0 first creates and commits `prototype/package-lock.json` with `npm install`; every later prototype verification uses `npm ci`. This makes the browser contract reproducible.
+- Task 1 adds the Qt 6.8 module set to `vcpkg.json` before CMake configuration and preserves the existing P0 names `macos-arm64-debug` and `macos-arm64-release`; do not introduce a second macOS preset naming scheme.
+- Task 2 treats server lifecycle as a protocol contract: a server name is per-user and per-launch, stale local endpoints are removed only after ownership/liveness validation, every request receives one terminal event, event queues are bounded, and cancellation acknowledgement is explicit.
+- Tasks 8 and 9 use the P0 platform-adapter rule for offscreen capture and durable atomic cache replacement. No cache or capture code may embed Windows-only paths or APIs in the shared core.
+
 ## File and Module Map
 
 ```text
@@ -84,6 +91,7 @@ tests/qml/                             Qt Quick Test interaction tests
 
 **Files:**
 - Create: `prototype/package.json`
+- Create: `prototype/package-lock.json`
 - Create: `prototype/index.html`
 - Create: `prototype/src/app.js`
 - Create: `prototype/src/styles.css`
@@ -121,13 +129,13 @@ test('unresolved units block export review', async ({ page }) => {
 
 ```powershell
 Push-Location prototype
-npm ci
+npm install
 npx playwright install chromium
 npm test
 Pop-Location
 ```
 
-Expected: FAIL because the application contract is absent.
+Expected: `npm install` creates the committed lockfile, then tests FAIL because the application contract is absent. Every subsequent Task 0 run uses `npm ci`.
 
 - [ ] **Step 3: Implement only the approved fixture-driven state contract**
 
@@ -137,6 +145,7 @@ Implement semantic workspace tabs, floating Inspect toolbar, component listbox a
 
 ```powershell
 Push-Location prototype
+npm ci
 npm test
 Pop-Location
 ```
@@ -154,6 +163,7 @@ git commit -m "test: validate workspace interaction contract"
 
 **Files:**
 - Modify: `CMakeLists.txt`
+- Modify: `vcpkg.json`
 - Create: `src/protocol/CMakeLists.txt`
 - Create: `src/protocol/ProtocolTypes.h`
 - Create: `src/protocol/ProtocolJson.cpp`
@@ -189,6 +199,8 @@ QTEST_MAIN(ProtocolTest)
 
 - [ ] **Step 2: Configure Qt and verify the test fails**
 
+Add `qtbase`, `qtdeclarative`, `qtquick3d`, and `qttools` to the pinned vcpkg manifest, then configure with the existing P0 `windows-debug` preset. Keep all Qt packages at the manifest baseline shared by Windows and Apple Silicon.
+
 Add:
 
 ```cmake
@@ -203,24 +215,7 @@ Run `cmake --preset windows-debug` and build.
 
 Expected: protocol test fails because the types and codecs are missing.
 
-Add macOS presets to `CMakePresets.json` before the first Apple Silicon build:
-
-```json
-{
-  "name": "macos-debug",
-  "inherits": "base",
-  "binaryDir": "${sourceDir}/build/macos-debug",
-  "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_OSX_ARCHITECTURES": "arm64" }
-},
-{
-  "name": "macos-release",
-  "inherits": "base",
-  "binaryDir": "${sourceDir}/build/macos-release",
-  "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_OSX_ARCHITECTURES": "arm64" }
-}
-```
-
-Add matching build/test preset objects whose names and `configurePreset` values are `macos-debug` and `macos-release`.
+The P0 `macos-arm64-debug` and `macos-arm64-release` presets already exist. Verify they remain the only macOS preset names; do not add `macos-debug` or `macos-release` aliases.
 
 - [ ] **Step 3: Define a closed, versioned command/event variant**
 
@@ -337,7 +332,7 @@ private:
 };
 ```
 
-`WorkerServer` owns a `QLocalServer`, accepts one shell connection, writes `Ready`, dispatches commands, and keeps the process alive after per-request failures. `main.cpp` derives a unique server name from `--server-name` and exits nonzero only for server initialization failure.
+`WorkerServer` owns a `QLocalServer`, accepts one shell connection, writes `Ready`, dispatches commands, and keeps the process alive after per-request failures. `main.cpp` derives a per-user, per-launch unique server name from `--server-name` and exits nonzero only for server initialization failure. Before removing a stale local endpoint, the shell verifies that no live worker owns it. Each accepted request emits exactly one terminal event (`SnapshotReady`, `Failed`, or `Canceled`); `Cancel` produces an explicit terminal `Canceled` acknowledgement. Bound outbound progress/mesh queues by request and drop superseded non-terminal progress events, never terminal events.
 
 - [ ] **Step 4: Verify cancellation and crash isolation**
 
@@ -724,7 +719,7 @@ Expected: missing controllers fail compilation.
 
 - [ ] **Step 3: Implement inspection-only controllers**
 
-Measurement supports point distance, edge/face length, radius/diameter, angle, and selected bounds. Section supports one X/Y/Z plane, reverse, numeric/interactive position, and cap. Capture renders the current viewer, measurement overlays, and section state to transparent PNG at 2x, 3x, or 4x without resizing the live window.
+Measurement supports point distance, edge/face length, radius/diameter, angle, and selected bounds. Section supports one X/Y/Z plane, reverse, numeric/interactive position, and cap. Capture renders the current viewer, measurement overlays, and section state to transparent PNG at 2x, 3x, or 4x without resizing the live window. Keep offscreen render-target creation and file finalization behind platform adapters so Windows and macOS use equivalent shared controller semantics.
 
 - [ ] **Step 4: Verify QML controls and output dimensions**
 
@@ -777,7 +772,7 @@ Expected: compilation fails.
 
 - [ ] **Step 3: Implement local-only cache metadata and atomic files**
 
-Cache metadata fields are source hash, size, mtime, importer version, mesh profile, effective unit/factor, schema version, last access, byte size, snapshot path, and mesh path. Resolve the root through `QStandardPaths::AppLocalDataLocation`; reject UNC/network roots and synced overrides. Write cache files to temporary names, fsync/close, then rename.
+Cache metadata fields are source hash, size, mtime, importer version, mesh profile, effective unit/factor, schema version, last access, byte size, snapshot path, and mesh path. Resolve the root through `QStandardPaths::AppLocalDataLocation`; reject UNC/network roots and synced overrides. Write cache files through a platform adapter to temporary names, durably close them, then atomically replace the final path; the shared cache layer must not call Windows-only APIs.
 
 - [ ] **Step 4: Verify invalidation, LRU, cancellation, and clear-cache**
 
