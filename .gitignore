@@ -10,6 +10,11 @@ build/
 build-*/
 out/
 
+# Browser-contract dependencies and test artifacts
+prototype/node_modules/
+prototype/test-results/
+prototype/playwright-report/
+
 # Local IDE and operating-system files
 .vs/
 .vscode/

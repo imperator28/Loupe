@@ -60,6 +60,7 @@ Phase 1 begins only after the Phase 0 backend evidence gate is committed. The br
 - Task 1 adds the Qt 6.8 module set to `vcpkg.json` before CMake configuration and preserves the existing P0 names `macos-arm64-debug` and `macos-arm64-release`; do not introduce a second macOS preset naming scheme.
 - Task 2 treats server lifecycle as a protocol contract: a server name is per-user and per-launch, stale local endpoints are removed only after ownership/liveness validation, every request receives one terminal event, event queues are bounded, and cancellation acknowledgement is explicit.
 - Tasks 8 and 9 use the P0 platform-adapter rule for offscreen capture and durable atomic cache replacement. No cache or capture code may embed Windows-only paths or APIs in the shared core.
+- Task 0 uses a semantic component list with separate native selection buttons and export checkboxes, not an ARIA listbox. A listbox cannot validly contain independent checkbox controls; the export workflow requires both controls to remain keyboard-operable.
 
 ## File and Module Map
 
@@ -139,7 +140,7 @@ Expected: `npm install` creates the committed lockfile, then tests FAIL because 
 
 - [ ] **Step 3: Implement only the approved fixture-driven state contract**
 
-Implement semantic workspace tabs, floating Inspect toolbar, component listbox and checkboxes, master context highlight/ghosting, isolated preview, and source-unit review. Keep highlight transient and checked export state persistent. Honor `prefers-reduced-motion` and visible keyboard focus.
+Implement semantic workspace tabs, floating Inspect toolbar, component list with separate selection buttons and checkboxes, master context highlight/ghosting, isolated preview, and source-unit review. Keep highlight transient and checked export state persistent. Honor `prefers-reduced-motion` and visible keyboard focus.
 
 - [ ] **Step 4: Run interaction, keyboard, and reduced-motion tests**
 

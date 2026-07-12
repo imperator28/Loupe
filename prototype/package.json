@@ -1,0 +1,12 @@
+{
+  "name": "loupe-interaction-contract",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "vite": "^7.1.0"
+  }
+}

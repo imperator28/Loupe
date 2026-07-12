@@ -1,0 +1,8 @@
+{
+  "name": "Loupe housing assembly",
+  "parts": [
+    { "id": "front-cover", "name": "Front cover", "quantity": 1, "kind": "Shell" },
+    { "id": "lens-guide", "name": "Lens guide", "quantity": 1, "kind": "Optic" },
+    { "id": "fastener", "name": "M3 fastener", "quantity": 4, "kind": "Hardware" }
+  ]
+}
