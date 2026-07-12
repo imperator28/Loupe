@@ -4,6 +4,8 @@
 
 **Status:** Approved; implementation plans created
 
+**Governing UI language:** [Kinetic Precision](../../../design.md)
+
 **Source of truth:** [Loupe — STEP Assembly Inspector PRD v0.3](https://app.notion.com/p/399f19f7357c8127a4eecfd097bdd35d)
 
 **Interim owner:** Project user for product, architecture, and corpus
@@ -24,6 +26,8 @@ This design defines:
 - The feature goals and exit criteria for Phases 0 through 3.
 
 Four implementation plans accompany this design: one plan for each phase.
+
+Kinetic Precision governs all Phase 1-and-later visual, interaction, motion, component, accessibility, and platform behavior. This roadmap remains authoritative for product scope, architecture, evidence gates, and phase sequencing. Where an older UI statement in this roadmap conflicts with the governing design language, `design.md` controls the UI decision.
 
 ## 2. Confirmed Decisions
 
@@ -208,7 +212,7 @@ The top application bar contains:
 - A two-item workspace switcher: Inspect and Export.
 - Command search.
 
-There is no conventional CAD ribbon. The shell uses a restrained dark technical palette by default, with a complete light theme and semantic design tokens. Typography prioritizes legibility, CJK coverage, compact labels, and tabular figures for dimensions and progress.
+There is no conventional CAD ribbon. The shell uses Kinetic Precision's restrained dark-first technical palette and semantic design tokens. A user-exposed light theme remains an explicit release decision rather than an assumed requirement. Typography prioritizes legibility, CJK coverage, compact labels, and tabular figures for dimensions and progress.
 
 ### 6.2 Inspect workspace
 
