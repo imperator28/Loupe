@@ -6,6 +6,8 @@ qt_add_executable(loupe-app
     models/AssemblyTreeModel.h
     models/SelectionModel.cpp
     models/SelectionModel.h
+    models/VisibilityModel.cpp
+    models/VisibilityModel.h
     render/MeshGeometry.cpp
     render/MeshGeometry.h
     render/DefinitionInstances.cpp
@@ -20,6 +22,9 @@ qt_add_qml_module(loupe-app
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
+        qml/inspect/InspectWorkspace.qml
+        qml/inspect/InspectionDock.qml
+        qml/inspect/ContextPanel.qml
 )
 
 target_link_libraries(loupe-app PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D)

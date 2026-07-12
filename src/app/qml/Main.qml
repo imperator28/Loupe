@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Loupe.App
+import "inspect" as Inspect
 
 ApplicationWindow {
     id: root
@@ -42,31 +43,7 @@ ApplicationWindow {
         anchors.fill: parent
         currentIndex: root.controller.workspace === AppState.Inspect ? 0 : 1
 
-        Item {
-            RowLayout {
-                anchors.fill: parent
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    color: "#101418"
-                    Label {
-                        anchors.centerIn: parent
-                        text: qsTr("Full assembly")
-                        color: "#e6edf3"
-                    }
-                }
-                Rectangle {
-                    Layout.preferredWidth: 300
-                    Layout.fillHeight: true
-                    color: "#182027"
-                    Label {
-                        anchors.centerIn: parent
-                        text: root.controller.inspectorMode === AppState.Document ? qsTr("Document properties") : qsTr("Component properties")
-                        color: "#e6edf3"
-                    }
-                }
-            }
-        }
+        Inspect.InspectWorkspace { controller: root.controller }
         Item {
             Label {
                 anchors.centerIn: parent
