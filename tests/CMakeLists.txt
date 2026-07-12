@@ -38,3 +38,31 @@ add_dependencies(loupe-worker-process-tests loupe-worker)
 loupe_enable_warnings(loupe-worker-process-tests)
 
 add_test(NAME worker-process COMMAND loupe-worker-process-tests)
+
+add_executable(loupe-application-controller-tests
+    app/test_application_controller.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+)
+target_link_libraries(loupe-application-controller-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-application-controller-tests)
+
+add_test(NAME application-controller COMMAND loupe-application-controller-tests)
+
+add_executable(loupe-qml-smoke-tests
+    qml/qml_smoke.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+)
+target_link_libraries(loupe-qml-smoke-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
+target_include_directories(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_definitions(loupe-qml-smoke-tests PRIVATE LOUPE_MAIN_QML_PATH="${PROJECT_SOURCE_DIR}/src/app/qml/Main.qml")
+loupe_enable_warnings(loupe-qml-smoke-tests)
+
+add_test(NAME qml-smoke COMMAND loupe-qml-smoke-tests)
+set(_loupe_qt_debug_root "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/Qt6")
+set_tests_properties(qml-smoke PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_debug_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_debug_root}/qml"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+)
