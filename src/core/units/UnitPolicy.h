@@ -34,6 +34,7 @@ struct UnitDecision {
     }
 };
 
+// Throws std::invalid_argument when an override does not specify a concrete unit or a finite positive factor.
 [[nodiscard]] UnitDecision decide(
     const UnitEvidence& evidence,
     const std::optional<UnitOverride>& overrideValue);
