@@ -50,6 +50,14 @@ This section supersedes the original task-by-task sequencing and any browser-pro
 - Before the M2 Pro is available, macOS readiness is structural. From the first macOS development session onward, every subsequent gate requires Windows and macOS Debug and Release evidence.
 - Commit message: `docs: close Phase 0 backend gate`.
 
+### P0 completion status (2026-07-12)
+
+- [x] Gate A: model integrity
+- [x] Gate B: selected-output integrity
+- [x] Gate C: required corpus proof
+- [x] Gate D: Windows evidence and Apple Silicon structural readiness
+- [ ] macOS evidence row: blocked only by the M2 Pro hardware not yet being available; required immediately when it joins development.
+
 ### Validation Cadence
 
 - Do not run the complete Debug/Release matrix after every helper edit.

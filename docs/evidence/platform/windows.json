@@ -1,0 +1,21 @@
+﻿{
+    "platform":  "windows-x64",
+    "architecture":  "AMD64",
+    "compiler":  "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35228 for x64",
+    "commit":  "62e84780f7a121bcb9f7d610df9d8bb8240d53d6",
+    "generatedAtUtc":  "2026-07-12T05:28:24.8840691Z",
+    "presets":  [
+                    {
+                        "preset":  "windows-debug",
+                        "configured":  true,
+                        "built":  true,
+                        "testsPassed":  true
+                    },
+                    {
+                        "preset":  "windows-release",
+                        "configured":  true,
+                        "built":  true,
+                        "testsPassed":  true
+                    }
+                ]
+}
