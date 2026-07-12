@@ -79,3 +79,22 @@ target_include_directories(loupe-assembly-tree-tests PRIVATE "${PROJECT_SOURCE_D
 loupe_enable_warnings(loupe-assembly-tree-tests)
 
 add_test(NAME assembly-tree COMMAND loupe-assembly-tree-tests)
+
+add_executable(loupe-scene-model-tests
+    app/test_scene_model.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/SceneModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/SceneModel.h"
+)
+target_link_libraries(loupe-scene-model-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick3D Qt6::Test)
+target_include_directories(loupe-scene-model-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-scene-model-tests)
+
+add_test(NAME scene-model COMMAND loupe-scene-model-tests)
+set_tests_properties(scene-model PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_debug_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_debug_root}/qml"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+)
