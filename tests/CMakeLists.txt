@@ -66,3 +66,16 @@ set_tests_properties(qml-smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_debug_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_debug_root}/qml"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
 )
+
+add_executable(loupe-assembly-tree-tests
+    app/test_assembly_tree_model.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SelectionModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SelectionModel.h"
+)
+target_link_libraries(loupe-assembly-tree-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-assembly-tree-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-assembly-tree-tests)
+
+add_test(NAME assembly-tree COMMAND loupe-assembly-tree-tests)
