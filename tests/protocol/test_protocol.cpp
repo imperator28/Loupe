@@ -10,6 +10,7 @@ private slots:
     void openFileRoundTrips();
     void rejectsUnknownMajorVersion();
     void ignoresUnknownFieldsFromNewerMinorVersion();
+    void canceledEventDecodes();
 };
 
 void ProtocolTest::openFileRoundTrips()
@@ -35,6 +36,14 @@ void ProtocolTest::ignoresUnknownFieldsFromNewerMinorVersion()
         QByteArrayLiteral("{\"version\":{\"major\":1,\"minor\":99},\"type\":\"ready\",\"futureField\":\"ignored\"}\n"));
 
     QVERIFY(std::holds_alternative<loupe::protocol::Ready>(event));
+}
+
+void ProtocolTest::canceledEventDecodes()
+{
+    const auto event = loupe::protocol::decodeEvent(
+        QByteArrayLiteral("{\"version\":{\"major\":1,\"minor\":0},\"type\":\"canceled\",\"requestId\":7}\n"));
+
+    QCOMPARE(std::get<loupe::protocol::Canceled>(event).requestId, 7ULL);
 }
 
 QTEST_MAIN(ProtocolTest)

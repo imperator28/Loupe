@@ -20,9 +20,10 @@ struct Progress { std::uint64_t requestId{}; QString stage; double fraction{}; }
 struct SnapshotReady { std::uint64_t requestId{}; QByteArray snapshotJson; };
 struct MeshReady { std::uint64_t requestId{}; QString definitionId; int refinement{}; QString segmentKey; };
 struct Failed { std::uint64_t requestId{}; QString code; QString message; bool recoverable{}; };
+struct Canceled { std::uint64_t requestId{}; };
 
 using Command = std::variant<OpenFile, Cancel, SetVisible>;
-using Event = std::variant<Ready, Progress, SnapshotReady, MeshReady, Failed>;
+using Event = std::variant<Ready, Progress, SnapshotReady, MeshReady, Failed, Canceled>;
 
 class ProtocolError final : public std::runtime_error {
 public:

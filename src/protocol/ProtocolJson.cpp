@@ -166,6 +166,9 @@ Event decodeEvent(const QByteArray& bytes)
         return Failed{requestId(object), stringField(object, QStringLiteral("code")), stringField(object, QStringLiteral("message")),
                       recoverable.toBool()};
     }
+    if (type == QStringLiteral("canceled")) {
+        return Canceled{requestId(object)};
+    }
     fail("Unknown protocol event type");
 }
 

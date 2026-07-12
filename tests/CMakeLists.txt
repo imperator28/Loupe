@@ -28,3 +28,13 @@ target_include_directories(loupe-protocol-tests PRIVATE "${PROJECT_SOURCE_DIR}/s
 loupe_enable_warnings(loupe-protocol-tests)
 
 add_test(NAME protocol COMMAND loupe-protocol-tests)
+
+add_executable(loupe-worker-process-tests
+    worker/test_worker_process.cpp
+)
+target_link_libraries(loupe-worker-process-tests PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+target_compile_definitions(loupe-worker-process-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
+add_dependencies(loupe-worker-process-tests loupe-worker)
+loupe_enable_warnings(loupe-worker-process-tests)
+
+add_test(NAME worker-process COMMAND loupe-worker-process-tests)
