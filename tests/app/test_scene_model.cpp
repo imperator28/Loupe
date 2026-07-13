@@ -11,6 +11,7 @@ class SceneModelTest final : public QObject
 private slots:
     void repeatedDefinitionSharesOneGeometry();
     void selectionMapsPickInstanceToOccurrence();
+    void meshGeometryAppendsWorkerPayload();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -35,6 +36,17 @@ void SceneModelTest::selectionMapsPickInstanceToOccurrence()
     });
 
     QCOMPARE(scene.nodeIdForPick(QStringLiteral("def-box"), 1), QStringLiteral("occ-box-2"));
+}
+
+void SceneModelTest::meshGeometryAppendsWorkerPayload()
+{
+    loupe::app::render::MeshGeometry geometry;
+
+    QVERIFY(geometry.appendWorkerMesh(QByteArrayLiteral("{\"vertices\":[0,0,0,1,0,0,0,1,0],\"indices\":[0,1,2]}")));
+    QCOMPARE(geometry.vertexCount(), 3);
+    QCOMPARE(geometry.triangleCount(), 1);
+    geometry.clearMesh();
+    QCOMPARE(geometry.vertexCount(), 0);
 }
 
 int main(int argc, char* argv[])

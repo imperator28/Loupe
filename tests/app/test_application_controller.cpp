@@ -20,6 +20,7 @@ private slots:
     void selectionShowsComponentInspector();
     void ownsInspectionTaskControllers();
     void opensStepThroughWorkerAndRetainsSnapshot();
+    void forwardsWorkerMeshToViewer();
     void reopensUnchangedStepFromLocalSnapshotCache();
 };
 
@@ -73,6 +74,19 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QVERIFY(controller.estimatedMassKg() > 0.0);
 }
 
+void ApplicationControllerTest::forwardsWorkerMeshToViewer()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-mesh.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+
+    QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 10'000);
+    const auto mesh = meshSpy.first().at(0).toByteArray();
+    QVERIFY(!mesh.isEmpty());
+}
+
 void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()
 {
     const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-cache.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
@@ -86,10 +100,12 @@ void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()
     }
 
     loupe::app::ApplicationController reopened(QStringLiteral(LOUPE_WORKER_PATH), cacheDirectory.path());
+    QSignalSpy meshSpy(&reopened, &loupe::app::ApplicationController::meshReady);
     reopened.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
 
     QTRY_COMPARE_WITH_TIMEOUT(reopened.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
     QVERIFY(reopened.cacheHit());
+    QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 10'000);
 }
 
 QTEST_MAIN(ApplicationControllerTest)

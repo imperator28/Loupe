@@ -41,6 +41,7 @@ qt_add_qml_module(loupe-app
         qml/OpenStepDialog.qml
         qml/Theme.qml
         qml/inspect/InspectWorkspace.qml
+        qml/inspect/StepViewport.qml
         qml/inspect/InspectionDock.qml
         qml/inspect/ContextPanel.qml
         qml/inspect/MeasurementPanel.qml

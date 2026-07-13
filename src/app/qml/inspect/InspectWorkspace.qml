@@ -55,8 +55,16 @@ Item {
             radius: 8
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Loader {
+                id: viewportLoader
+                anchors.fill: parent
+                active: root.controller && root.controller.documentState === AppState.TreeReady
+                source: "StepViewport.qml"
+                onLoaded: item.controller = root.controller
+            }
             Label {
                 anchors.centerIn: parent
+                visible: !root.controller || root.controller.documentState !== AppState.TreeReady
                 text: root.controller && root.controller.documentState === AppState.Opening ? qsTr("Importing assembly…")
                     : root.controller && root.controller.documentState === AppState.TreeReady ? qsTr("Assembly loaded")
                     : qsTr("Open a STEP assembly to inspect it")

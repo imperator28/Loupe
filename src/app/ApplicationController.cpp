@@ -59,11 +59,15 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             const auto document = QJsonDocument::fromJson(snapshot).object();
             const cache::UnitDecision unit{document.value(QStringLiteral("effectiveUnit")).toString(), document.value(QStringLiteral("sourceToMillimeters")).toDouble(1.0)};
             const auto key = cache::CacheKey::from(*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"), unit);
-            cacheStore_->put(key, snapshot, {*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"), unit});
+            static_cast<void>(cacheStore_->put(key, snapshot, {*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"), unit}));
         }
         documentState_ = DocumentState::TreeReady;
         emit snapshotChanged();
         emit documentStateChanged();
+    });
+    connect(&workerClient_, &worker::WorkerClient::meshReady, this, [this](quint64 requestId, const QString&, const QByteArray& meshJson) {
+        if (requestId != activeRequestId_) return;
+        emit meshReady(meshJson);
     });
     connect(&workerClient_, &worker::WorkerClient::requestFailed, this, [this](quint64 requestId, const QString&, const QString&, bool) {
         if (requestId != activeRequestId_) return;
@@ -150,7 +154,6 @@ void ApplicationController::openFile(const QUrl& file)
             emit componentPropertiesChanged();
             emit documentStateChanged();
             emit cacheHitChanged();
-            return;
         }
     }
     emit documentStateChanged();

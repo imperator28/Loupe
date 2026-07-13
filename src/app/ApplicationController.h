@@ -83,6 +83,7 @@ signals:
     void snapshotChanged();
     void componentPropertiesChanged();
     void cacheHitChanged();
+    void meshReady(const QByteArray& meshJson);
 
 private:
     void connectWorker();
