@@ -70,6 +70,17 @@ set_tests_properties(application-controller PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
+add_executable(loupe-worker-client-tests
+    app/test_worker_client.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
+)
+target_link_libraries(loupe-worker-client-tests PRIVATE loupe::protocol Qt6::Core Qt6::Network Qt6::Test)
+target_include_directories(loupe-worker-client-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-worker-client-tests)
+
+add_test(NAME worker-client COMMAND loupe-worker-client-tests)
+
 add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"

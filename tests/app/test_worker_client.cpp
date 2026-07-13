@@ -1,0 +1,67 @@
+#include <QtTest/QTest>
+#include <QSignalSpy>
+
+#include "app/worker/WorkerClient.h"
+
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QRandomGenerator>
+
+namespace {
+
+QString serverName()
+{
+    return QStringLiteral("loupe-worker-client-test-%1").arg(QRandomGenerator::global()->generate());
+}
+
+QByteArray readLine(QLocalSocket& socket)
+{
+    if (!socket.canReadLine()) {
+        socket.waitForReadyRead(3'000);
+    }
+    return socket.readLine();
+}
+
+} // namespace
+
+class WorkerClientTest final : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void openFileDeliversWorkerSnapshot();
+};
+
+void WorkerClientTest::openFileDeliversWorkerSnapshot()
+{
+    QLocalServer server;
+    const auto name = serverName();
+    QLocalServer::removeServer(name);
+    QVERIFY(server.listen(name));
+
+    loupe::app::worker::WorkerClient client;
+    QSignalSpy snapshotSpy(&client, &loupe::app::worker::WorkerClient::snapshotReady);
+    QVERIFY(client.connectToServer(name));
+    QVERIFY(server.waitForNewConnection(3'000));
+    auto* peer = server.nextPendingConnection();
+    QVERIFY(peer != nullptr);
+
+    peer->write("{\"version\":{\"major\":1,\"minor\":0},\"type\":\"ready\"}\n");
+    QVERIFY(peer->waitForBytesWritten(1'000));
+    const auto requestId = client.openFile(QStringLiteral("C:/models/assembly.step"));
+    QCOMPARE(requestId, 1ULL);
+
+    const auto command = readLine(*peer);
+    QVERIFY(command.contains("\"type\":\"openFile\""));
+    QVERIFY(command.contains("C:/models/assembly.step"));
+
+    peer->write("{\"version\":{\"major\":1,\"minor\":0},\"type\":\"snapshotReady\",\"requestId\":1,\"snapshotBase64\":\"eyJub2RlcyI6W119\"}\n");
+    QVERIFY(peer->waitForBytesWritten(1'000));
+    QTRY_COMPARE_WITH_TIMEOUT(snapshotSpy.count(), 1, 3'000);
+    QCOMPARE(snapshotSpy.first().at(0).toULongLong(), 1ULL);
+    QCOMPARE(snapshotSpy.first().at(1).toByteArray(), QByteArrayLiteral("{\"nodes\":[]}"));
+}
+
+QTEST_MAIN(WorkerClientTest)
+
+#include "test_worker_client.moc"
