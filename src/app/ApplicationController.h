@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "app/tools/CaptureController.h"
+#include "app/models/AssemblyTreeModel.h"
 #include "app/tools/MeasurementController.h"
 #include "app/tools/SectionController.h"
 #include "app/worker/WorkerClient.h"
@@ -31,6 +32,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QString activeNodeId READ activeNodeId WRITE setActiveNodeId NOTIFY activeNodeIdChanged)
     Q_PROPERTY(DocumentState documentState READ documentState NOTIFY documentStateChanged)
     Q_PROPERTY(QString snapshotJson READ snapshotJson NOTIFY snapshotChanged)
+    Q_PROPERTY(QObject* assemblyTree READ assemblyTreeModelObject CONSTANT)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -45,6 +47,8 @@ public:
     [[nodiscard]] const QString& activeNodeId() const noexcept { return activeNodeId_; }
     [[nodiscard]] DocumentState documentState() const noexcept { return documentState_; }
     [[nodiscard]] const QString& snapshotJson() const noexcept { return snapshotJson_; }
+    [[nodiscard]] models::AssemblyTreeModel* assemblyTreeModel() noexcept { return &assemblyTreeModel_; }
+    [[nodiscard]] QObject* assemblyTreeModelObject() noexcept { return &assemblyTreeModel_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -62,6 +66,7 @@ signals:
 
 private:
     void connectWorker();
+    void applySnapshotToTree(const QByteArray& snapshot);
 
     Workspace workspace_{Workspace::Inspect};
     QString activeNodeId_;
@@ -74,6 +79,7 @@ private:
     worker::WorkerClient workerClient_{this};
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
+    models::AssemblyTreeModel assemblyTreeModel_{this};
     tools::MeasurementController measurementController_{this};
     tools::SectionController sectionController_{this};
     tools::CaptureController captureController_{this};

@@ -2,6 +2,9 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -37,6 +40,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, QO
     });
     connect(&workerClient_, &worker::WorkerClient::snapshotReady, this, [this](quint64 requestId, const QByteArray& snapshot) {
         if (requestId != activeRequestId_) return;
+        applySnapshotToTree(snapshot);
         snapshotJson_ = QString::fromUtf8(snapshot);
         documentState_ = DocumentState::TreeReady;
         emit snapshotChanged();
@@ -121,6 +125,33 @@ void ApplicationController::connectWorker()
         return;
     }
     QTimer::singleShot(25, this, &ApplicationController::connectWorker);
+}
+
+void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
+{
+    const auto document = QJsonDocument::fromJson(snapshot);
+    if (!document.isObject()) return;
+    const auto nodes = document.object().value(QStringLiteral("nodes")).toArray();
+    QHash<QString, int> quantities;
+    for (const auto& value : nodes) {
+        const auto object = value.toObject();
+        const auto definitionId = object.value(QStringLiteral("definitionId")).toString();
+        if (!definitionId.isEmpty()) ++quantities[definitionId];
+    }
+    std::vector<models::AssemblyTreeModel::SnapshotNode> treeNodes;
+    treeNodes.reserve(static_cast<std::size_t>(nodes.size()));
+    for (const auto& value : nodes) {
+        const auto object = value.toObject();
+        const auto definitionId = object.value(QStringLiteral("definitionId")).toString();
+        treeNodes.push_back({
+            object.value(QStringLiteral("id")).toString(),
+            object.value(QStringLiteral("parentId")).toString(),
+            QString::number(object.value(QStringLiteral("kind")).toInt()),
+            object.value(QStringLiteral("name")).toString(),
+            quantities.value(definitionId),
+        });
+    }
+    assemblyTreeModel_.replaceSnapshot(treeNodes);
 }
 
 } // namespace loupe::app

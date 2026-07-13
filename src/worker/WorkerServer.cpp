@@ -23,6 +23,7 @@ QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
             {QStringLiteral("id"), QString::fromStdString(node.id)},
             {QStringLiteral("name"), QString::fromStdString(node.name)},
             {QStringLiteral("kind"), static_cast<int>(node.kind)},
+            {QStringLiteral("parentId"), node.parentId ? QString::fromStdString(*node.parentId) : QString{}},
             {QStringLiteral("definitionId"), node.definitionId ? QString::fromStdString(*node.definitionId) : QString{}},
         });
     }

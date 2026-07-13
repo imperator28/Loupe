@@ -3,6 +3,7 @@
 #include <QUrl>
 
 #include "app/ApplicationController.h"
+#include "app/models/AssemblyTreeModel.h"
 #include "fixtures/FixtureFactory.h"
 
 class ApplicationControllerTest final : public QObject
@@ -58,6 +59,7 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QTRY_COMPARE_WITH_TIMEOUT(controller.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
     QVERIFY(!controller.snapshotJson().isEmpty());
     QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
+    QVERIFY(controller.assemblyTreeModel()->rowCount() > 0);
 }
 
 QTEST_MAIN(ApplicationControllerTest)

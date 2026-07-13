@@ -54,6 +54,8 @@ add_executable(loupe-application-controller-tests
     fixtures/FixtureFactory.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"

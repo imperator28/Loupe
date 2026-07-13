@@ -6,9 +6,13 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QProcess>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryFile>
 
 #include "fixtures/FixtureFactory.h"
+
+#include <algorithm>
 
 class WorkerProcessTest final : public QObject
 {
@@ -123,7 +127,12 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
 
     const auto event = readEvent(socket);
     QCOMPARE(event.value(QStringLiteral("type")).toString(), QStringLiteral("snapshotReady"));
-    QVERIFY(!QByteArray::fromBase64(event.value(QStringLiteral("snapshotBase64")).toString().toLatin1()).isEmpty());
+    const auto snapshot = QByteArray::fromBase64(event.value(QStringLiteral("snapshotBase64")).toString().toLatin1());
+    QVERIFY(!snapshot.isEmpty());
+    const auto nodes = QJsonDocument::fromJson(snapshot).object().value(QStringLiteral("nodes")).toArray();
+    QVERIFY(std::any_of(nodes.cbegin(), nodes.cend(), [](const QJsonValue& value) {
+        return !value.toObject().value(QStringLiteral("parentId")).toString().isEmpty();
+    }));
     QVERIFY(worker.state() == QProcess::Running);
 }
 
