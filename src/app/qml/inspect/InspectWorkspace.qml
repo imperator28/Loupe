@@ -75,7 +75,8 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 24
                 onToolTriggered: function(tool) {
-                    if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
+                    if (tool === "fit") root.controller.fitView()
+                    else if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
                 }
             }
         }

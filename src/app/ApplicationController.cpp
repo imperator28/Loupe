@@ -13,6 +13,8 @@
 #include <QUrl>
 #include <QUuid>
 
+#include <algorithm>
+
 namespace {
 
 QString defaultWorkerExecutable()
@@ -136,6 +138,7 @@ void ApplicationController::openFile(const QUrl& file)
     snapshotJson_.clear();
     geometryByNode_.clear();
     materialByNode_.clear();
+    modelExtentMm_ = 0.0;
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
     cacheHit_ = false;
@@ -143,6 +146,7 @@ void ApplicationController::openFile(const QUrl& file)
     documentState_ = DocumentState::Opening;
     emit snapshotChanged();
     emit componentPropertiesChanged();
+    emit modelExtentChanged();
     emit cacheHitChanged();
     if (cacheStore_) {
         if (const auto cached = cacheStore_->readSnapshotForSource(*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"))) {
@@ -158,6 +162,11 @@ void ApplicationController::openFile(const QUrl& file)
     }
     emit documentStateChanged();
     workerProcess_.start(workerExecutable_, {QStringLiteral("--server-name"), serverName_});
+}
+
+void ApplicationController::fitView()
+{
+    emit fitRequested();
 }
 
 void ApplicationController::connectWorker()
@@ -180,10 +189,17 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
     if (!document.isObject()) return;
     const auto nodes = document.object().value(QStringLiteral("nodes")).toArray();
     geometryByNode_.clear();
+    double modelExtent = 0.0;
     for (const auto& value : document.object().value(QStringLiteral("geometry")).toArray()) {
         const auto object = value.toObject();
         const auto nodeId = object.value(QStringLiteral("nodeId")).toString();
         if (!nodeId.isEmpty()) geometryByNode_.insert(nodeId, {object.value(QStringLiteral("surfaceAreaMm2")).toDouble(), object.value(QStringLiteral("volumeMm3")).toDouble()});
+        const auto bounds = object.value(QStringLiteral("boundsMm")).toObject();
+        modelExtent = std::max({modelExtent, bounds.value(QStringLiteral("width")).toDouble(), bounds.value(QStringLiteral("height")).toDouble(), bounds.value(QStringLiteral("depth")).toDouble()});
+    }
+    if (!qFuzzyCompare(modelExtentMm_ + 1.0, modelExtent + 1.0)) {
+        modelExtentMm_ = modelExtent;
+        emit modelExtentChanged();
     }
     QHash<QString, int> quantities;
     for (const auto& value : nodes) {

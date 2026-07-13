@@ -44,6 +44,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(double estimatedMassKg READ estimatedMassKg NOTIFY componentPropertiesChanged)
     Q_PROPERTY(QString activeMaterialId READ activeMaterialId NOTIFY componentPropertiesChanged)
     Q_PROPERTY(bool cacheHit READ cacheHit NOTIFY cacheHitChanged)
+    Q_PROPERTY(double modelExtentMm READ modelExtentMm NOTIFY modelExtentChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -66,6 +67,7 @@ public:
     [[nodiscard]] double estimatedMassKg() const noexcept;
     [[nodiscard]] QString activeMaterialId() const;
     [[nodiscard]] bool cacheHit() const noexcept { return cacheHit_; }
+    [[nodiscard]] double modelExtentMm() const noexcept { return modelExtentMm_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -73,6 +75,7 @@ public:
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
     Q_INVOKABLE void openFile(const QUrl& file);
+    Q_INVOKABLE void fitView();
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
 
 signals:
@@ -83,6 +86,8 @@ signals:
     void snapshotChanged();
     void componentPropertiesChanged();
     void cacheHitChanged();
+    void modelExtentChanged();
+    void fitRequested();
     void meshReady(const QByteArray& meshJson);
 
 private:
@@ -106,6 +111,7 @@ private:
     std::unique_ptr<cache::CacheStore> cacheStore_;
     std::optional<cache::SourceIdentity> pendingSource_;
     bool cacheHit_{false};
+    double modelExtentMm_{};
     QHash<QString, ComponentGeometry> geometryByNode_;
     QHash<QString, QString> materialByNode_;
     tools::MeasurementController measurementController_{this};

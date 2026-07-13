@@ -5,6 +5,11 @@ import Loupe.App
 Item {
     id: root
     property QtObject controller
+    readonly property real fitDistance: Math.max(120, (root.controller ? root.controller.modelExtentMm : 100) * 3.2)
+
+    function fitCamera() {
+        camera.position = Qt.vector3d(fitDistance * 0.7, fitDistance * 0.55, fitDistance)
+    }
 
     MeshGeometry {
         id: importedGeometry
@@ -20,7 +25,7 @@ Item {
 
         PerspectiveCamera {
             id: camera
-            position: Qt.vector3d(180, 140, 260)
+            position: Qt.vector3d(root.fitDistance * 0.7, root.fitDistance * 0.55, root.fitDistance)
             eulerRotation: Qt.vector3d(-22, 32, 0)
         }
         DirectionalLight {
@@ -43,6 +48,9 @@ Item {
         }
         function onMeshReady(meshJson) {
             importedGeometry.appendWorkerMesh(meshJson)
+        }
+        function onFitRequested() {
+            root.fitCamera()
         }
     }
 }

@@ -21,6 +21,7 @@ private slots:
     void ownsInspectionTaskControllers();
     void opensStepThroughWorkerAndRetainsSnapshot();
     void forwardsWorkerMeshToViewer();
+    void fitViewNotifiesViewport();
     void reopensUnchangedStepFromLocalSnapshotCache();
 };
 
@@ -66,6 +67,7 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QVERIFY(!controller.snapshotJson().isEmpty());
     QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
     QVERIFY(controller.assemblyTreeModel()->rowCount() > 0);
+    QVERIFY(controller.modelExtentMm() > 0.0);
     const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
     QVERIFY(!geometry.isEmpty());
     controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());
@@ -85,6 +87,16 @@ void ApplicationControllerTest::forwardsWorkerMeshToViewer()
     QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 10'000);
     const auto mesh = meshSpy.first().at(0).toByteArray();
     QVERIFY(!mesh.isEmpty());
+}
+
+void ApplicationControllerTest::fitViewNotifiesViewport()
+{
+    loupe::app::ApplicationController controller;
+    QSignalSpy fitSpy(&controller, &loupe::app::ApplicationController::fitRequested);
+
+    controller.fitView();
+
+    QCOMPARE(fitSpy.count(), 1);
 }
 
 void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()
