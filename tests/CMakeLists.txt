@@ -59,6 +59,10 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/SourceFingerprint.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/SourceFingerprint.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
@@ -66,7 +70,7 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
+target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Network Qt6::Sql Qt6::Test)
 target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(loupe-application-controller-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
 add_dependencies(loupe-application-controller-tests loupe-worker)
@@ -97,6 +101,10 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/SourceFingerprint.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/SourceFingerprint.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
@@ -104,7 +112,7 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::Test)
+target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::Sql Qt6::Test)
 target_include_directories(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_definitions(loupe-qml-smoke-tests PRIVATE
     LOUPE_MAIN_QML_PATH="${PROJECT_SOURCE_DIR}/src/app/qml/Main.qml"
@@ -221,6 +229,17 @@ target_include_directories(loupe-cache-store-tests PRIVATE "${PROJECT_SOURCE_DIR
 loupe_enable_warnings(loupe-cache-store-tests)
 
 add_test(NAME cache-store COMMAND loupe-cache-store-tests)
+
+add_executable(loupe-source-fingerprint-tests
+    app/test_source_fingerprint.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/cache/SourceFingerprint.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/SourceFingerprint.h"
+)
+target_link_libraries(loupe-source-fingerprint-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-source-fingerprint-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-source-fingerprint-tests)
+
+add_test(NAME source-fingerprint COMMAND loupe-source-fingerprint-tests)
 set_tests_properties(cache-store PROPERTIES
     ENVIRONMENT "QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"

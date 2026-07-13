@@ -15,6 +15,8 @@ qt_add_executable(loupe-app
     cache/CacheKey.h
     cache/CacheStore.cpp
     cache/CacheStore.h
+    cache/SourceFingerprint.cpp
+    cache/SourceFingerprint.h
     worker/WorkerClient.cpp
     worker/WorkerClient.h
     tools/MeasurementController.cpp

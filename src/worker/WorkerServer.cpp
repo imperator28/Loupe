@@ -49,6 +49,8 @@ QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
         {QStringLiteral("occurrenceCount"), static_cast<qint64>(imported.occurrenceCount)},
         {QStringLiteral("nodes"), nodes},
         {QStringLiteral("geometry"), geometry},
+        {QStringLiteral("effectiveUnit"), unitDecision.effectiveUnit == loupe::units::LengthUnit::Inch ? QStringLiteral("in") : QStringLiteral("mm")},
+        {QStringLiteral("sourceToMillimeters"), unitDecision.sourceToMillimeters},
     }).toJson(QJsonDocument::Compact);
 }
 

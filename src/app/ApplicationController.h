@@ -6,14 +6,19 @@
 #include <QString>
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 
 #include "app/tools/CaptureController.h"
 #include "app/models/AssemblyTreeModel.h"
+#include "app/cache/OverrideStore.h"
 #include "app/tools/MeasurementController.h"
 #include "app/tools/SectionController.h"
 #include "app/worker/WorkerClient.h"
 
 namespace loupe::app {
+
+namespace cache { class CacheStore; }
 
 Q_NAMESPACE
 
@@ -38,6 +43,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(double activeVolumeMm3 READ activeVolumeMm3 NOTIFY componentPropertiesChanged)
     Q_PROPERTY(double estimatedMassKg READ estimatedMassKg NOTIFY componentPropertiesChanged)
     Q_PROPERTY(QString activeMaterialId READ activeMaterialId NOTIFY componentPropertiesChanged)
+    Q_PROPERTY(bool cacheHit READ cacheHit NOTIFY cacheHitChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -45,6 +51,7 @@ class ApplicationController : public QObject {
 public:
     explicit ApplicationController(QObject* parent = nullptr);
     explicit ApplicationController(const QString& workerExecutable, QObject* parent = nullptr);
+    ApplicationController(const QString& workerExecutable, const QString& cacheRoot, QObject* parent = nullptr);
     ~ApplicationController() override;
 
     [[nodiscard]] Workspace workspace() const noexcept { return workspace_; }
@@ -58,6 +65,7 @@ public:
     [[nodiscard]] double activeVolumeMm3() const noexcept;
     [[nodiscard]] double estimatedMassKg() const noexcept;
     [[nodiscard]] QString activeMaterialId() const;
+    [[nodiscard]] bool cacheHit() const noexcept { return cacheHit_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -74,6 +82,7 @@ signals:
     void documentStateChanged();
     void snapshotChanged();
     void componentPropertiesChanged();
+    void cacheHitChanged();
 
 private:
     void connectWorker();
@@ -93,6 +102,9 @@ private:
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
     models::AssemblyTreeModel assemblyTreeModel_{this};
+    std::unique_ptr<cache::CacheStore> cacheStore_;
+    std::optional<cache::SourceIdentity> pendingSource_;
+    bool cacheHit_{false};
     QHash<QString, ComponentGeometry> geometryByNode_;
     QHash<QString, QString> materialByNode_;
     tools::MeasurementController measurementController_{this};

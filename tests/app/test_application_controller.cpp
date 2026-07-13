@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTemporaryDir>
 #include <QUrl>
 
 #include "app/ApplicationController.h"
@@ -19,6 +20,7 @@ private slots:
     void selectionShowsComponentInspector();
     void ownsInspectionTaskControllers();
     void opensStepThroughWorkerAndRetainsSnapshot();
+    void reopensUnchangedStepFromLocalSnapshotCache();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -69,6 +71,25 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QVERIFY(controller.assignActiveMaterial(QStringLiteral("aluminum-6061")));
     QVERIFY(controller.activeVolumeMm3() > 0.0);
     QVERIFY(controller.estimatedMassKg() > 0.0);
+}
+
+void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-cache.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QTemporaryDir cacheDirectory;
+    QVERIFY(cacheDirectory.isValid());
+    {
+        loupe::app::ApplicationController initial(QStringLiteral(LOUPE_WORKER_PATH), cacheDirectory.path());
+        initial.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+        QTRY_COMPARE_WITH_TIMEOUT(initial.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
+        QVERIFY(!initial.cacheHit());
+    }
+
+    loupe::app::ApplicationController reopened(QStringLiteral(LOUPE_WORKER_PATH), cacheDirectory.path());
+    reopened.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+
+    QTRY_COMPARE_WITH_TIMEOUT(reopened.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
+    QVERIFY(reopened.cacheHit());
 }
 
 QTEST_MAIN(ApplicationControllerTest)

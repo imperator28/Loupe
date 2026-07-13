@@ -1,4 +1,7 @@
 #include "app/ApplicationController.h"
+#include "app/cache/CacheKey.h"
+#include "app/cache/CacheStore.h"
+#include "app/cache/SourceFingerprint.h"
 #include "core/inspection/MaterialProperties.h"
 
 #include <QCoreApplication>
@@ -26,14 +29,23 @@ QString defaultWorkerExecutable()
 namespace loupe::app {
 
 ApplicationController::ApplicationController(QObject* parent)
-    : ApplicationController(defaultWorkerExecutable(), parent)
+    : ApplicationController(defaultWorkerExecutable(), cache::CacheStore::defaultRoot(), parent)
 {
 }
 
 ApplicationController::ApplicationController(const QString& workerExecutable, QObject* parent)
+    : ApplicationController(workerExecutable, cache::CacheStore::defaultRoot(), parent)
+{
+}
+
+ApplicationController::ApplicationController(const QString& workerExecutable, const QString& cacheRoot, QObject* parent)
     : QObject(parent)
     , workerExecutable_(workerExecutable)
 {
+    try {
+        cacheStore_ = std::make_unique<cache::CacheStore>(cacheRoot, 512LL * 1024LL * 1024LL);
+    } catch (const std::exception&) {
+    }
     connect(&workerProcess_, &QProcess::started, this, &ApplicationController::connectWorker);
     connect(&workerProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
         documentState_ = DocumentState::WorkerFailed;
@@ -43,6 +55,12 @@ ApplicationController::ApplicationController(const QString& workerExecutable, QO
         if (requestId != activeRequestId_) return;
         applySnapshotToTree(snapshot);
         snapshotJson_ = QString::fromUtf8(snapshot);
+        if (cacheStore_ && pendingSource_) {
+            const auto document = QJsonDocument::fromJson(snapshot).object();
+            const cache::UnitDecision unit{document.value(QStringLiteral("effectiveUnit")).toString(), document.value(QStringLiteral("sourceToMillimeters")).toDouble(1.0)};
+            const auto key = cache::CacheKey::from(*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"), unit);
+            cacheStore_->put(key, snapshot, {*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"), unit});
+        }
         documentState_ = DocumentState::TreeReady;
         emit snapshotChanged();
         emit documentStateChanged();
@@ -105,15 +123,36 @@ void ApplicationController::openFile(const QUrl& file)
         workerProcess_.waitForFinished(1'000);
     }
     pendingPath_ = file.toLocalFile();
+    pendingSource_ = cache::SourceFingerprint::fromFile(pendingPath_);
+    if (!pendingSource_) {
+        documentState_ = DocumentState::Invalid;
+        emit documentStateChanged();
+        return;
+    }
     snapshotJson_.clear();
     geometryByNode_.clear();
     materialByNode_.clear();
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
+    cacheHit_ = false;
     serverName_ = QStringLiteral("loupe-shell-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
     documentState_ = DocumentState::Opening;
     emit snapshotChanged();
     emit componentPropertiesChanged();
+    emit cacheHitChanged();
+    if (cacheStore_) {
+        if (const auto cached = cacheStore_->readSnapshotForSource(*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"))) {
+            applySnapshotToTree(*cached);
+            snapshotJson_ = QString::fromUtf8(*cached);
+            documentState_ = DocumentState::TreeReady;
+            cacheHit_ = true;
+            emit snapshotChanged();
+            emit componentPropertiesChanged();
+            emit documentStateChanged();
+            emit cacheHitChanged();
+            return;
+        }
+    }
     emit documentStateChanged();
     workerProcess_.start(workerExecutable_, {QStringLiteral("--server-name"), serverName_});
 }
