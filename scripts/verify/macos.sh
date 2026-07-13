@@ -10,5 +10,5 @@ for preset in macos-arm64-debug macos-arm64-release; do
   ctest --preset "$preset" --output-on-failure
 done
 mkdir -p "$(dirname "$evidence_path")"
-printf '{\n  "platform": "macos-arm64",\n  "architecture": "arm64",\n  "compiler": "%s",\n  "commit": "%s",\n  "status": "passed"\n}\n' "$(clang --version | head -n 1 | sed 's/"/\\"/g')" "$(git -C "$root" rev-parse HEAD)" > "$evidence_path"
+printf '{\n  "platform": "macos-arm64",\n  "architecture": "arm64",\n  "compiler": "%s",\n  "commit": "%s",\n  "presets": [\n    {"preset": "macos-arm64-debug", "configured": true, "built": true, "testsPassed": true},\n    {"preset": "macos-arm64-release", "configured": true, "built": true, "testsPassed": true}\n  ]\n}\n' "$(clang --version | head -n 1 | sed 's/"/\\"/g')" "$(git -C "$root" rev-parse HEAD)" > "$evidence_path"
 echo "Wrote verification evidence: $evidence_path"
