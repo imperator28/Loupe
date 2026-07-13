@@ -76,6 +76,8 @@ Item {
                 anchors.bottomMargin: 24
                 onToolTriggered: function(tool) {
                     if (tool === "fit") root.controller.fitView()
+                    else if (tool === "isolate") root.controller.isolateActiveNode()
+                    else if (tool === "ghost") root.controller.ghostActiveNode()
                     else if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
                 }
             }

@@ -22,6 +22,7 @@ private slots:
     void opensStepThroughWorkerAndRetainsSnapshot();
     void forwardsWorkerMeshToViewer();
     void fitViewNotifiesViewport();
+    void isolatesAndGhostsTheActiveComponentForViewerPresentation();
     void reopensUnchangedStepFromLocalSnapshotCache();
 };
 
@@ -85,7 +86,8 @@ void ApplicationControllerTest::forwardsWorkerMeshToViewer()
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
 
     QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 10'000);
-    const auto mesh = meshSpy.first().at(0).toByteArray();
+    QVERIFY(!meshSpy.first().at(0).toString().isEmpty());
+    const auto mesh = meshSpy.first().at(1).toByteArray();
     QVERIFY(!mesh.isEmpty());
 }
 
@@ -97,6 +99,19 @@ void ApplicationControllerTest::fitViewNotifiesViewport()
     controller.fitView();
 
     QCOMPARE(fitSpy.count(), 1);
+}
+
+void ApplicationControllerTest::isolatesAndGhostsTheActiveComponentForViewerPresentation()
+{
+    loupe::app::ApplicationController controller;
+    controller.setActiveNodeId(QStringLiteral("occ-1"));
+
+    controller.isolateActiveNode();
+    QCOMPARE(controller.viewerPresentation(), loupe::app::ViewerPresentation::Isolate);
+    controller.ghostActiveNode();
+    QCOMPARE(controller.viewerPresentation(), loupe::app::ViewerPresentation::Ghost);
+    controller.restoreFullAssembly();
+    QCOMPARE(controller.viewerPresentation(), loupe::app::ViewerPresentation::Full);
 }
 
 void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()

@@ -67,9 +67,9 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         emit snapshotChanged();
         emit documentStateChanged();
     });
-    connect(&workerClient_, &worker::WorkerClient::meshReady, this, [this](quint64 requestId, const QString&, const QByteArray& meshJson) {
+    connect(&workerClient_, &worker::WorkerClient::meshReady, this, [this](quint64 requestId, const QString& nodeId, const QByteArray& meshJson) {
         if (requestId != activeRequestId_) return;
-        emit meshReady(meshJson);
+        emit meshReady(nodeId, meshJson);
     });
     connect(&workerClient_, &worker::WorkerClient::requestFailed, this, [this](quint64 requestId, const QString&, const QString&, bool) {
         if (requestId != activeRequestId_) return;
@@ -167,6 +167,27 @@ void ApplicationController::openFile(const QUrl& file)
 void ApplicationController::fitView()
 {
     emit fitRequested();
+}
+
+void ApplicationController::isolateActiveNode()
+{
+    if (activeNodeId_.isEmpty()) return;
+    viewerPresentation_ = ViewerPresentation::Isolate;
+    emit viewerPresentationChanged();
+}
+
+void ApplicationController::ghostActiveNode()
+{
+    if (activeNodeId_.isEmpty()) return;
+    viewerPresentation_ = ViewerPresentation::Ghost;
+    emit viewerPresentationChanged();
+}
+
+void ApplicationController::restoreFullAssembly()
+{
+    if (viewerPresentation_ == ViewerPresentation::Full) return;
+    viewerPresentation_ = ViewerPresentation::Full;
+    emit viewerPresentationChanged();
 }
 
 void ApplicationController::connectWorker()

@@ -31,6 +31,9 @@ Q_ENUM_NS(InspectorMode)
 enum class DocumentState { Empty, Opening, TreeReady, WorkerFailed, Invalid };
 Q_ENUM_NS(DocumentState)
 
+enum class ViewerPresentation { Full, Isolate, Ghost };
+Q_ENUM_NS(ViewerPresentation)
+
 class ApplicationController : public QObject {
     Q_OBJECT
     Q_PROPERTY(Workspace workspace READ workspace WRITE setWorkspace NOTIFY workspaceChanged)
@@ -45,6 +48,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QString activeMaterialId READ activeMaterialId NOTIFY componentPropertiesChanged)
     Q_PROPERTY(bool cacheHit READ cacheHit NOTIFY cacheHitChanged)
     Q_PROPERTY(double modelExtentMm READ modelExtentMm NOTIFY modelExtentChanged)
+    Q_PROPERTY(ViewerPresentation viewerPresentation READ viewerPresentation NOTIFY viewerPresentationChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -68,6 +72,7 @@ public:
     [[nodiscard]] QString activeMaterialId() const;
     [[nodiscard]] bool cacheHit() const noexcept { return cacheHit_; }
     [[nodiscard]] double modelExtentMm() const noexcept { return modelExtentMm_; }
+    [[nodiscard]] ViewerPresentation viewerPresentation() const noexcept { return viewerPresentation_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -76,6 +81,9 @@ public:
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void fitView();
+    Q_INVOKABLE void isolateActiveNode();
+    Q_INVOKABLE void ghostActiveNode();
+    Q_INVOKABLE void restoreFullAssembly();
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
 
 signals:
@@ -88,7 +96,8 @@ signals:
     void cacheHitChanged();
     void modelExtentChanged();
     void fitRequested();
-    void meshReady(const QByteArray& meshJson);
+    void viewerPresentationChanged();
+    void meshReady(const QString& nodeId, const QByteArray& meshJson);
 
 private:
     void connectWorker();
@@ -112,6 +121,7 @@ private:
     std::optional<cache::SourceIdentity> pendingSource_;
     bool cacheHit_{false};
     double modelExtentMm_{};
+    ViewerPresentation viewerPresentation_{ViewerPresentation::Full};
     QHash<QString, ComponentGeometry> geometryByNode_;
     QHash<QString, QString> materialByNode_;
     tools::MeasurementController measurementController_{this};
