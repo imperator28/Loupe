@@ -1,6 +1,6 @@
 # Phase 1 Inspection Evidence
 
-Commit: `<git revision>`  
+Commit: `<git revision>`
 Manifest baseline: `<vcpkg baseline>`
 
 ## Gate C: inspection workflow
