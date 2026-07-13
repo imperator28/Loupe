@@ -9,9 +9,9 @@
 
 namespace loupe::inspection {
 
-GeometryAnalysis analyze(const TopoDS_Shape& shape)
+GeometryAnalysis analyze(const TopoDS_Shape& shape, const double sourceToMillimeters)
 {
-    if (shape.IsNull()) return {};
+    if (shape.IsNull() || !std::isfinite(sourceToMillimeters) || sourceToMillimeters <= 0.0) return {};
 
     GProp_GProps surfaceProperties;
     GProp_GProps volumeProperties;
@@ -30,9 +30,9 @@ GeometryAnalysis analyze(const TopoDS_Shape& shape)
     double maxZ{};
     bounds.Get(minX, minY, minZ, maxX, maxY, maxZ);
 
-    const auto surfaceArea = surfaceProperties.Mass();
-    const auto volume = volumeProperties.Mass();
-    const BoundsMm extents{maxX - minX, maxY - minY, maxZ - minZ};
+    const auto surfaceArea = surfaceProperties.Mass() * sourceToMillimeters * sourceToMillimeters;
+    const auto volume = volumeProperties.Mass() * sourceToMillimeters * sourceToMillimeters * sourceToMillimeters;
+    const BoundsMm extents{(maxX - minX) * sourceToMillimeters, (maxY - minY) * sourceToMillimeters, (maxZ - minZ) * sourceToMillimeters};
     const bool valid = std::isfinite(surfaceArea) && std::isfinite(volume)
         && std::isfinite(extents.width) && std::isfinite(extents.height) && std::isfinite(extents.depth);
     return {valid, surfaceArea, volume, extents};

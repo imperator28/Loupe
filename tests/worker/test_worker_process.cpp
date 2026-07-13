@@ -129,10 +129,14 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
     QCOMPARE(event.value(QStringLiteral("type")).toString(), QStringLiteral("snapshotReady"));
     const auto snapshot = QByteArray::fromBase64(event.value(QStringLiteral("snapshotBase64")).toString().toLatin1());
     QVERIFY(!snapshot.isEmpty());
-    const auto nodes = QJsonDocument::fromJson(snapshot).object().value(QStringLiteral("nodes")).toArray();
+    const auto document = QJsonDocument::fromJson(snapshot).object();
+    const auto nodes = document.value(QStringLiteral("nodes")).toArray();
     QVERIFY(std::any_of(nodes.cbegin(), nodes.cend(), [](const QJsonValue& value) {
         return !value.toObject().value(QStringLiteral("parentId")).toString().isEmpty();
     }));
+    const auto geometry = document.value(QStringLiteral("geometry")).toArray();
+    QVERIFY(!geometry.isEmpty());
+    QVERIFY(geometry.first().toObject().value(QStringLiteral("volumeMm3")).toDouble() > 0.0);
     QVERIFY(worker.state() == QProcess::Running);
 }
 

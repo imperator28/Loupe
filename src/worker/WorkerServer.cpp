@@ -1,6 +1,8 @@
 #include "worker/WorkerServer.h"
 
 #include "core/import/StepImporter.h"
+#include "core/inspection/GeometryAnalysis.h"
+#include "core/units/UnitPolicy.h"
 #include "protocol/ProtocolTypes.h"
 
 #include <QFileInfo>
@@ -10,6 +12,7 @@
 #include <QTimer>
 
 #include <exception>
+#include <optional>
 #include <type_traits>
 
 namespace loupe::worker {
@@ -27,12 +30,25 @@ QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
             {QStringLiteral("definitionId"), node.definitionId ? QString::fromStdString(*node.definitionId) : QString{}},
         });
     }
+    QJsonArray geometry;
+    const auto unitDecision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    for (std::size_t index = 0; index < imported.native->shapes.size() && index < imported.native->shapeNodeIds.size(); ++index) {
+        const auto analysis = loupe::inspection::analyze(imported.native->shapes[index], unitDecision.sourceToMillimeters);
+        if (!analysis.valid) continue;
+        geometry.append(QJsonObject{
+            {QStringLiteral("nodeId"), QString::fromStdString(imported.native->shapeNodeIds[index])},
+            {QStringLiteral("surfaceAreaMm2"), analysis.surfaceAreaMm2},
+            {QStringLiteral("volumeMm3"), analysis.volumeMm3},
+            {QStringLiteral("boundsMm"), QJsonObject{{QStringLiteral("width"), analysis.boundsMm.width}, {QStringLiteral("height"), analysis.boundsMm.height}, {QStringLiteral("depth"), analysis.boundsMm.depth}}},
+        });
+    }
     return QJsonDocument(QJsonObject{
         {QStringLiteral("sourceHash"), QString::fromStdString(imported.snapshot.sourceHash)},
         {QStringLiteral("classification"), static_cast<int>(imported.snapshot.classification)},
         {QStringLiteral("definitionCount"), static_cast<qint64>(imported.definitionCount)},
         {QStringLiteral("occurrenceCount"), static_cast<qint64>(imported.occurrenceCount)},
         {QStringLiteral("nodes"), nodes},
+        {QStringLiteral("geometry"), geometry},
     }).toJson(QJsonDocument::Compact);
 }
 

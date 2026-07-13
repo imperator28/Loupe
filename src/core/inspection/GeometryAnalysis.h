@@ -17,6 +17,6 @@ struct GeometryAnalysis final {
     BoundsMm boundsMm;
 };
 
-[[nodiscard]] GeometryAnalysis analyze(const TopoDS_Shape& shape);
+[[nodiscard]] GeometryAnalysis analyze(const TopoDS_Shape& shape, double sourceToMillimeters = 1.0);
 
 } // namespace loupe::inspection

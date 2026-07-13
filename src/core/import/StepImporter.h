@@ -18,6 +18,7 @@ struct NativeDocument {
     occ::handle<TDocStd_Document> document;
     std::vector<TDF_Label> labels;
     std::vector<TopoDS_Shape> shapes;
+    std::vector<std::string> shapeNodeIds;
 };
 
 struct ImportResult {

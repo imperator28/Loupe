@@ -27,3 +27,13 @@ TEST_CASE("geometry analysis reports cylindrical volume", "[inspection][geometry
     REQUIRE(analysis.valid);
     REQUIRE(analysis.volumeMm3 == Catch::Approx(153.0 * std::numbers::pi));
 }
+
+TEST_CASE("geometry analysis normalizes length area and volume to millimeters", "[inspection][geometry]")
+{
+    const auto analysis = loupe::inspection::analyze(BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(), 25.4);
+
+    REQUIRE(analysis.valid);
+    REQUIRE(analysis.boundsMm.width == Catch::Approx(25.4));
+    REQUIRE(analysis.surfaceAreaMm2 == Catch::Approx(22.0 * 25.4 * 25.4));
+    REQUIRE(analysis.volumeMm3 == Catch::Approx(6.0 * 25.4 * 25.4 * 25.4));
+}

@@ -147,6 +147,7 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     auto native = std::const_pointer_cast<NativeDocument>(result.native);
     native->labels.push_back(label);
     native->shapes.push_back(XCAFDoc_ShapeTool::GetShape(label));
+    native->shapeNodeIds.push_back(id);
 }
 
 } // namespace
