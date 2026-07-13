@@ -24,6 +24,7 @@ private slots:
     void fitViewNotifiesViewport();
     void isolatesAndGhostsTheActiveComponentForViewerPresentation();
     void reopensUnchangedStepFromLocalSnapshotCache();
+    void manualUnitOverrideReimportsAtTheRequestedScale();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -134,6 +135,24 @@ void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()
     QTRY_COMPARE_WITH_TIMEOUT(reopened.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
     QVERIFY(reopened.cacheHit());
     QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 10'000);
+}
+
+void ApplicationControllerTest::manualUnitOverrideReimportsAtTheRequestedScale()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-unit-override.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QTemporaryDir cacheDirectory;
+    QVERIFY(cacheDirectory.isValid());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH), cacheDirectory.path());
+
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
+    const auto millimeterExtent = controller.modelExtentMm();
+    QCOMPARE(controller.effectiveUnit(), QStringLiteral("mm"));
+
+    QVERIFY(controller.setUnitOverride(QStringLiteral("in")));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
+    QCOMPARE(controller.effectiveUnit(), QStringLiteral("in"));
+    QVERIFY(qAbs(controller.modelExtentMm() - millimeterExtent * 25.4) < 0.01);
 }
 
 QTEST_MAIN(ApplicationControllerTest)

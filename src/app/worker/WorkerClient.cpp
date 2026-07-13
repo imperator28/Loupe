@@ -25,10 +25,12 @@ bool WorkerClient::connectToServer(const QString& serverName, const int timeoutM
     return socket_->waitForConnected(timeoutMs);
 }
 
-std::uint64_t WorkerClient::openFile(const QString& path)
+std::uint64_t WorkerClient::openFile(const QString& path, const std::optional<QString>& unitOverride)
 {
     const auto requestId = nextRequestId_++;
-    writeCommand(protocol::encode(protocol::OpenFile{requestId, path, std::nullopt}));
+    const auto overrideValue = unitOverride ? std::optional<protocol::UnitOverride>{protocol::UnitOverride{*unitOverride, 1.0, QStringLiteral("User requested unit interpretation")}}
+                                           : std::nullopt;
+    writeCommand(protocol::encode(protocol::OpenFile{requestId, path, overrideValue}));
     return requestId;
 }
 

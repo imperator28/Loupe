@@ -5,6 +5,7 @@
 #include "core/inspection/MaterialProperties.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -46,6 +47,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
 {
     try {
         cacheStore_ = std::make_unique<cache::CacheStore>(cacheRoot, 512LL * 1024LL * 1024LL);
+        overrideStore_ = std::make_unique<cache::OverrideStore>(QDir(cacheRoot).filePath(QStringLiteral("unit-overrides.sqlite")));
     } catch (const std::exception&) {
     }
     connect(&workerProcess_, &QProcess::started, this, &ApplicationController::connectWorker);
@@ -135,6 +137,12 @@ void ApplicationController::openFile(const QUrl& file)
         emit documentStateChanged();
         return;
     }
+    pendingUnitOverride_.reset();
+    if (overrideStore_) {
+        if (const auto stored = overrideStore_->get(*pendingSource_); stored && (stored->unit == QStringLiteral("mm") || stored->unit == QStringLiteral("in"))) {
+            pendingUnitOverride_ = stored->unit;
+        }
+    }
     snapshotJson_.clear();
     geometryByNode_.clear();
     materialByNode_.clear();
@@ -150,7 +158,7 @@ void ApplicationController::openFile(const QUrl& file)
     emit modelExtentChanged();
     emit effectiveUnitChanged();
     emit cacheHitChanged();
-    if (cacheStore_) {
+    if (cacheStore_ && !pendingUnitOverride_) {
         if (const auto cached = cacheStore_->readSnapshotForSource(*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"))) {
             applySnapshotToTree(*cached);
             snapshotJson_ = QString::fromUtf8(*cached);
@@ -195,7 +203,7 @@ void ApplicationController::restoreFullAssembly()
 void ApplicationController::connectWorker()
 {
     if (workerClient_.connectToServer(serverName_, 100)) {
-        activeRequestId_ = workerClient_.openFile(pendingPath_);
+        activeRequestId_ = workerClient_.openFile(pendingPath_, pendingUnitOverride_);
         return;
     }
     if (++connectionAttempts_ >= 50) {
@@ -281,6 +289,18 @@ bool ApplicationController::assignActiveMaterial(const QString& materialId)
     if (activeNodeId_.isEmpty() || !geometryByNode_.contains(activeNodeId_) || !inspection::MaterialLibrary::find(materialId.toStdString())) return false;
     materialByNode_.insert(activeNodeId_, materialId);
     emit componentPropertiesChanged();
+    return true;
+}
+
+bool ApplicationController::setUnitOverride(const QString& unit)
+{
+    if (!pendingSource_ || pendingPath_.isEmpty() || !overrideStore_ || (unit != QStringLiteral("mm") && unit != QStringLiteral("in"))) return false;
+    try {
+        overrideStore_->put(*pendingSource_, {unit, 1.0, QStringLiteral("User requested unit interpretation")});
+    } catch (const std::exception&) {
+        return false;
+    }
+    openFile(QUrl::fromLocalFile(pendingPath_));
     return true;
 }
 

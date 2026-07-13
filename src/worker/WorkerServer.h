@@ -6,6 +6,9 @@
 #include <QPointer>
 
 #include <cstdint>
+#include <optional>
+
+#include "protocol/ProtocolTypes.h"
 
 class QLocalSocket;
 class QTimer;
@@ -25,7 +28,7 @@ private slots:
 private:
     void send(QJsonObject event);
     void fail(std::uint64_t requestId, const QString& code, const QString& message);
-    void open(std::uint64_t requestId, const QString& path);
+    void open(std::uint64_t requestId, const QString& path, const std::optional<protocol::UnitOverride>& unitOverride);
     void cancel(std::uint64_t requestId);
 
     QLocalServer server_;

@@ -5,6 +5,7 @@
 #include <QString>
 
 #include <cstdint>
+#include <optional>
 
 class QLocalSocket;
 
@@ -17,7 +18,7 @@ public:
     explicit WorkerClient(QObject* parent = nullptr);
 
     [[nodiscard]] bool connectToServer(const QString& serverName, int timeoutMs = 3'000);
-    [[nodiscard]] std::uint64_t openFile(const QString& path);
+    [[nodiscard]] std::uint64_t openFile(const QString& path, const std::optional<QString>& unitOverride = std::nullopt);
     void cancel(std::uint64_t requestId);
 
 signals:

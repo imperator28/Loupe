@@ -28,7 +28,16 @@
 namespace loupe::worker {
 namespace {
 
-QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
+std::optional<loupe::units::UnitOverride> toUnitOverride(const QString& unit, const double factor, const QString& reason)
+{
+    if (unit.isEmpty()) return std::nullopt;
+    const auto interpretAs = unit == QStringLiteral("mm") ? loupe::units::LengthUnit::Millimeter
+                           : unit == QStringLiteral("in") ? loupe::units::LengthUnit::Inch
+                                                           : loupe::units::LengthUnit::Unknown;
+    return loupe::units::UnitOverride{interpretAs, factor, reason.toStdString()};
+}
+
+QByteArray encodeSnapshot(const loupe::import::ImportResult& imported, const loupe::units::UnitDecision& unitDecision)
 {
     QJsonArray nodes;
     for (const auto& node : imported.snapshot.nodes) {
@@ -41,7 +50,6 @@ QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
         });
     }
     QJsonArray geometry;
-    const auto unitDecision = loupe::units::decide(imported.unitEvidence, std::nullopt);
     for (std::size_t index = 0; index < imported.native->shapes.size() && index < imported.native->shapeNodeIds.size(); ++index) {
         const auto analysis = loupe::inspection::analyze(imported.native->shapes[index], unitDecision.sourceToMillimeters);
         if (!analysis.valid) continue;
@@ -130,7 +138,7 @@ void WorkerServer::readCommands()
             std::visit([this](const auto& value) {
                 using Value = std::decay_t<decltype(value)>;
                 if constexpr (std::is_same_v<Value, protocol::OpenFile>) {
-                    open(value.requestId, value.path);
+                    open(value.requestId, value.path, value.unitOverride);
                 } else if constexpr (std::is_same_v<Value, protocol::Cancel>) {
                     cancel(value.requestId);
                 }
@@ -156,7 +164,7 @@ void WorkerServer::fail(const std::uint64_t requestId, const QString& code, cons
           {QStringLiteral("code"), code}, {QStringLiteral("message"), message}, {QStringLiteral("recoverable"), true}});
 }
 
-void WorkerServer::open(const std::uint64_t requestId, const QString& path)
+void WorkerServer::open(const std::uint64_t requestId, const QString& path, const std::optional<protocol::UnitOverride>& unitOverride)
 {
     if (!QFileInfo::exists(path)) {
         fail(requestId, QStringLiteral("read_failed"), QStringLiteral("The requested file does not exist"));
@@ -171,12 +179,15 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path)
     activeSessions_.insert(requestId, completion);
     connect(completion, &QTimer::timeout, this, [this, requestId, completion] {
         const auto path = completion->property("sourcePath").toString();
+        const auto unit = completion->property("overrideUnit").toString();
+        const auto factor = completion->property("overrideFactor").toDouble();
+        const auto reason = completion->property("overrideReason").toString();
         activeSessions_.remove(requestId);
         try {
             const auto imported = import::StepImporter{}.read(path.toStdString());
+            const auto unitDecision = loupe::units::decide(imported.unitEvidence, toUnitOverride(unit, factor, reason));
             send({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
-                  {QStringLiteral("snapshotBase64"), QString::fromLatin1(encodeSnapshot(imported).toBase64())}});
-            const auto unitDecision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+                  {QStringLiteral("snapshotBase64"), QString::fromLatin1(encodeSnapshot(imported, unitDecision).toBase64())}});
             for (std::size_t index = 0; index < imported.native->shapes.size() && index < imported.native->shapeNodeIds.size(); ++index) {
                 const auto mesh = encodeMesh(imported.native->shapes[index], unitDecision.sourceToMillimeters);
                 if (QJsonDocument::fromJson(mesh).object().value(QStringLiteral("indices")).toArray().isEmpty()) continue;
@@ -191,6 +202,11 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path)
         completion->deleteLater();
     });
     completion->setProperty("sourcePath", path);
+    if (unitOverride) {
+        completion->setProperty("overrideUnit", unitOverride->unit);
+        completion->setProperty("overrideFactor", unitOverride->customFactor);
+        completion->setProperty("overrideReason", unitOverride->reason);
+    }
     completion->start(0);
 }
 

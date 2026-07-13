@@ -87,6 +87,7 @@ public:
     Q_INVOKABLE void ghostActiveNode();
     Q_INVOKABLE void restoreFullAssembly();
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
+    Q_INVOKABLE bool setUnitOverride(const QString& unit);
 
 signals:
     void workspaceChanged();
@@ -121,7 +122,9 @@ private:
     std::uint64_t activeRequestId_{};
     models::AssemblyTreeModel assemblyTreeModel_{this};
     std::unique_ptr<cache::CacheStore> cacheStore_;
+    std::unique_ptr<cache::OverrideStore> overrideStore_;
     std::optional<cache::SourceIdentity> pendingSource_;
+    std::optional<QString> pendingUnitOverride_;
     bool cacheHit_{false};
     double modelExtentMm_{};
     ViewerPresentation viewerPresentation_{ViewerPresentation::Full};

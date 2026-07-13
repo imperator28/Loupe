@@ -62,7 +62,44 @@ ApplicationWindow {
         modal: true
         anchors.centerIn: Overlay.overlay
         padding: 20
-        contentItem: Label { text: qsTr("Review source units before export.") }
+        contentItem: ColumnLayout {
+            width: 300
+            spacing: 12
+
+            Label {
+                text: qsTr("Source unit review")
+                font.bold: true
+                font.pixelSize: 16
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: qsTr("Current interpretation: %1. Changing it reimports this file, rescales geometry analysis, measurements, and mass estimates, and records the choice for this exact source file.").arg(root.controller.effectiveUnit)
+            }
+            Label {
+                text: qsTr("Largest analyzed extent: %1 mm").arg(root.controller.modelExtentMm.toFixed(3))
+                color: "#8ea3b8"
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    Layout.fillWidth: true
+                    text: qsTr("Interpret as mm")
+                    enabled: root.controller.documentState === AppState.TreeReady
+                    onClicked: {
+                        if (root.controller.setUnitOverride("mm")) unitReview.close()
+                    }
+                }
+                Button {
+                    Layout.fillWidth: true
+                    text: qsTr("Interpret as inches")
+                    enabled: root.controller.documentState === AppState.TreeReady
+                    onClicked: {
+                        if (root.controller.setUnitOverride("in")) unitReview.close()
+                    }
+                }
+            }
+        }
     }
 
     OpenStepDialog {

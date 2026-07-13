@@ -1,5 +1,7 @@
 #include <QtTest/QTest>
 #include <QSignalSpy>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include "app/worker/WorkerClient.h"
 
@@ -30,6 +32,7 @@ class WorkerClientTest final : public QObject
 
 private slots:
     void openFileDeliversWorkerSnapshot();
+    void openFileSendsRequestedUnitOverride();
     void meshEventDeliversTriangulationPayload();
 };
 
@@ -61,6 +64,25 @@ void WorkerClientTest::openFileDeliversWorkerSnapshot()
     QTRY_COMPARE_WITH_TIMEOUT(snapshotSpy.count(), 1, 3'000);
     QCOMPARE(snapshotSpy.first().at(0).toULongLong(), 1ULL);
     QCOMPARE(snapshotSpy.first().at(1).toByteArray(), QByteArrayLiteral("{\"nodes\":[]}"));
+}
+
+void WorkerClientTest::openFileSendsRequestedUnitOverride()
+{
+    QLocalServer server;
+    const auto name = serverName();
+    QLocalServer::removeServer(name);
+    QVERIFY(server.listen(name));
+
+    loupe::app::worker::WorkerClient client;
+    QVERIFY(client.connectToServer(name));
+    QVERIFY(server.waitForNewConnection(3'000));
+    auto* peer = server.nextPendingConnection();
+    QVERIFY(peer != nullptr);
+
+    static_cast<void>(client.openFile(QStringLiteral("C:/models/assembly.step"), QStringLiteral("in")));
+    const auto command = QJsonDocument::fromJson(readLine(*peer)).object();
+    QCOMPARE(command.value(QStringLiteral("unitOverride")).toObject().value(QStringLiteral("unit")).toString(), QStringLiteral("in"));
+    QCOMPARE(command.value(QStringLiteral("unitOverride")).toObject().value(QStringLiteral("customFactor")).toDouble(), 1.0);
 }
 
 void WorkerClientTest::meshEventDeliversTriangulationPayload()
