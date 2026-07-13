@@ -171,3 +171,27 @@ TEST_CASE("corpus rejects a case that omits the mandatory full-flow contract", "
     const auto result = runSpike({textArg("corpus"), cases, textArg("--evidence"), directory.path() / "evidence"});
     REQUIRE(result.exitCode == 6);
 }
+
+TEST_CASE("spike benchmark records a privacy-safe complete metric manifest", "[cli]")
+{
+    const ScopedDirectory directory{"benchmark"};
+    const auto fixture = loupe::tests::writeSingleCylinderStep(directory.path() / "source.step");
+    const auto cases = directory.path() / "cases.json";
+    std::ofstream(cases) << nlohmann::json{{"schemaVersion", 1}, {"cases", nlohmann::json::array({{{"id", "benchmark-case"}, {"file", fixture.string()}, {"requiredFullFlow", true}}})}}.dump(2);
+    const auto output = directory.path() / "benchmark";
+
+    const auto result = runSpike({textArg("benchmark"), cases, textArg("--out"), output});
+
+    REQUIRE(result.exitCode == 0);
+    REQUIRE(std::filesystem::exists(output / "metrics.json"));
+    REQUIRE(std::filesystem::exists(output / "metrics.csv"));
+    nlohmann::json report;
+    std::ifstream(output / "metrics.json") >> report;
+    const auto& row = report.at("cases").at(0);
+    REQUIRE(row.at("sourceHash").is_string());
+    REQUIRE(row.at("treeReadyMs").is_number_unsigned());
+    for (const auto* field : {"shellReadyMs", "fileAcknowledgementMs", "coarseViewMs", "firstInteractionMs", "cachedReopenMs", "selectionLatencyP50Ms", "selectionLatencyP95Ms", "frameTimeP50Ms", "frameTimeP95Ms", "peakMemoryBytes", "idleCpuPercent"}) {
+        REQUIRE(row.at(field).is_null());
+    }
+    REQUIRE(row.at("unavailableMetrics").is_array());
+}

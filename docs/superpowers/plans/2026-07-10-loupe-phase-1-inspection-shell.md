@@ -849,7 +849,7 @@ Run:
 ```powershell
 cmake --build --preset windows-release
 ctest --preset windows-release --output-on-failure
-build/windows-release/tools/bench/inspect_benchmark.exe corpus/private/cases.json --out evidence/phase-1/windows
+build/windows-release/src/spike/loupe-spike.exe benchmark corpus/private/cases.json --out docs/evidence/benchmark/windows
 ```
 
 Expected: all tests pass; benchmark files contain every required metric for every selected reference case.

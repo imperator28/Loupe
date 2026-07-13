@@ -46,6 +46,13 @@ Use the two approved private corpus STEP files. Record only the case ID, source 
 - Open each model, confirm units, tree, component selection, point measurement, topology metrics, isolate/ghost, and X/Y/Z section flip.
 - Save a 1x and 4x PNG capture; verify dimensions, alpha choice, and output readability.
 - Confirm a cached reopen appears before streamed mesh completion.
+- Generate the privacy-safe benchmark manifest from the local private-corpus manifest:
+
+  ```bash
+  build/macos-arm64-release/src/spike/loupe-spike benchmark corpus/private/cases.json --out docs/evidence/benchmark/macos
+  ```
+
+  `treeReadyMs` is measured by the CLI. The manifest intentionally leaves shell, interaction, GPU-frame, memory, and CPU fields `null`; record those only from the native runtime session rather than inventing values.
 - Run `./scripts/verify/macos.sh` after the Debug and Release checks. It writes the platform evidence record.
 
 The M-series row is `pending` until all of these actions have fresh evidence. Phase 3, not Phase 1, owns signing, notarization, and a distributable macOS package.

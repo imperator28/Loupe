@@ -379,17 +379,34 @@ int runCorpus(const std::vector<std::string>& args)
 
 int runBenchmark(const std::vector<std::string>& args)
 {
-    if (args.size() != 4 || args[0] != "benchmark") fail(invalidArguments, "usage: benchmark <cases.json> --csv <file>");
-    const std::filesystem::path caseFile(args[1]); const std::filesystem::path csv = optionValue(args, "--csv"); const nlohmann::json document = loadCases(caseFile);
-    std::filesystem::create_directories(csv.parent_path().empty() ? std::filesystem::current_path() : csv.parent_path());
-    std::ofstream output(csv); if (!output) fail(corpusContractFailure, "unable to write benchmark CSV"); output << "caseId,sourceHash,importMilliseconds,status\n";
+    if (args.size() != 4 || args[0] != "benchmark" || args[2] != "--out") fail(invalidArguments, "usage: benchmark <cases.json> --out <directory>");
+    const std::filesystem::path caseFile(args[1]); const std::filesystem::path outputDirectory = optionValue(args, "--out"); const nlohmann::json document = loadCases(caseFile);
+    std::filesystem::create_directories(outputDirectory);
+    const auto csvPath = outputDirectory / "metrics.csv";
+    std::ofstream output(csvPath); if (!output) fail(corpusContractFailure, "unable to write benchmark CSV");
+    output << "caseId,sourceHash,shellReadyMs,fileAcknowledgementMs,treeReadyMs,coarseViewMs,firstInteractionMs,cachedReopenMs,selectionLatencyP50Ms,selectionLatencyP95Ms,frameTimeP50Ms,frameTimeP95Ms,peakMemoryBytes,idleCpuPercent,status\n";
+    nlohmann::json results = nlohmann::json::array();
+    const nlohmann::json unavailable = nlohmann::json::array({"shellReadyMs", "fileAcknowledgementMs", "coarseViewMs", "firstInteractionMs", "cachedReopenMs", "selectionLatencyP50Ms", "selectionLatencyP95Ms", "frameTimeP50Ms", "frameTimeP95Ms", "peakMemoryBytes", "idleCpuPercent"});
     for (const auto& value : document["cases"]) {
         const std::string id = value["id"].get<std::string>(); const std::filesystem::path source = std::filesystem::path(value["file"].get<std::string>()).is_relative() ? caseFile.parent_path() / value["file"].get<std::string>() : std::filesystem::path(value["file"].get<std::string>());
+        nlohmann::json row{{"caseId", id}, {"sourceHash", nullptr}, {"shellReadyMs", nullptr}, {"fileAcknowledgementMs", nullptr}, {"treeReadyMs", nullptr}, {"coarseViewMs", nullptr}, {"firstInteractionMs", nullptr}, {"cachedReopenMs", nullptr}, {"selectionLatencyP50Ms", nullptr}, {"selectionLatencyP95Ms", nullptr}, {"frameTimeP50Ms", nullptr}, {"frameTimeP95Ms", nullptr}, {"peakMemoryBytes", nullptr}, {"idleCpuPercent", nullptr}, {"status", "import_failed"}, {"unavailableMetrics", unavailable}};
         const auto started = std::chrono::steady_clock::now();
-        try { const auto [imported, decision] = importWithPolicy({source, std::nullopt}); const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count(); output << csvCell(id) << ',' << csvCell(imported.snapshot.sourceHash) << ',' << elapsed << ',' << csvCell(decision.blocksExport() ? "unit_review_required" : "ready") << '\n';
-        } catch (const CommandError&) { output << csvCell(id) << ",,0,import_failed\n"; }
+        try {
+            const auto [imported, decision] = importWithPolicy({source, std::nullopt});
+            row["sourceHash"] = imported.snapshot.sourceHash;
+            row["treeReadyMs"] = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
+            row["status"] = decision.blocksExport() ? "unit_review_required" : "ready";
+        } catch (const CommandError&) { }
+        output << csvCell(id) << ',' << (row["sourceHash"].is_string() ? csvCell(row["sourceHash"].get<std::string>()) : std::string{})
+               << ",,," << (row["treeReadyMs"].is_number() ? std::to_string(row["treeReadyMs"].get<std::uint64_t>()) : std::string{})
+               << ",,,,,,,,,," << csvCell(row["status"].get<std::string>()) << '\n';
+        results.push_back(std::move(row));
     }
-    if (!output) fail(corpusContractFailure, "unable to write benchmark CSV"); printJson({{"caseCount", document["cases"].size()}, {"csv", csv.filename().string()}}); return success;
+    if (!output) fail(corpusContractFailure, "unable to write benchmark CSV");
+    std::ofstream report(outputDirectory / "metrics.json"); if (!report) fail(corpusContractFailure, "unable to write benchmark JSON");
+    report << nlohmann::json{{"schemaVersion", 1}, {"cases", results}}.dump(2) << '\n';
+    if (!report) fail(corpusContractFailure, "unable to write benchmark JSON");
+    printJson({{"caseCount", document["cases"].size()}, {"directory", outputDirectory.filename().string()}}); return success;
 }
 
 int runExport(const std::vector<std::string>& args)
