@@ -19,6 +19,13 @@
 - Gate B Task 7 is in progress: source-unit model and SQLite override store are implemented and focused tests pass. Development launch uses `scripts/run-loupe-debug.ps1`; self-contained installer deployment remains Phase 3 scope and does not alter the shared Qt dependency baseline.
 - Gate C (Tasks 8-9) and Gate D (Task 10) have not started. Phase 1 must not be marked ready for macOS validation until these gates are implemented and Windows evidence is recorded.
 
+### Execution Status (2026-07-13)
+
+- Gate C has a tested control-state and cache foundation: Inspect exposes measurement, section, and capture task panels; controllers preserve unit-aware measurement mode, section presentation state, bounded capture settings, and non-destructive export isolation. The cache uses a versioned SQLite index, atomic payload writes, local-only root policy, LRU eviction, invalid-entry cleanup, clear-cache, and snapshot readback.
+- The Windows 11 Debug and Release suites each passed 73/73 tests. The two existing symlink-escape tests remain skipped on this Windows account because it lacks symlink-creation privilege.
+- Gate C is **not complete**: its controllers are not connected to OCCT topology queries, real viewer clipping, a platform offscreen PNG capture adapter, or the worker's progressive snapshot/mesh replay path. These are correctness requirements, not polish.
+- Gate D remains open. `scripts/run-loupe-debug.sh` now mirrors the Windows developer launcher for Apple Silicon, but it must be exercised on the M2 Pro. Do not record P1 as macOS-ready until the Gate C integrations and benchmark/evidence work are complete.
+
 Phase 1 begins only after the Phase 0 backend evidence gate is committed. The browser prototype is the first Phase 1 task because it validates interaction contracts cheaply after backend correctness is proven; it is not an alternative runtime architecture.
 
 ### Gate A: Interaction and Process Boundary — Task 0 and Tasks 1–3

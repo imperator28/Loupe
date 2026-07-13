@@ -38,6 +38,9 @@ qt_add_qml_module(loupe-app
         qml/inspect/InspectWorkspace.qml
         qml/inspect/InspectionDock.qml
         qml/inspect/ContextPanel.qml
+        qml/inspect/MeasurementPanel.qml
+        qml/inspect/SectionPanel.qml
+        qml/inspect/CapturePanel.qml
 )
 
 target_link_libraries(loupe-app PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Sql)

@@ -10,6 +10,7 @@ private slots:
     void inspectIsDefaultWorkspace();
     void emptyDocumentShowsDocumentInspector();
     void selectionShowsComponentInspector();
+    void ownsInspectionTaskControllers();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -33,6 +34,15 @@ void ApplicationControllerTest::selectionShowsComponentInspector()
     controller.setActiveNodeId(QStringLiteral("occ-front-cover"));
 
     QCOMPARE(controller.inspectorMode(), loupe::app::InspectorMode::Component);
+}
+
+void ApplicationControllerTest::ownsInspectionTaskControllers()
+{
+    loupe::app::ApplicationController controller;
+
+    QVERIFY(controller.measurementController() != nullptr);
+    QVERIFY(controller.sectionController() != nullptr);
+    QVERIFY(controller.captureController() != nullptr);
 }
 
 QTEST_MAIN(ApplicationControllerTest)

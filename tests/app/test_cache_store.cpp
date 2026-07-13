@@ -12,6 +12,9 @@ class CacheStoreTest final : public QObject
 private slots:
     void effectiveUnitChangesKey();
     void evictsLeastRecentlyUsedOverBudget();
+    void rejectsNetworkCacheRoots();
+    void clearOnlyRemovesLoupeCacheEntries();
+    void readsCachedSnapshotForProgressiveReopen();
 };
 
 void CacheStoreTest::effectiveUnitChangesKey()
@@ -34,6 +37,35 @@ void CacheStoreTest::evictsLeastRecentlyUsedOverBudget()
     QVERIFY(store.put(second, QByteArray(700, 'b')));
     QVERIFY(!store.contains(first));
     QVERIFY(store.contains(second));
+}
+
+void CacheStoreTest::rejectsNetworkCacheRoots()
+{
+    QVERIFY(!loupe::app::cache::CacheStore::isSafeLocalRoot(QStringLiteral("//server/share/loupe")));
+    QVERIFY(!loupe::app::cache::CacheStore::isSafeLocalRoot(QStringLiteral("\\\\server\\share\\loupe")));
+}
+
+void CacheStoreTest::clearOnlyRemovesLoupeCacheEntries()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    loupe::app::cache::CacheStore store(directory.path(), 1024);
+    const auto key = loupe::app::cache::CacheKey::from({QStringLiteral("a"), 1, 1}, QStringLiteral("importer"), QStringLiteral("coarse"), {QStringLiteral("mm"), 1.0});
+
+    QVERIFY(store.put(key, QByteArray("cache")));
+    store.clear();
+    QVERIFY(!store.contains(key));
+}
+
+void CacheStoreTest::readsCachedSnapshotForProgressiveReopen()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    loupe::app::cache::CacheStore store(directory.path(), 1024);
+    const auto key = loupe::app::cache::CacheKey::from({QStringLiteral("source"), 9, 3}, QStringLiteral("importer"), QStringLiteral("coarse"), {QStringLiteral("mm"), 1.0});
+
+    QVERIFY(store.put(key, QByteArray("snapshot-first")));
+    QCOMPARE(store.read(key), QByteArray("snapshot-first"));
 }
 
 QTEST_MAIN(CacheStoreTest)

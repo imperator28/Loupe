@@ -4,7 +4,9 @@ import QtQuick.Layouts
 import Loupe.App
 
 Item {
-    property var controller
+    id: root
+    property QtObject controller
+    property string activeTask: ""
 
     Rectangle {
         id: viewport
@@ -19,6 +21,26 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 24
+            onToolTriggered: function(tool) {
+                if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
+            }
+        }
+    }
+
+    Loader {
+        id: taskPanelLoader
+        anchors.horizontalCenter: viewport.horizontalCenter
+        anchors.bottom: viewport.bottom
+        anchors.bottomMargin: 96
+        active: root.activeTask !== ""
+        source: root.activeTask === "measure" ? "MeasurementPanel.qml"
+              : root.activeTask === "section" ? "SectionPanel.qml"
+              : "CapturePanel.qml"
+        onLoaded: {
+            if (root.activeTask === "measure") item.taskController = root.controller.measurement
+            else if (root.activeTask === "section") item.taskController = root.controller.section
+            else item.taskController = root.controller.capture
+            item.closeRequested.connect(function() { root.activeTask = "" })
         }
     }
 

@@ -11,8 +11,11 @@ class InspectionToolsTest final : public QObject
 
 private slots:
     void pointDistanceUsesEffectiveUnit();
+    void measurementModeTracksTheRequestedOperation();
     void sectionStateNeverMutatesExportShape();
+    void sectionSupportsFlipPositionCapAndSliceOnly();
     void captureSettingsResolveTransparentPngDimensions();
+    void captureSettingsBoundCustomScaleAndInclusionOptions();
 };
 
 void InspectionToolsTest::pointDistanceUsesEffectiveUnit()
@@ -25,6 +28,15 @@ void InspectionToolsTest::pointDistanceUsesEffectiveUnit()
     QCOMPARE(measurement.unitLabel, QStringLiteral("in"));
 }
 
+void InspectionToolsTest::measurementModeTracksTheRequestedOperation()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceArea);
+
+    QCOMPARE(controller.mode(), loupe::app::tools::MeasurementMode::SurfaceArea);
+    QCOMPARE(controller.pickInstruction(), QStringLiteral("Select a surface"));
+}
+
 void InspectionToolsTest::sectionStateNeverMutatesExportShape()
 {
     loupe::app::tools::SectionController section;
@@ -32,6 +44,23 @@ void InspectionToolsTest::sectionStateNeverMutatesExportShape()
     section.setAxis(loupe::app::tools::SectionAxis::X);
 
     QCOMPARE(section.exportMutationCount(), 0);
+}
+
+void InspectionToolsTest::sectionSupportsFlipPositionCapAndSliceOnly()
+{
+    loupe::app::tools::SectionController section;
+    section.setEnabled(true);
+    section.setAxis(loupe::app::tools::SectionAxis::Y);
+    section.setPosition(12.5);
+    section.setFlipped(true);
+    section.setCapEnabled(false);
+    section.setSliceOnly(true);
+
+    QCOMPARE(section.axis(), loupe::app::tools::SectionAxis::Y);
+    QCOMPARE(section.position(), 12.5);
+    QVERIFY(section.flipped());
+    QVERIFY(!section.capEnabled());
+    QVERIFY(section.sliceOnly());
 }
 
 void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()
@@ -44,6 +73,20 @@ void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()
     QCOMPARE(capture.format(), QStringLiteral("png"));
     QCOMPARE(capture.resolvedSize(), QSize(1600, 1200));
     QVERIFY(capture.transparentBackground());
+}
+
+void InspectionToolsTest::captureSettingsBoundCustomScaleAndInclusionOptions()
+{
+    loupe::app::tools::CaptureController capture;
+    capture.setViewportSize({400, 300});
+    capture.setCustomScale(9.0);
+    capture.setIncludeMeasurements(false);
+    capture.setIncludeSectionCaps(false);
+
+    QCOMPARE(capture.scale(), 4.0);
+    QCOMPARE(capture.resolvedSize(), QSize(1600, 1200));
+    QVERIFY(!capture.includeMeasurements());
+    QVERIFY(!capture.includeSectionCaps());
 }
 
 QTEST_MAIN(InspectionToolsTest)
