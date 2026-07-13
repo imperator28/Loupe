@@ -8,6 +8,19 @@ qt_add_executable(loupe-app
     models/SelectionModel.h
     models/VisibilityModel.cpp
     models/VisibilityModel.h
+    models/UnitReviewModel.cpp
+    models/UnitReviewModel.h
+    cache/OverrideStore.cpp
+    cache/OverrideStore.h
+    cache/CacheKey.h
+    cache/CacheStore.cpp
+    cache/CacheStore.h
+    tools/MeasurementController.cpp
+    tools/MeasurementController.h
+    tools/CaptureController.cpp
+    tools/CaptureController.h
+    tools/SectionController.cpp
+    tools/SectionController.h
     render/MeshGeometry.cpp
     render/MeshGeometry.h
     render/DefinitionInstances.cpp
@@ -27,6 +40,6 @@ qt_add_qml_module(loupe-app
         qml/inspect/ContextPanel.qml
 )
 
-target_link_libraries(loupe-app PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D)
+target_link_libraries(loupe-app PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Sql)
 target_include_directories(loupe-app PRIVATE "${PROJECT_SOURCE_DIR}/src")
 loupe_enable_warnings(loupe-app)

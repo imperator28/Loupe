@@ -109,3 +109,55 @@ target_include_directories(loupe-visibility-model-tests PRIVATE "${PROJECT_SOURC
 loupe_enable_warnings(loupe-visibility-model-tests)
 
 add_test(NAME visibility-model COMMAND loupe-visibility-model-tests)
+
+add_executable(loupe-override-store-tests
+    app/test_override_store.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/cache/OverrideStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/OverrideStore.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/UnitReviewModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/UnitReviewModel.h"
+)
+target_link_libraries(loupe-override-store-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Sql Qt6::Test)
+target_include_directories(loupe-override-store-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-override-store-tests)
+
+add_test(NAME override-store COMMAND loupe-override-store-tests)
+set_tests_properties(override-store PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_debug_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+)
+
+add_executable(loupe-inspection-tools-tests
+    app/test_inspection_tools.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+)
+target_link_libraries(loupe-inspection-tools-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_include_directories(loupe-inspection-tools-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-inspection-tools-tests)
+
+add_test(NAME inspection-tools COMMAND loupe-inspection-tools-tests)
+set_tests_properties(inspection-tools PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_debug_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+)
+
+add_executable(loupe-cache-store-tests
+    app/test_cache_store.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheKey.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.h"
+)
+target_link_libraries(loupe-cache-store-tests PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
+target_include_directories(loupe-cache-store-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-cache-store-tests)
+
+add_test(NAME cache-store COMMAND loupe-cache-store-tests)
+set_tests_properties(cache-store PROPERTIES
+    ENVIRONMENT "QT_PLUGIN_PATH=${_loupe_qt_debug_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+)

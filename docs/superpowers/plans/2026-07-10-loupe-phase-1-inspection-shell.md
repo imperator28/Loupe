@@ -12,6 +12,13 @@
 
 ## Authoritative Vertical-Gate Execution (2026-07-12)
 
+### Execution Status (2026-07-12)
+
+- Gate A is complete: the reviewed browser interaction contract, versioned protocol, cancellable worker, and shell controller are committed.
+- Gate B Tasks 4-6 are complete: progressive tree, shared scene instances, and Inspect visibility controls are committed.
+- Gate B Task 7 is in progress: source-unit model and SQLite override store are implemented and focused tests pass. Development launch uses `scripts/run-loupe-debug.ps1`; self-contained installer deployment remains Phase 3 scope and does not alter the shared Qt dependency baseline.
+- Gate C (Tasks 8-9) and Gate D (Task 10) have not started. Phase 1 must not be marked ready for macOS validation until these gates are implemented and Windows evidence is recorded.
+
 Phase 1 begins only after the Phase 0 backend evidence gate is committed. The browser prototype is the first Phase 1 task because it validates interaction contracts cheaply after backend correctness is proven; it is not an alternative runtime architecture.
 
 ### Gate A: Interaction and Process Boundary — Task 0 and Tasks 1–3
