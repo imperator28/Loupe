@@ -59,11 +59,9 @@ Rectangle {
             }
         }
         Switch {
-            text: qsTr("Include measurements (not yet available)")
-            enabled: false
-            checked: false
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("Measurement overlays will be enabled when topology picking is available.")
+            text: qsTr("Include active measurement")
+            checked: !root.taskController || root.taskController.includeMeasurements
+            onToggled: root.taskController.includeMeasurements = checked
         }
         Switch {
             text: qsTr("Include section caps (not yet available)")

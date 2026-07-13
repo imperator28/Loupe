@@ -7,6 +7,7 @@ Item {
     property QtObject controller
     property var modelByNode: ({})
     property var geometryByNode: ({})
+    property bool captureInProgress: false
     readonly property real fitDistance: Math.max(120, (root.controller ? root.controller.modelExtentMm : 100) * 3.2)
 
     function fitCamera() {
@@ -57,10 +58,12 @@ Item {
             view.environment.backgroundMode = SceneEnvironment.Transparent
             view.environment.clearColor = "transparent"
         }
-        view.grabToImage(function(result) {
+        root.captureInProgress = capture.includeMeasurements && root.controller.measurement.resultLabel.length > 0
+        root.grabToImage(function(result) {
             result.saveToFile(fileUrl.toLocalFile())
             view.environment.backgroundMode = originalBackgroundMode
             view.environment.clearColor = originalColor
+            root.captureInProgress = false
         }, Qt.size(capture.resolvedWidth, capture.resolvedHeight))
     }
 
@@ -92,6 +95,24 @@ Item {
                     root.controller.acceptViewPick(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
                                                     hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
             }
+        }
+    }
+    Rectangle {
+        visible: root.captureInProgress
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: 16
+        radius: 4
+        color: "#0e171dcc"
+        border.color: "#67d5c0"
+        implicitWidth: measurementOverlay.implicitWidth + 18
+        implicitHeight: measurementOverlay.implicitHeight + 12
+        Label {
+            id: measurementOverlay
+            anchors.centerIn: parent
+            text: root.controller ? root.controller.measurement.resultLabel : ""
+            color: "#dffbf4"
+            font.bold: true
         }
     }
 
