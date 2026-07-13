@@ -16,6 +16,7 @@ add_executable(loupe-core-tests
     core/test_selected_export.cpp
     core/test_output_validation.cpp
     core/test_geometry_analysis.cpp
+    core/test_material_properties.cpp
     core/test_spike_cli.cpp
     fixtures/FixtureFactory.cpp
 )
