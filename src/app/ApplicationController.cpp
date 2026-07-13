@@ -320,11 +320,11 @@ bool ApplicationController::setUnitOverride(const QString& unit)
     return true;
 }
 
-void ApplicationController::acceptViewPick(const QString& nodeId, const double x, const double y, const double z, double, double, double)
+void ApplicationController::acceptViewPick(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ)
 {
     if (nodeId.isEmpty()) return;
     setActiveNodeId(nodeId);
-    measurementController_.recordPoint({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
+    measurementController_.recordPick({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)}, {static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)});
 }
 
 } // namespace loupe::app

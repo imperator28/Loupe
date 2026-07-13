@@ -73,9 +73,16 @@ void MeasurementController::setSelectedTopology(const double longestEdgeMm, cons
 
 void MeasurementController::recordPoint(const QVector3D& pointMm)
 {
-    if (mode_ != MeasurementMode::PointToPoint) return;
+    recordPick(pointMm, {});
+}
+
+void MeasurementController::recordPick(const QVector3D& pointMm, const QVector3D& normal)
+{
+    if (mode_ != MeasurementMode::PointToPoint && mode_ != MeasurementMode::SurfaceToSurface && mode_ != MeasurementMode::Angle) return;
     if (pickedPointsMm_.size() == 2) pickedPointsMm_.clear();
+    if (pickedNormals_.size() == 2) pickedNormals_.clear();
     pickedPointsMm_.append(pointMm);
+    pickedNormals_.append(normal);
     emit resultChanged();
 }
 
@@ -83,6 +90,7 @@ void MeasurementController::clearPicks()
 {
     if (pickedPointsMm_.isEmpty()) return;
     pickedPointsMm_.clear();
+    pickedNormals_.clear();
     emit resultChanged();
 }
 
@@ -123,7 +131,14 @@ MeasurementResult MeasurementController::pointDistance(const QVector3D& first, c
 
 double MeasurementController::resultValue() const
 {
-    if (mode_ == MeasurementMode::PointToPoint && pickedPointsMm_.size() == 2) return pointDistance(pickedPointsMm_.at(0), pickedPointsMm_.at(1)).value;
+    if ((mode_ == MeasurementMode::PointToPoint || mode_ == MeasurementMode::SurfaceToSurface) && pickedPointsMm_.size() == 2) return pointDistance(pickedPointsMm_.at(0), pickedPointsMm_.at(1)).value;
+    if (mode_ == MeasurementMode::Angle && pickedNormals_.size() == 2) {
+        const auto first = pickedNormals_.at(0).normalized();
+        const auto second = pickedNormals_.at(1).normalized();
+        if (first.isNull() || second.isNull()) return 0.0;
+        constexpr double radiansToDegrees = 180.0 / 3.14159265358979323846;
+        return std::acos(std::clamp(static_cast<double>(QVector3D::dotProduct(first, second)), -1.0, 1.0)) * radiansToDegrees;
+    }
     if (!hasSelectedGeometry_) return 0.0;
     const auto divisor = effectiveUnit_ == QStringLiteral("in") ? 25.4 : 1.0;
     switch (mode_) {
@@ -137,7 +152,8 @@ double MeasurementController::resultValue() const
 
 QString MeasurementController::resultUnit() const
 {
-    if (mode_ == MeasurementMode::PointToPoint) return pickedPointsMm_.size() == 2 ? effectiveUnit_ : QString{};
+    if (mode_ == MeasurementMode::PointToPoint || mode_ == MeasurementMode::SurfaceToSurface) return pickedPointsMm_.size() == 2 ? effectiveUnit_ : QString{};
+    if (mode_ == MeasurementMode::Angle) return pickedNormals_.size() == 2 ? QStringLiteral("°") : QString{};
     switch (mode_) {
     case MeasurementMode::SurfaceArea: return effectiveUnit_ == QStringLiteral("in") ? QStringLiteral("in²") : QStringLiteral("mm²");
     case MeasurementMode::Volume: return effectiveUnit_ == QStringLiteral("in") ? QStringLiteral("in³") : QStringLiteral("mm³");
@@ -150,7 +166,7 @@ QString MeasurementController::resultUnit() const
 
 QString MeasurementController::resultLabel() const
 {
-    if (mode_ == MeasurementMode::PointToPoint) {
+    if (mode_ == MeasurementMode::PointToPoint || mode_ == MeasurementMode::SurfaceToSurface || mode_ == MeasurementMode::Angle) {
         return pickedPointsMm_.size() == 2 ? QStringLiteral("%1 %2").arg(formatValue(resultValue()), resultUnit()) : QString{};
     }
     if (!hasSelectedGeometry_) return {};

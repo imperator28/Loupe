@@ -14,6 +14,7 @@ private slots:
     void measurementModeTracksTheRequestedOperation();
     void componentMeasurementsUseNormalizedGeometryMetrics();
     void viewportPicksProducePointToPointMeasurement();
+    void pickedSurfaceNormalsProduceAngleMeasurement();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void captureSettingsResolveTransparentPngDimensions();
@@ -72,6 +73,21 @@ void InspectionToolsTest::viewportPicksProducePointToPointMeasurement()
     QCOMPARE(controller.resultLabel(), QStringLiteral("1 in"));
     controller.clearPicks();
     QVERIFY(controller.resultLabel().isEmpty());
+}
+
+void InspectionToolsTest::pickedSurfaceNormalsProduceAngleMeasurement()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::Angle);
+    controller.recordPick({0.0F, 0.0F, 0.0F}, {1.0F, 0.0F, 0.0F});
+    controller.recordPick({0.0F, 0.0F, 0.0F}, {0.0F, 1.0F, 0.0F});
+
+    QCOMPARE(controller.resultLabel(), QStringLiteral("90 °"));
+    controller.setEffectiveUnit(QStringLiteral("in"));
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceToSurface);
+    controller.recordPick({0.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 1.0F});
+    controller.recordPick({0.0F, 25.4F, 0.0F}, {0.0F, 0.0F, 1.0F});
+    QCOMPARE(controller.resultLabel(), QStringLiteral("1 in"));
 }
 
 void InspectionToolsTest::sectionStateNeverMutatesExportShape()

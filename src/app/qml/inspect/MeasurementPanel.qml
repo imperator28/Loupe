@@ -43,7 +43,7 @@ Rectangle {
         Button {
             text: qsTr("Clear picks")
             Layout.fillWidth: true
-            enabled: root.taskController && root.taskController.mode === 0
+            enabled: root.taskController && (root.taskController.mode === 0 || root.taskController.mode === 2 || root.taskController.mode === 4)
             onClicked: root.taskController.clearPicks()
         }
         Label {

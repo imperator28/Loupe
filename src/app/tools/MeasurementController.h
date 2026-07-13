@@ -40,6 +40,7 @@ public:
     void setSelectedTopology(double longestEdgeMm, double circularRadiusMm, int planarFaceCount);
     void clearSelectedGeometry();
     void recordPoint(const QVector3D& pointMm);
+    void recordPick(const QVector3D& pointMm, const QVector3D& normal);
     Q_INVOKABLE void clearPicks();
     Q_INVOKABLE void setModeName(const QString& modeName);
     [[nodiscard]] MeasurementMode mode() const noexcept { return mode_; }
@@ -61,6 +62,7 @@ private:
     QVector3D boundsMm_;
     bool hasSelectedGeometry_{false};
     QVector<QVector3D> pickedPointsMm_;
+    QVector<QVector3D> pickedNormals_;
     double longestEdgeMm_{};
     double circularRadiusMm_{};
     int planarFaceCount_{};
