@@ -37,6 +37,7 @@ public:
     void setEffectiveUnit(const QString& unit);
     void setMode(MeasurementMode mode);
     void setSelectedGeometry(double surfaceAreaMm2, double volumeMm3, const QVector3D& boundsMm);
+    void setSelectedTopology(double longestEdgeMm, double circularRadiusMm, int planarFaceCount);
     void clearSelectedGeometry();
     void recordPoint(const QVector3D& pointMm);
     Q_INVOKABLE void clearPicks();
@@ -60,6 +61,9 @@ private:
     QVector3D boundsMm_;
     bool hasSelectedGeometry_{false};
     QVector<QVector3D> pickedPointsMm_;
+    double longestEdgeMm_{};
+    double circularRadiusMm_{};
+    int planarFaceCount_{};
 };
 
 } // namespace loupe::app::tools

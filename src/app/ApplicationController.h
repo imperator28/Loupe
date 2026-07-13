@@ -110,7 +110,7 @@ private:
     void applySnapshotToTree(const QByteArray& snapshot);
     void applyActiveGeometryToMeasurement();
 
-    struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; QVector3D boundsMm; };
+    struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; QVector3D boundsMm; double longestEdgeMm{}; double circularRadiusMm{}; int planarFaceCount{}; };
 
     Workspace workspace_{Workspace::Inspect};
     QString activeNodeId_;

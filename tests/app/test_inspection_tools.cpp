@@ -43,6 +43,7 @@ void InspectionToolsTest::componentMeasurementsUseNormalizedGeometryMetrics()
 {
     loupe::app::tools::MeasurementController controller;
     controller.setSelectedGeometry(600.0, 1'000.0, {10.0, 20.0, 30.0});
+    controller.setSelectedTopology(20.0, 5.0, 2);
 
     controller.setMode(loupe::app::tools::MeasurementMode::SurfaceArea);
     QCOMPARE(controller.resultLabel(), QStringLiteral("600 mm²"));
@@ -50,6 +51,10 @@ void InspectionToolsTest::componentMeasurementsUseNormalizedGeometryMetrics()
     QCOMPARE(controller.resultLabel(), QStringLiteral("1000 mm³"));
     controller.setMode(loupe::app::tools::MeasurementMode::Bounds);
     QCOMPARE(controller.resultLabel(), QStringLiteral("10 × 20 × 30 mm"));
+    controller.setMode(loupe::app::tools::MeasurementMode::EdgeLength);
+    QCOMPARE(controller.resultLabel(), QStringLiteral("Longest edge: 20 mm"));
+    controller.setMode(loupe::app::tools::MeasurementMode::RadiusDiameter);
+    QCOMPARE(controller.resultLabel(), QStringLiteral("Radius: 5 mm · Diameter: 10 mm"));
 
     controller.setEffectiveUnit(QStringLiteral("in"));
     controller.setMode(loupe::app::tools::MeasurementMode::Volume);

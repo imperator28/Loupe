@@ -235,7 +235,8 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
         const auto nodeId = object.value(QStringLiteral("nodeId")).toString();
         const auto bounds = object.value(QStringLiteral("boundsMm")).toObject();
         if (!nodeId.isEmpty()) geometryByNode_.insert(nodeId, {object.value(QStringLiteral("surfaceAreaMm2")).toDouble(), object.value(QStringLiteral("volumeMm3")).toDouble(),
-                                                                 QVector3D{static_cast<float>(bounds.value(QStringLiteral("width")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("height")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("depth")).toDouble())}});
+                                                                 QVector3D{static_cast<float>(bounds.value(QStringLiteral("width")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("height")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("depth")).toDouble())},
+                                                                 object.value(QStringLiteral("longestEdgeMm")).toDouble(), object.value(QStringLiteral("circularRadiusMm")).toDouble(), object.value(QStringLiteral("planarFaceCount")).toInt()});
         modelExtent = std::max({modelExtent, bounds.value(QStringLiteral("width")).toDouble(), bounds.value(QStringLiteral("height")).toDouble(), bounds.value(QStringLiteral("depth")).toDouble()});
     }
     if (!qFuzzyCompare(modelExtentMm_ + 1.0, modelExtent + 1.0)) {
@@ -274,6 +275,7 @@ void ApplicationController::applyActiveGeometryToMeasurement()
     }
     const auto& geometry = *it;
     measurementController_.setSelectedGeometry(geometry.surfaceAreaMm2, geometry.volumeMm3, geometry.boundsMm);
+    measurementController_.setSelectedTopology(geometry.longestEdgeMm, geometry.circularRadiusMm, geometry.planarFaceCount);
 }
 
 double ApplicationController::activeSurfaceAreaMm2() const noexcept

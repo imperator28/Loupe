@@ -1,6 +1,7 @@
 #include "app/tools/MeasurementController.h"
 
 #include <cmath>
+#include <algorithm>
 
 namespace {
 
@@ -56,6 +57,17 @@ void MeasurementController::clearSelectedGeometry()
     surfaceAreaMm2_ = 0.0;
     volumeMm3_ = 0.0;
     boundsMm_ = {};
+    longestEdgeMm_ = 0.0;
+    circularRadiusMm_ = 0.0;
+    planarFaceCount_ = 0;
+    emit resultChanged();
+}
+
+void MeasurementController::setSelectedTopology(const double longestEdgeMm, const double circularRadiusMm, const int planarFaceCount)
+{
+    longestEdgeMm_ = std::isfinite(longestEdgeMm) && longestEdgeMm >= 0.0 ? longestEdgeMm : 0.0;
+    circularRadiusMm_ = std::isfinite(circularRadiusMm) && circularRadiusMm >= 0.0 ? circularRadiusMm : 0.0;
+    planarFaceCount_ = std::max(0, planarFaceCount);
     emit resultChanged();
 }
 
@@ -117,6 +129,8 @@ double MeasurementController::resultValue() const
     switch (mode_) {
     case MeasurementMode::SurfaceArea: return surfaceAreaMm2_ / (divisor * divisor);
     case MeasurementMode::Volume: return volumeMm3_ / (divisor * divisor * divisor);
+    case MeasurementMode::EdgeLength: return longestEdgeMm_ / divisor;
+    case MeasurementMode::RadiusDiameter: return circularRadiusMm_ / divisor;
     default: return 0.0;
     }
 }
@@ -128,6 +142,8 @@ QString MeasurementController::resultUnit() const
     case MeasurementMode::SurfaceArea: return effectiveUnit_ == QStringLiteral("in") ? QStringLiteral("in²") : QStringLiteral("mm²");
     case MeasurementMode::Volume: return effectiveUnit_ == QStringLiteral("in") ? QStringLiteral("in³") : QStringLiteral("mm³");
     case MeasurementMode::Bounds: return effectiveUnit_;
+    case MeasurementMode::EdgeLength: return effectiveUnit_;
+    case MeasurementMode::RadiusDiameter: return effectiveUnit_;
     default: return {};
     }
 }
@@ -143,6 +159,8 @@ QString MeasurementController::resultLabel() const
         return QStringLiteral("%1 × %2 × %3 %4")
             .arg(formatValue(boundsMm_.x() / divisor), formatValue(boundsMm_.y() / divisor), formatValue(boundsMm_.z() / divisor), resultUnit());
     }
+    if (mode_ == MeasurementMode::EdgeLength) return QStringLiteral("Longest edge: %1 %2").arg(formatValue(resultValue()), resultUnit());
+    if (mode_ == MeasurementMode::RadiusDiameter) return QStringLiteral("Radius: %1 %2 · Diameter: %3 %2").arg(formatValue(resultValue()), resultUnit(), formatValue(resultValue() * 2.0));
     const auto unit = resultUnit();
     return unit.isEmpty() ? QString{} : QStringLiteral("%1 %2").arg(formatValue(resultValue()), unit);
 }

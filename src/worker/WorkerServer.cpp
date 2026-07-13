@@ -2,6 +2,7 @@
 
 #include "core/import/StepImporter.h"
 #include "core/inspection/GeometryAnalysis.h"
+#include "core/inspection/TopologyAnalysis.h"
 #include "core/units/UnitPolicy.h"
 #include "protocol/ProtocolTypes.h"
 
@@ -52,12 +53,16 @@ QByteArray encodeSnapshot(const loupe::import::ImportResult& imported, const lou
     QJsonArray geometry;
     for (std::size_t index = 0; index < imported.native->shapes.size() && index < imported.native->shapeNodeIds.size(); ++index) {
         const auto analysis = loupe::inspection::analyze(imported.native->shapes[index], unitDecision.sourceToMillimeters);
+        const auto topology = loupe::inspection::analyzeTopology(imported.native->shapes[index], unitDecision.sourceToMillimeters);
         if (!analysis.valid) continue;
         geometry.append(QJsonObject{
             {QStringLiteral("nodeId"), QString::fromStdString(imported.native->shapeNodeIds[index])},
             {QStringLiteral("surfaceAreaMm2"), analysis.surfaceAreaMm2},
             {QStringLiteral("volumeMm3"), analysis.volumeMm3},
             {QStringLiteral("boundsMm"), QJsonObject{{QStringLiteral("width"), analysis.boundsMm.width}, {QStringLiteral("height"), analysis.boundsMm.height}, {QStringLiteral("depth"), analysis.boundsMm.depth}}},
+            {QStringLiteral("longestEdgeMm"), topology.longestEdgeMm},
+            {QStringLiteral("circularRadiusMm"), topology.circularRadiusMm},
+            {QStringLiteral("planarFaceCount"), topology.planarFaceCount},
         });
     }
     return QJsonDocument(QJsonObject{

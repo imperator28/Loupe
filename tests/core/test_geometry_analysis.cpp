@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "core/inspection/GeometryAnalysis.h"
+#include "core/inspection/TopologyAnalysis.h"
 
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
@@ -36,4 +37,14 @@ TEST_CASE("geometry analysis normalizes length area and volume to millimeters", 
     REQUIRE(analysis.boundsMm.width == Catch::Approx(25.4));
     REQUIRE(analysis.surfaceAreaMm2 == Catch::Approx(22.0 * 25.4 * 25.4));
     REQUIRE(analysis.volumeMm3 == Catch::Approx(6.0 * 25.4 * 25.4 * 25.4));
+}
+
+TEST_CASE("topology analysis reports longest edge and circular feature in millimeters", "[inspection][topology]")
+{
+    const auto analysis = loupe::inspection::analyzeTopology(BRepPrimAPI_MakeCylinder(5.0, 20.0).Shape());
+
+    REQUIRE(analysis.valid);
+    REQUIRE(analysis.longestEdgeMm == Catch::Approx(10.0 * std::numbers::pi));
+    REQUIRE(analysis.circularRadiusMm == Catch::Approx(5.0));
+    REQUIRE(analysis.planarFaceCount == 2);
 }
