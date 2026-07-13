@@ -40,10 +40,11 @@ Rectangle {
         }
         Button {
             Layout.fillWidth: true
-            text: qsTr("Use selected planar face")
-            enabled: false
+            text: qsTr("Use selected face plane")
+            enabled: root.taskController && root.taskController.hasSelectedPlane
+            onClicked: root.taskController.useSelectedPlane()
             ToolTip.visible: hovered
-            ToolTip.text: qsTr("Select a planar face in the canvas to enable this option")
+            ToolTip.text: enabled ? qsTr("Use the normal from the latest canvas face pick") : qsTr("Pick a face in the canvas first")
         }
         RowLayout {
             Layout.fillWidth: true
@@ -58,8 +59,20 @@ Rectangle {
             }
         }
         Switch { text: qsTr("Flip section"); checked: root.taskController && root.taskController.flipped; onToggled: root.taskController.flipped = checked }
-        Switch { text: qsTr("Cap cut faces"); checked: !root.taskController || root.taskController.capEnabled; onToggled: root.taskController.capEnabled = checked }
-        Switch { text: qsTr("2D slice only"); checked: root.taskController && root.taskController.sliceOnly; onToggled: root.taskController.sliceOnly = checked }
+        Switch {
+            text: qsTr("Cap cut faces (not yet available)")
+            enabled: false
+            checked: false
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("Cut-face generation is not implemented in the P1 viewer yet.")
+        }
+        Switch {
+            text: qsTr("2D slice only (not yet available)")
+            enabled: false
+            checked: false
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("2D slice rendering is not implemented in the P1 viewer yet.")
+        }
         Label { text: qsTr("Sectioning affects only the Inspect view; export geometry remains unchanged."); Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#7e8d99" }
     }
 }

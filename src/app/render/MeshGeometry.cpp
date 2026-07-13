@@ -58,10 +58,21 @@ void MeshGeometry::clearMesh()
 void MeshGeometry::setSection(const bool enabled, const int axis, const double position, const bool flipped)
 {
     const auto normalizedAxis = std::clamp(axis, 0, 2);
-    if (sectionEnabled_ == enabled && sectionAxis_ == normalizedAxis && qFuzzyCompare(sectionPosition_ + 1.0, position + 1.0) && sectionFlipped_ == flipped) return;
+    const QVector3D normal = normalizedAxis == 0 ? QVector3D{1.0F, 0.0F, 0.0F}
+                           : normalizedAxis == 1 ? QVector3D{0.0F, 1.0F, 0.0F}
+                                                 : QVector3D{0.0F, 0.0F, 1.0F};
+    setSectionPlane(enabled, normal.x(), normal.y(), normal.z(), position, flipped);
+}
+
+void MeshGeometry::setSectionPlane(const bool enabled, const double normalX, const double normalY, const double normalZ, const double offset, const bool flipped)
+{
+    const QVector3D normal{static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)};
+    if (normal.isNull()) return;
+    const auto normalized = normal.normalized();
+    if (sectionEnabled_ == enabled && sectionNormal_ == normalized && qFuzzyCompare(sectionOffset_ + 1.0, offset + 1.0) && sectionFlipped_ == flipped) return;
     sectionEnabled_ = enabled;
-    sectionAxis_ = normalizedAxis;
-    sectionPosition_ = position;
+    sectionNormal_ = normalized;
+    sectionOffset_ = offset;
     sectionFlipped_ = flipped;
     rebuildDisplayMesh();
 }
@@ -90,7 +101,7 @@ void MeshGeometry::rebuildDisplayMesh()
         const auto offset = static_cast<qsizetype>(index) * 3;
         return QVector3D(sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1), sourceVertexData_.at(offset + 2));
     };
-    const auto distance = [this](const QVector3D& point) { return static_cast<double>(point[sectionAxis_]) - sectionPosition_; };
+    const auto distance = [this](const QVector3D& point) { return static_cast<double>(QVector3D::dotProduct(sectionNormal_, point)) - sectionOffset_; };
     const auto inside = [this](const double value) { return sectionFlipped_ ? value <= 0.0 : value >= 0.0; };
     const auto appendVertex = [this](const QVector3D& point) {
         const auto index = static_cast<quint32>(vertexData_.size() / 3);

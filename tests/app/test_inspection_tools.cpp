@@ -17,6 +17,7 @@ private slots:
     void pickedSurfaceNormalsProduceAngleMeasurement();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
+    void sectionCanUseASelectedFacePlane();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
 };
@@ -114,6 +115,17 @@ void InspectionToolsTest::sectionSupportsFlipPositionCapAndSliceOnly()
     QVERIFY(section.flipped());
     QVERIFY(!section.capEnabled());
     QVERIFY(section.sliceOnly());
+}
+
+void InspectionToolsTest::sectionCanUseASelectedFacePlane()
+{
+    loupe::app::tools::SectionController section;
+    section.setCandidatePlane({0.0F, 1.0F, 0.0F}, {0.0F, 12.5F, 0.0F});
+    QVERIFY(section.hasSelectedPlane());
+    section.useSelectedPlane();
+
+    QVERIFY(section.usingSelectedPlane());
+    QCOMPARE(section.planeOffset(), 12.5);
 }
 
 void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()

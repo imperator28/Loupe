@@ -324,6 +324,7 @@ void ApplicationController::acceptViewPick(const QString& nodeId, const double x
 {
     if (nodeId.isEmpty()) return;
     setActiveNodeId(nodeId);
+    sectionController_.setCandidatePlane({static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)}, {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
     measurementController_.recordPick({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)}, {static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)});
 }
 

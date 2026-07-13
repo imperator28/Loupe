@@ -31,8 +31,12 @@ Item {
         if (!root.controller) return
         const section = root.controller.section
         const axis = section.axisName === "X" ? 0 : section.axisName === "Y" ? 1 : 2
-        for (let id in geometryByNode)
-            geometryByNode[id].setSection(section.enabled, axis, section.position, section.flipped)
+        for (let id in geometryByNode) {
+            if (section.usingSelectedPlane)
+                geometryByNode[id].setSectionPlane(section.enabled, section.planeNormal.x, section.planeNormal.y, section.planeNormal.z, section.planeOffset, section.flipped)
+            else
+                geometryByNode[id].setSection(section.enabled, axis, section.position, section.flipped)
+        }
     }
     function appendMesh(nodeId, meshJson) {
         if (geometryByNode[nodeId]) return

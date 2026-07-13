@@ -16,8 +16,9 @@ void SectionController::setEnabled(const bool enabled)
 
 void SectionController::setAxis(const SectionAxis axis)
 {
-    if (axis_ == axis) return;
+    if (axis_ == axis && !usingSelectedPlane_) return;
     axis_ = axis;
+    usingSelectedPlane_ = false;
     emit changed();
 }
 
@@ -64,6 +65,22 @@ void SectionController::setSliceOnly(const bool sliceOnly)
 {
     if (sliceOnly_ == sliceOnly) return;
     sliceOnly_ = sliceOnly;
+    emit changed();
+}
+
+void SectionController::setCandidatePlane(const QVector3D& normal, const QVector3D& point)
+{
+    if (normal.isNull()) return;
+    planeNormal_ = normal.normalized();
+    planeOffset_ = QVector3D::dotProduct(planeNormal_, point);
+    hasSelectedPlane_ = true;
+    emit changed();
+}
+
+void SectionController::useSelectedPlane()
+{
+    if (!hasSelectedPlane_ || usingSelectedPlane_) return;
+    usingSelectedPlane_ = true;
     emit changed();
 }
 

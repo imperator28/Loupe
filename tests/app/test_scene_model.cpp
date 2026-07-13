@@ -13,6 +13,7 @@ private slots:
     void selectionMapsPickInstanceToOccurrence();
     void meshGeometryAppendsWorkerPayload();
     void meshGeometryClipsTrianglesAgainstSectionPlane();
+    void meshGeometryClipsTrianglesAgainstArbitraryPlane();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -62,6 +63,17 @@ void SceneModelTest::meshGeometryClipsTrianglesAgainstSectionPlane()
     geometry.setSection(false, 0, 0.0, false);
     QCOMPARE(geometry.triangleCount(), 1);
     QVERIFY(geometry.minimumCoordinate(0) <= 0.001F);
+}
+
+void SceneModelTest::meshGeometryClipsTrianglesAgainstArbitraryPlane()
+{
+    loupe::app::render::MeshGeometry geometry;
+    QVERIFY(geometry.appendWorkerMesh(QByteArrayLiteral("{\"vertices\":[0,0,0,2,0,0,0,2,0],\"indices\":[0,1,2]}")));
+
+    geometry.setSectionPlane(true, 0.0, 1.0, 0.0, 1.0, false);
+
+    QCOMPARE(geometry.triangleCount(), 1);
+    QVERIFY(geometry.minimumCoordinate(1) >= 0.999F);
 }
 
 int main(int argc, char* argv[])

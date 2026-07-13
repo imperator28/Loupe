@@ -2,6 +2,7 @@
 
 #include <QQuick3DGeometry>
 #include <QVector>
+#include <QVector3D>
 
 namespace loupe::app::render {
 
@@ -19,6 +20,7 @@ public:
     Q_INVOKABLE bool appendWorkerMesh(const QByteArray& meshJson);
     Q_INVOKABLE void clearMesh();
     Q_INVOKABLE void setSection(bool enabled, int axis, double position, bool flipped);
+    Q_INVOKABLE void setSectionPlane(bool enabled, double normalX, double normalY, double normalZ, double offset, bool flipped);
     [[nodiscard]] int vertexCount() const noexcept { return vertexData_.size() / 3; }
     [[nodiscard]] int triangleCount() const noexcept { return indexData_.size() / 3; }
     [[nodiscard]] float minimumCoordinate(int axis) const noexcept;
@@ -32,8 +34,8 @@ private:
     QVector<float> vertexData_;
     QVector<quint32> indexData_;
     bool sectionEnabled_{false};
-    int sectionAxis_{2};
-    double sectionPosition_{};
+    QVector3D sectionNormal_{0.0F, 0.0F, 1.0F};
+    double sectionOffset_{};
     bool sectionFlipped_{false};
 };
 
