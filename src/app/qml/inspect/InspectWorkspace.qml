@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import Loupe.App
 
 Item {
@@ -103,11 +104,25 @@ Item {
         onLoaded: {
             if (root.activeTask === "measure") item.taskController = root.controller.measurement
             else if (root.activeTask === "section") item.taskController = root.controller.section
-            else item.taskController = root.controller.capture
+            else {
+                item.taskController = root.controller.capture
+                item.captureRequested.connect(function() { captureDialog.open() })
+            }
             item.closeRequested.connect(function() {
                 if (root.activeTask === "section") root.controller.section.enabled = false
                 root.activeTask = ""
             })
+        }
+    }
+
+    FileDialog {
+        id: captureDialog
+        title: qsTr("Save inspection capture")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("PNG image (*.png)")]
+        defaultSuffix: "png"
+        onAccepted: {
+            if (viewportLoader.item) viewportLoader.item.captureToFile(selectedFile)
         }
     }
 }

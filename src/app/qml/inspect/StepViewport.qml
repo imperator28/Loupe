@@ -44,6 +44,21 @@ Item {
         applyPresentation()
         applySection()
     }
+    function captureToFile(fileUrl) {
+        if (!root.controller || !fileUrl) return
+        const capture = root.controller.capture
+        const originalBackgroundMode = view.environment.backgroundMode
+        const originalColor = view.environment.clearColor
+        if (capture.transparentBackground) {
+            view.environment.backgroundMode = SceneEnvironment.Transparent
+            view.environment.clearColor = "transparent"
+        }
+        view.grabToImage(function(result) {
+            result.saveToFile(fileUrl.toLocalFile())
+            view.environment.backgroundMode = originalBackgroundMode
+            view.environment.clearColor = originalColor
+        }, Qt.size(capture.resolvedWidth, capture.resolvedHeight))
+    }
 
     Component { id: geometryComponent; MeshGeometry {} }
     Component {
@@ -54,12 +69,15 @@ Item {
     }
 
     View3D {
+        id: view
         anchors.fill: parent
         environment: SceneEnvironment { backgroundMode: SceneEnvironment.Color; clearColor: "#101418" }
         camera: camera
         PerspectiveCamera { id: camera; position: Qt.vector3d(root.fitDistance * 0.7, root.fitDistance * 0.55, root.fitDistance); eulerRotation: Qt.vector3d(-22, 32, 0) }
         DirectionalLight { eulerRotation: Qt.vector3d(-35, -35, 0); brightness: 1.2 }
         Node { id: sceneRoot }
+        onWidthChanged: if (root.controller) root.controller.capture.setViewportSize(width, height)
+        onHeightChanged: if (root.controller) root.controller.capture.setViewportSize(width, height)
     }
 
     Connections {

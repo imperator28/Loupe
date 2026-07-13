@@ -6,6 +6,7 @@ Rectangle {
     id: root
     property QtObject taskController
     signal closeRequested()
+    signal captureRequested()
     implicitWidth: 320
     implicitHeight: content.implicitHeight + 32
     radius: 10
@@ -57,8 +58,32 @@ Rectangle {
                 onValueModified: root.taskController.scale = value / 100
             }
         }
-        Switch { text: qsTr("Include measurements"); checked: !root.taskController || root.taskController.includeMeasurements; onToggled: root.taskController.includeMeasurements = checked }
-        Switch { text: qsTr("Include section caps"); checked: !root.taskController || root.taskController.includeSectionCaps; onToggled: root.taskController.includeSectionCaps = checked }
-        Label { text: qsTr("Resolved output dimensions update from the active viewport."); Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#7e8d99" }
+        Switch {
+            text: qsTr("Include measurements (not yet available)")
+            enabled: false
+            checked: false
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("Measurement overlays will be enabled when topology picking is available.")
+        }
+        Switch {
+            text: qsTr("Include section caps (not yet available)")
+            enabled: false
+            checked: false
+            ToolTip.visible: hovered
+            ToolTip.text: qsTr("Section caps will be enabled when cut-face generation is available.")
+        }
+        Label {
+            text: root.taskController ? qsTr("Output: %1 × %2 PNG").arg(root.taskController.resolvedWidth).arg(root.taskController.resolvedHeight)
+                                      : qsTr("Resolved output dimensions update from the active viewport.")
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: "#7e8d99"
+        }
+        Button {
+            text: qsTr("Save PNG…")
+            Layout.fillWidth: true
+            enabled: root.taskController && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0
+            onClicked: root.captureRequested()
+        }
     }
 }

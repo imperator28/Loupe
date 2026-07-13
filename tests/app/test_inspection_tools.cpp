@@ -90,6 +90,8 @@ void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()
 
     QCOMPARE(capture.format(), QStringLiteral("png"));
     QCOMPARE(capture.resolvedSize(), QSize(1600, 1200));
+    QCOMPARE(capture.resolvedWidth(), 1600);
+    QCOMPARE(capture.resolvedHeight(), 1200);
     QVERIFY(capture.transparentBackground());
 }
 

@@ -15,6 +15,11 @@ void CaptureController::setViewportSize(const QSize& size)
     emit changed();
 }
 
+void CaptureController::setViewportSize(const int width, const int height)
+{
+    setViewportSize(QSize{width, height});
+}
+
 void CaptureController::setScale(const int scale)
 {
     setCustomScale(static_cast<double>(scale));
@@ -46,6 +51,7 @@ void CaptureController::setIncludeSectionCaps(const bool include)
 {
     if (includeSectionCaps_ == include) return;
     includeSectionCaps_ = include;
+    emit changed();
 }
 
 QSize CaptureController::resolvedSize() const
