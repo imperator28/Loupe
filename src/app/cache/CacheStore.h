@@ -29,6 +29,7 @@ public:
     [[nodiscard]] bool put(const CacheKey& key, const QByteArray& bytes, const CacheMetadata& metadata);
     [[nodiscard]] bool contains(const CacheKey& key) const;
     [[nodiscard]] std::optional<QByteArray> read(const CacheKey& key) const;
+    [[nodiscard]] std::optional<QByteArray> readSnapshotForSource(const SourceIdentity& source, const QString& importerVersion, const QString& meshProfile) const;
     void clear();
 
 private:

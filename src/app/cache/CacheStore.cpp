@@ -118,6 +118,34 @@ std::optional<QByteArray> CacheStore::read(const CacheKey& key) const
     return bytes;
 }
 
+std::optional<QByteArray> CacheStore::readSnapshotForSource(const SourceIdentity& source, const QString& importerVersion, const QString& meshProfile) const
+{
+    QSqlQuery query(QSqlDatabase::database(connectionName_));
+    query.prepare(QStringLiteral("SELECT cache_key, path FROM cache_entry WHERE source_hash = ? AND source_size = ? AND source_mtime = ? AND importer_version = ? AND mesh_profile = ? ORDER BY last_access DESC LIMIT 1"));
+    query.addBindValue(source.hash);
+    query.addBindValue(source.size);
+    query.addBindValue(source.mtime);
+    query.addBindValue(importerVersion);
+    query.addBindValue(meshProfile);
+    if (!query.exec() || !query.next()) return std::nullopt;
+    const auto cacheKey = query.value(0).toString();
+    QFile file(query.value(1).toString());
+    if (!file.open(QIODevice::ReadOnly)) {
+        QSqlQuery erase(QSqlDatabase::database(connectionName_));
+        erase.prepare(QStringLiteral("DELETE FROM cache_entry WHERE cache_key = ?"));
+        erase.addBindValue(cacheKey);
+        erase.exec();
+        return std::nullopt;
+    }
+    const auto bytes = file.readAll();
+    QSqlQuery update(QSqlDatabase::database(connectionName_));
+    update.prepare(QStringLiteral("UPDATE cache_entry SET last_access = ? WHERE cache_key = ?"));
+    update.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    update.addBindValue(cacheKey);
+    update.exec();
+    return bytes;
+}
+
 void CacheStore::clear()
 {
     const auto entriesDirectory = QDir(rootDirectory_).filePath(QStringLiteral("entries"));

@@ -15,6 +15,7 @@ private slots:
     void rejectsNetworkCacheRoots();
     void clearOnlyRemovesLoupeCacheEntries();
     void readsCachedSnapshotForProgressiveReopen();
+    void readsOnlyTheExactSourceAndImportProfile();
 };
 
 void CacheStoreTest::effectiveUnitChangesKey()
@@ -66,6 +67,21 @@ void CacheStoreTest::readsCachedSnapshotForProgressiveReopen()
 
     QVERIFY(store.put(key, QByteArray("snapshot-first")));
     QCOMPARE(store.read(key), QByteArray("snapshot-first"));
+}
+
+void CacheStoreTest::readsOnlyTheExactSourceAndImportProfile()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    loupe::app::cache::CacheStore store(directory.path(), 1024);
+    const loupe::app::cache::SourceIdentity source{QStringLiteral("source-a"), 99, 77};
+    const auto key = loupe::app::cache::CacheKey::from(source, QStringLiteral("importer-1"), QStringLiteral("snapshot"), {QStringLiteral("mm"), 1.0});
+    loupe::app::cache::CacheMetadata metadata{source, QStringLiteral("importer-1"), QStringLiteral("snapshot"), {QStringLiteral("mm"), 1.0}};
+
+    QVERIFY(store.put(key, QByteArray("cached-snapshot"), metadata));
+    QCOMPARE(store.readSnapshotForSource(source, QStringLiteral("importer-1"), QStringLiteral("snapshot")), QByteArray("cached-snapshot"));
+    QVERIFY(!store.readSnapshotForSource({QStringLiteral("source-b"), 99, 77}, QStringLiteral("importer-1"), QStringLiteral("snapshot")).has_value());
+    QVERIFY(!store.readSnapshotForSource(source, QStringLiteral("importer-2"), QStringLiteral("snapshot")).has_value());
 }
 
 QTEST_MAIN(CacheStoreTest)
