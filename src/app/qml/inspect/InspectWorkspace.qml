@@ -78,7 +78,8 @@ Item {
                     if (tool === "fit") root.controller.fitView()
                     else if (tool === "isolate") root.controller.isolateActiveNode()
                     else if (tool === "ghost") root.controller.ghostActiveNode()
-                    else if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
+                    else if (tool === "section") { root.controller.section.enabled = true; root.activeTask = tool }
+                    else if (tool === "measure" || tool === "capture") root.activeTask = tool
                 }
             }
         }
@@ -103,7 +104,10 @@ Item {
             if (root.activeTask === "measure") item.taskController = root.controller.measurement
             else if (root.activeTask === "section") item.taskController = root.controller.section
             else item.taskController = root.controller.capture
-            item.closeRequested.connect(function() { root.activeTask = "" })
+            item.closeRequested.connect(function() {
+                if (root.activeTask === "section") root.controller.section.enabled = false
+                root.activeTask = ""
+            })
         }
     }
 }

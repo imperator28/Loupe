@@ -27,6 +27,13 @@ Item {
             model.opacity = mode === AppState.Ghost && id !== active ? 0.16 : 1.0
         }
     }
+    function applySection() {
+        if (!root.controller) return
+        const section = root.controller.section
+        const axis = section.axisName === "X" ? 0 : section.axisName === "Y" ? 1 : 2
+        for (let id in geometryByNode)
+            geometryByNode[id].setSection(section.enabled, axis, section.position, section.flipped)
+    }
     function appendMesh(nodeId, meshJson) {
         if (geometryByNode[nodeId]) return
         const geometry = geometryComponent.createObject(sceneRoot)
@@ -35,6 +42,7 @@ Item {
         geometryByNode[nodeId] = geometry
         modelByNode[nodeId] = model
         applyPresentation()
+        applySection()
     }
 
     Component { id: geometryComponent; MeshGeometry {} }
@@ -61,5 +69,9 @@ Item {
         function onFitRequested() { root.fitCamera() }
         function onActiveNodeIdChanged() { root.applyPresentation() }
         function onViewerPresentationChanged() { root.applyPresentation() }
+    }
+    Connections {
+        target: root.controller ? root.controller.section : null
+        function onChanged() { root.applySection() }
     }
 }

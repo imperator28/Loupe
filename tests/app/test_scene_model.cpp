@@ -12,6 +12,7 @@ private slots:
     void repeatedDefinitionSharesOneGeometry();
     void selectionMapsPickInstanceToOccurrence();
     void meshGeometryAppendsWorkerPayload();
+    void meshGeometryClipsTrianglesAgainstSectionPlane();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -47,6 +48,20 @@ void SceneModelTest::meshGeometryAppendsWorkerPayload()
     QCOMPARE(geometry.triangleCount(), 1);
     geometry.clearMesh();
     QCOMPARE(geometry.vertexCount(), 0);
+}
+
+void SceneModelTest::meshGeometryClipsTrianglesAgainstSectionPlane()
+{
+    loupe::app::render::MeshGeometry geometry;
+    QVERIFY(geometry.appendWorkerMesh(QByteArrayLiteral("{\"vertices\":[0,0,0,2,0,0,0,2,0],\"indices\":[0,1,2]}")));
+
+    geometry.setSection(true, 0, 1.0, false);
+
+    QCOMPARE(geometry.triangleCount(), 1);
+    QVERIFY(geometry.minimumCoordinate(0) >= 0.999F);
+    geometry.setSection(false, 0, 0.0, false);
+    QCOMPARE(geometry.triangleCount(), 1);
+    QVERIFY(geometry.minimumCoordinate(0) <= 0.001F);
 }
 
 int main(int argc, char* argv[])

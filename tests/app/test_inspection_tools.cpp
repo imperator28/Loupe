@@ -12,6 +12,7 @@ class InspectionToolsTest final : public QObject
 private slots:
     void pointDistanceUsesEffectiveUnit();
     void measurementModeTracksTheRequestedOperation();
+    void componentMeasurementsUseNormalizedGeometryMetrics();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void captureSettingsResolveTransparentPngDimensions();
@@ -35,6 +36,23 @@ void InspectionToolsTest::measurementModeTracksTheRequestedOperation()
 
     QCOMPARE(controller.mode(), loupe::app::tools::MeasurementMode::SurfaceArea);
     QCOMPARE(controller.pickInstruction(), QStringLiteral("Select a surface"));
+}
+
+void InspectionToolsTest::componentMeasurementsUseNormalizedGeometryMetrics()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setSelectedGeometry(600.0, 1'000.0, {10.0, 20.0, 30.0});
+
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceArea);
+    QCOMPARE(controller.resultLabel(), QStringLiteral("600 mm²"));
+    controller.setMode(loupe::app::tools::MeasurementMode::Volume);
+    QCOMPARE(controller.resultLabel(), QStringLiteral("1000 mm³"));
+    controller.setMode(loupe::app::tools::MeasurementMode::Bounds);
+    QCOMPARE(controller.resultLabel(), QStringLiteral("10 × 20 × 30 mm"));
+
+    controller.setEffectiveUnit(QStringLiteral("in"));
+    controller.setMode(loupe::app::tools::MeasurementMode::Volume);
+    QCOMPARE(controller.resultLabel(), QStringLiteral("0.061023744 in³"));
 }
 
 void InspectionToolsTest::sectionStateNeverMutatesExportShape()

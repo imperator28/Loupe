@@ -25,6 +25,7 @@ private slots:
     void isolatesAndGhostsTheActiveComponentForViewerPresentation();
     void reopensUnchangedStepFromLocalSnapshotCache();
     void manualUnitOverrideReimportsAtTheRequestedScale();
+    void selectedComponentFeedsGeometryBackedMeasurementModes();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -153,6 +154,23 @@ void ApplicationControllerTest::manualUnitOverrideReimportsAtTheRequestedScale()
     QTRY_COMPARE_WITH_TIMEOUT(controller.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
     QCOMPARE(controller.effectiveUnit(), QStringLiteral("in"));
     QVERIFY(qAbs(controller.modelExtentMm() - millimeterExtent * 25.4) < 0.01);
+}
+
+void ApplicationControllerTest::selectedComponentFeedsGeometryBackedMeasurementModes()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-measurement.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
+
+    const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
+    QVERIFY(!geometry.isEmpty());
+    controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());
+    auto* measurement = qobject_cast<loupe::app::tools::MeasurementController*>(controller.measurementController());
+    QVERIFY(measurement != nullptr);
+    measurement->setMode(loupe::app::tools::MeasurementMode::Volume);
+    QVERIFY(measurement->resultValue() > 0.0);
+    QCOMPARE(measurement->resultUnit(), QStringLiteral("mm³"));
 }
 
 QTEST_MAIN(ApplicationControllerTest)

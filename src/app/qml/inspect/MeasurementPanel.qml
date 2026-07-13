@@ -40,6 +40,13 @@ Rectangle {
             wrapMode: Text.WordWrap
             color: "#b6c2cc"
         }
+        Label {
+            Layout.fillWidth: true
+            visible: root.taskController && root.taskController.resultLabel.length > 0
+            text: root.taskController ? root.taskController.resultLabel : ""
+            font.bold: true
+            color: "#67d5c0"
+        }
         GridLayout {
             columns: 2
             Layout.fillWidth: true

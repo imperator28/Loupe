@@ -116,6 +116,7 @@ void ApplicationController::setActiveNodeId(const QString& activeNodeId)
     if (previousMode != inspectorMode()) {
         emit inspectorModeChanged();
     }
+    applyActiveGeometryToMeasurement();
     emit componentPropertiesChanged();
 }
 
@@ -232,8 +233,9 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
     for (const auto& value : document.object().value(QStringLiteral("geometry")).toArray()) {
         const auto object = value.toObject();
         const auto nodeId = object.value(QStringLiteral("nodeId")).toString();
-        if (!nodeId.isEmpty()) geometryByNode_.insert(nodeId, {object.value(QStringLiteral("surfaceAreaMm2")).toDouble(), object.value(QStringLiteral("volumeMm3")).toDouble()});
         const auto bounds = object.value(QStringLiteral("boundsMm")).toObject();
+        if (!nodeId.isEmpty()) geometryByNode_.insert(nodeId, {object.value(QStringLiteral("surfaceAreaMm2")).toDouble(), object.value(QStringLiteral("volumeMm3")).toDouble(),
+                                                                 QVector3D{static_cast<float>(bounds.value(QStringLiteral("width")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("height")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("depth")).toDouble())}});
         modelExtent = std::max({modelExtent, bounds.value(QStringLiteral("width")).toDouble(), bounds.value(QStringLiteral("height")).toDouble(), bounds.value(QStringLiteral("depth")).toDouble()});
     }
     if (!qFuzzyCompare(modelExtentMm_ + 1.0, modelExtent + 1.0)) {
@@ -260,6 +262,18 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
         });
     }
     assemblyTreeModel_.replaceSnapshot(treeNodes);
+    applyActiveGeometryToMeasurement();
+}
+
+void ApplicationController::applyActiveGeometryToMeasurement()
+{
+    const auto it = geometryByNode_.constFind(activeNodeId_);
+    if (it == geometryByNode_.cend()) {
+        measurementController_.clearSelectedGeometry();
+        return;
+    }
+    const auto& geometry = *it;
+    measurementController_.setSelectedGeometry(geometry.surfaceAreaMm2, geometry.volumeMm3, geometry.boundsMm);
 }
 
 double ApplicationController::activeSurfaceAreaMm2() const noexcept

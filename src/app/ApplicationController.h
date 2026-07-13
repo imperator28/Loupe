@@ -4,6 +4,7 @@
 #include <QProcess>
 #include <QHash>
 #include <QString>
+#include <QVector3D>
 
 #include <cstdint>
 #include <memory>
@@ -106,8 +107,9 @@ signals:
 private:
     void connectWorker();
     void applySnapshotToTree(const QByteArray& snapshot);
+    void applyActiveGeometryToMeasurement();
 
-    struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; };
+    struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; QVector3D boundsMm; };
 
     Workspace workspace_{Workspace::Inspect};
     QString activeNodeId_;
