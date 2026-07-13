@@ -8,29 +8,81 @@ Item {
     property QtObject controller
     property string activeTask: ""
 
-    Rectangle {
-        id: viewport
+    RowLayout {
         anchors.fill: parent
-        color: "#101418"
-        Label {
-            anchors.centerIn: parent
-            text: qsTr("Full assembly")
-            color: "#e6edf3"
-        }
-        InspectionDock {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 24
-            onToolTriggered: function(tool) {
-                if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
+        spacing: 10
+
+        Rectangle {
+            id: treePanel
+            color: "#182027"
+            radius: 8
+            Layout.preferredWidth: 248
+            Layout.fillHeight: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 8
+                Label {
+                    text: qsTr("Assembly tree")
+                    color: "#e6edf3"
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                ListView {
+                    id: assemblyTree
+                    model: root.controller ? root.controller.assemblyTree : null
+                    clip: true
+                    reuseItems: true
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    delegate: ItemDelegate {
+                        required property string name
+                        required property string stableId
+                        required property int definitionQuantity
+                        width: assemblyTree.width
+                        text: definitionQuantity > 0 ? qsTr("%1  %2×").arg(name).arg(definitionQuantity) : name
+                        highlighted: root.controller && root.controller.activeNodeId === stableId
+                        onClicked: root.controller.setActiveNodeId(stableId)
+                    }
+                }
             }
+        }
+
+        Rectangle {
+            id: viewport
+            color: "#101418"
+            radius: 8
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Label {
+                anchors.centerIn: parent
+                text: root.controller && root.controller.documentState === AppState.Opening ? qsTr("Importing assembly…")
+                    : root.controller && root.controller.documentState === AppState.TreeReady ? qsTr("Assembly loaded")
+                    : qsTr("Open a STEP assembly to inspect it")
+                color: "#e6edf3"
+            }
+            InspectionDock {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 24
+                onToolTriggered: function(tool) {
+                    if (tool === "section" || tool === "measure" || tool === "capture") root.activeTask = tool
+                }
+            }
+        }
+
+        ContextPanel {
+            Layout.preferredWidth: 300
+            Layout.fillHeight: true
+            controller: root.controller
         }
     }
 
     Loader {
         id: taskPanelLoader
-        anchors.horizontalCenter: viewport.horizontalCenter
-        anchors.bottom: viewport.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
         anchors.bottomMargin: 96
         active: root.activeTask !== ""
         source: root.activeTask === "measure" ? "MeasurementPanel.qml"
@@ -42,13 +94,5 @@ Item {
             else item.taskController = root.controller.capture
             item.closeRequested.connect(function() { root.activeTask = "" })
         }
-    }
-
-    ContextPanel {
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        width: 300
-        controller: parent.controller
     }
 }

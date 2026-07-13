@@ -11,6 +11,7 @@ private slots:
     void rejectsUnknownMajorVersion();
     void ignoresUnknownFieldsFromNewerMinorVersion();
     void canceledEventDecodes();
+    void meshEventCarriesPayload();
 };
 
 void ProtocolTest::openFileRoundTrips()
@@ -44,6 +45,16 @@ void ProtocolTest::canceledEventDecodes()
         QByteArrayLiteral("{\"version\":{\"major\":1,\"minor\":0},\"type\":\"canceled\",\"requestId\":7}\n"));
 
     QCOMPARE(std::get<loupe::protocol::Canceled>(event).requestId, 7ULL);
+}
+
+void ProtocolTest::meshEventCarriesPayload()
+{
+    const auto event = loupe::protocol::decodeEvent(
+        QByteArrayLiteral("{\"version\":{\"major\":1,\"minor\":0},\"type\":\"meshReady\",\"requestId\":7,\"definitionId\":\"body-1\",\"refinement\":0,\"segmentKey\":\"body-1\",\"meshBase64\":\"e30=\"}\n"));
+
+    const auto& mesh = std::get<loupe::protocol::MeshReady>(event);
+    QCOMPARE(mesh.requestId, 7ULL);
+    QCOMPARE(mesh.meshJson, QByteArrayLiteral("{}"));
 }
 
 QTEST_MAIN(ProtocolTest)

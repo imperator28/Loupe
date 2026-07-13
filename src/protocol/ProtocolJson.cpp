@@ -156,7 +156,8 @@ Event decodeEvent(const QByteArray& bytes)
     }
     if (type == QStringLiteral("meshReady")) {
         return MeshReady{requestId(object), stringField(object, QStringLiteral("definitionId")), object.value(QStringLiteral("refinement")).toInt(),
-                         stringField(object, QStringLiteral("segmentKey"))};
+                         stringField(object, QStringLiteral("segmentKey")),
+                         QByteArray::fromBase64(stringField(object, QStringLiteral("meshBase64")).toLatin1())};
     }
     if (type == QStringLiteral("failed")) {
         const auto recoverable = object.value(QStringLiteral("recoverable"));

@@ -51,6 +51,8 @@ void WorkerClient::readEvents()
                 using Value = std::decay_t<decltype(value)>;
                 if constexpr (std::is_same_v<Value, protocol::SnapshotReady>) {
                     emit snapshotReady(value.requestId, value.snapshotJson);
+                } else if constexpr (std::is_same_v<Value, protocol::MeshReady>) {
+                    emit meshReady(value.requestId, value.definitionId, value.meshJson);
                 } else if constexpr (std::is_same_v<Value, protocol::Failed>) {
                     emit requestFailed(value.requestId, value.code, value.message, value.recoverable);
                 } else if constexpr (std::is_same_v<Value, protocol::Canceled>) {

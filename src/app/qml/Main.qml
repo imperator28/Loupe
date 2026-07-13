@@ -23,6 +23,11 @@ ApplicationWindow {
                 text: qsTr("Loupe")
                 font.bold: true
             }
+            Button {
+                text: qsTr("Open STEP…")
+                Accessible.name: qsTr("Open a STEP file")
+                onClicked: openStepDialog.open()
+            }
             TabBar {
                 id: workspaceSwitcher
                 currentIndex: root.controller.workspace === AppState.Inspect ? 0 : 1
@@ -58,5 +63,10 @@ ApplicationWindow {
         anchors.centerIn: Overlay.overlay
         padding: 20
         contentItem: Label { text: qsTr("Review source units before export.") }
+    }
+
+    OpenStepDialog {
+        id: openStepDialog
+        onFileSelected: path => root.controller.openFile(path)
     }
 }

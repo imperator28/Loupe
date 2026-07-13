@@ -30,6 +30,7 @@ class WorkerClientTest final : public QObject
 
 private slots:
     void openFileDeliversWorkerSnapshot();
+    void meshEventDeliversTriangulationPayload();
 };
 
 void WorkerClientTest::openFileDeliversWorkerSnapshot()
@@ -60,6 +61,28 @@ void WorkerClientTest::openFileDeliversWorkerSnapshot()
     QTRY_COMPARE_WITH_TIMEOUT(snapshotSpy.count(), 1, 3'000);
     QCOMPARE(snapshotSpy.first().at(0).toULongLong(), 1ULL);
     QCOMPARE(snapshotSpy.first().at(1).toByteArray(), QByteArrayLiteral("{\"nodes\":[]}"));
+}
+
+void WorkerClientTest::meshEventDeliversTriangulationPayload()
+{
+    QLocalServer server;
+    const auto name = serverName();
+    QLocalServer::removeServer(name);
+    QVERIFY(server.listen(name));
+
+    loupe::app::worker::WorkerClient client;
+    QSignalSpy meshSpy(&client, &loupe::app::worker::WorkerClient::meshReady);
+    QVERIFY(client.connectToServer(name));
+    QVERIFY(server.waitForNewConnection(3'000));
+    auto* peer = server.nextPendingConnection();
+    QVERIFY(peer != nullptr);
+
+    peer->write("{\"version\":{\"major\":1,\"minor\":0},\"type\":\"meshReady\",\"requestId\":1,\"definitionId\":\"body-1\",\"refinement\":0,\"segmentKey\":\"body-1\",\"meshBase64\":\"e30=\"}\n");
+    QVERIFY(peer->waitForBytesWritten(1'000));
+    QTRY_COMPARE_WITH_TIMEOUT(meshSpy.count(), 1, 3'000);
+    QCOMPARE(meshSpy.first().at(0).toULongLong(), 1ULL);
+    QCOMPARE(meshSpy.first().at(1).toString(), QStringLiteral("body-1"));
+    QCOMPARE(meshSpy.first().at(2).toByteArray(), QByteArrayLiteral("{}"));
 }
 
 QTEST_MAIN(WorkerClientTest)

@@ -22,6 +22,7 @@ public:
 
 signals:
     void snapshotReady(quint64 requestId, const QByteArray& snapshotJson);
+    void meshReady(quint64 requestId, const QString& definitionId, const QByteArray& meshJson);
     void requestFailed(quint64 requestId, const QString& code, const QString& message, bool recoverable);
     void requestCanceled(quint64 requestId);
     void protocolError(const QString& message);

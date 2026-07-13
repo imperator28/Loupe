@@ -22,6 +22,7 @@ private slots:
     void readyThenCancel();
     void invalidFileDoesNotCrashWorker();
     void validStepProducesNonEmptySnapshot();
+    void validStepStreamsTriangulatedMesh();
 };
 
 namespace {
@@ -137,6 +138,30 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
     const auto geometry = document.value(QStringLiteral("geometry")).toArray();
     QVERIFY(!geometry.isEmpty());
     QVERIFY(geometry.first().toObject().value(QStringLiteral("volumeMm3")).toDouble() > 0.0);
+    QVERIFY(worker.state() == QProcess::Running);
+}
+
+void WorkerProcessTest::validStepStreamsTriangulatedMesh()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("worker-mesh.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    readEvent(socket);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 10},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+
+    QCOMPARE(readEvent(socket).value(QStringLiteral("type")).toString(), QStringLiteral("snapshotReady"));
+    const auto meshEvent = readEvent(socket);
+    QCOMPARE(meshEvent.value(QStringLiteral("type")).toString(), QStringLiteral("meshReady"));
+    const auto mesh = QJsonDocument::fromJson(QByteArray::fromBase64(meshEvent.value(QStringLiteral("meshBase64")).toString().toLatin1())).object();
+    QVERIFY(mesh.value(QStringLiteral("vertices")).toArray().size() >= 9);
+    QVERIFY(mesh.value(QStringLiteral("indices")).toArray().size() >= 3);
     QVERIFY(worker.state() == QProcess::Running);
 }
 

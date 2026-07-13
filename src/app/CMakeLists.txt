@@ -38,6 +38,7 @@ qt_add_qml_module(loupe-app
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/OpenStepDialog.qml
         qml/Theme.qml
         qml/inspect/InspectWorkspace.qml
         qml/inspect/InspectionDock.qml

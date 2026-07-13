@@ -18,7 +18,7 @@ struct SetVisible { QString nodeId; bool visible{}; };
 struct Ready { Version version; };
 struct Progress { std::uint64_t requestId{}; QString stage; double fraction{}; };
 struct SnapshotReady { std::uint64_t requestId{}; QByteArray snapshotJson; };
-struct MeshReady { std::uint64_t requestId{}; QString definitionId; int refinement{}; QString segmentKey; };
+struct MeshReady { std::uint64_t requestId{}; QString definitionId; int refinement{}; QString segmentKey; QByteArray meshJson; };
 struct Failed { std::uint64_t requestId{}; QString code; QString message; bool recoverable{}; };
 struct Canceled { std::uint64_t requestId{}; };
 

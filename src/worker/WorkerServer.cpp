@@ -11,6 +11,16 @@
 #include <QLocalSocket>
 #include <QTimer>
 
+#include <BRep_Tool.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+
+#include <gp_Pnt.hxx>
+
 #include <exception>
 #include <optional>
 #include <type_traits>
@@ -52,6 +62,39 @@ QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
         {QStringLiteral("effectiveUnit"), unitDecision.effectiveUnit == loupe::units::LengthUnit::Inch ? QStringLiteral("in") : QStringLiteral("mm")},
         {QStringLiteral("sourceToMillimeters"), unitDecision.sourceToMillimeters},
     }).toJson(QJsonDocument::Compact);
+}
+
+QByteArray encodeMesh(const TopoDS_Shape& shape, const double sourceToMillimeters)
+{
+    BRepMesh_IncrementalMesh mesher(shape, 0.1);
+    QJsonArray vertices;
+    QJsonArray indices;
+    int vertexOffset = 0;
+    for (TopExp_Explorer explorer(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
+        const auto face = TopoDS::Face(explorer.Current());
+        TopLoc_Location location;
+        const auto triangulation = BRep_Tool::Triangulation(face, location);
+        if (triangulation.IsNull()) continue;
+        const auto transform = location.Transformation();
+        for (int node = 1; node <= triangulation->NbNodes(); ++node) {
+            const auto point = triangulation->Node(node).Transformed(transform);
+            vertices.append(point.X() * sourceToMillimeters);
+            vertices.append(point.Y() * sourceToMillimeters);
+            vertices.append(point.Z() * sourceToMillimeters);
+        }
+        for (int triangle = 1; triangle <= triangulation->NbTriangles(); ++triangle) {
+            int first = 0;
+            int second = 0;
+            int third = 0;
+            triangulation->Triangle(triangle).Get(first, second, third);
+            if (face.Orientation() == TopAbs_REVERSED) std::swap(second, third);
+            indices.append(vertexOffset + first - 1);
+            indices.append(vertexOffset + second - 1);
+            indices.append(vertexOffset + third - 1);
+        }
+        vertexOffset += triangulation->NbNodes();
+    }
+    return QJsonDocument(QJsonObject{{QStringLiteral("vertices"), vertices}, {QStringLiteral("indices"), indices}}).toJson(QJsonDocument::Compact);
 }
 
 } // namespace
@@ -133,6 +176,15 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path)
             const auto imported = import::StepImporter{}.read(path.toStdString());
             send({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                   {QStringLiteral("snapshotBase64"), QString::fromLatin1(encodeSnapshot(imported).toBase64())}});
+            const auto unitDecision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+            for (std::size_t index = 0; index < imported.native->shapes.size() && index < imported.native->shapeNodeIds.size(); ++index) {
+                const auto mesh = encodeMesh(imported.native->shapes[index], unitDecision.sourceToMillimeters);
+                if (QJsonDocument::fromJson(mesh).object().value(QStringLiteral("indices")).toArray().isEmpty()) continue;
+                send({{QStringLiteral("type"), QStringLiteral("meshReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                      {QStringLiteral("definitionId"), QString::fromStdString(imported.native->shapeNodeIds[index])}, {QStringLiteral("refinement"), 0},
+                      {QStringLiteral("segmentKey"), QString::fromStdString(imported.native->shapeNodeIds[index])},
+                      {QStringLiteral("meshBase64"), QString::fromLatin1(mesh.toBase64())}});
+            }
         } catch (const std::exception&) {
             fail(requestId, QStringLiteral("import_failed"), QStringLiteral("The STEP file could not be imported"));
         }
