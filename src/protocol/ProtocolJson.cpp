@@ -97,6 +97,11 @@ QByteArray encode(const Command& command)
         } else if constexpr (std::is_same_v<Value, Cancel>) {
             return serialize({{QStringLiteral("type"), QStringLiteral("cancel")},
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)}});
+        } else if constexpr (std::is_same_v<Value, MeasureAtPoint>) {
+            return serialize({{QStringLiteral("type"), QStringLiteral("measureAtPoint")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
+                              {QStringLiteral("nodeId"), value.nodeId}, {QStringLiteral("x"), value.x},
+                              {QStringLiteral("y"), value.y}, {QStringLiteral("z"), value.z}, {QStringLiteral("mode"), value.mode}});
         } else {
             return serialize({{QStringLiteral("type"), QStringLiteral("setVisible")},
                               {QStringLiteral("nodeId"), value.nodeId},
@@ -129,6 +134,11 @@ Command decodeCommand(const QByteArray& bytes)
     }
     if (type == QStringLiteral("cancel")) {
         return Cancel{requestId(object)};
+    }
+    if (type == QStringLiteral("measureAtPoint")) {
+        const auto x = object.value(QStringLiteral("x")); const auto y = object.value(QStringLiteral("y")); const auto z = object.value(QStringLiteral("z"));
+        if (!x.isDouble() || !y.isDouble() || !z.isDouble() || !std::isfinite(x.toDouble()) || !std::isfinite(y.toDouble()) || !std::isfinite(z.toDouble())) fail("Protocol measurement point invalid");
+        return MeasureAtPoint{requestId(object), stringField(object, QStringLiteral("nodeId")), x.toDouble(), y.toDouble(), z.toDouble(), stringField(object, QStringLiteral("mode"))};
     }
     if (type == QStringLiteral("setVisible")) {
         const auto visible = object.value(QStringLiteral("visible"));

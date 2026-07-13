@@ -12,6 +12,7 @@ private slots:
     void ignoresUnknownFieldsFromNewerMinorVersion();
     void canceledEventDecodes();
     void meshEventCarriesPayload();
+    void measureAtPointRoundTrips();
 };
 
 void ProtocolTest::openFileRoundTrips()
@@ -55,6 +56,17 @@ void ProtocolTest::meshEventCarriesPayload()
     const auto& mesh = std::get<loupe::protocol::MeshReady>(event);
     QCOMPARE(mesh.requestId, 7ULL);
     QCOMPARE(mesh.meshJson, QByteArrayLiteral("{}"));
+}
+
+void ProtocolTest::measureAtPointRoundTrips()
+{
+    const loupe::protocol::MeasureAtPoint command{19, QStringLiteral("def-cylinder"), 4.0, 0.0, 2.0, QStringLiteral("radius")};
+
+    const auto decoded = loupe::protocol::decodeCommand(loupe::protocol::encode(loupe::protocol::Command{command}));
+    const auto& measure = std::get<loupe::protocol::MeasureAtPoint>(decoded);
+    QCOMPARE(measure.requestId, 19ULL);
+    QCOMPARE(measure.nodeId, QStringLiteral("def-cylinder"));
+    QCOMPARE(measure.mode, QStringLiteral("radius"));
 }
 
 QTEST_MAIN(ProtocolTest)
