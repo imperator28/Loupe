@@ -318,4 +318,11 @@ bool ApplicationController::setUnitOverride(const QString& unit)
     return true;
 }
 
+void ApplicationController::acceptViewPick(const QString& nodeId, const double x, const double y, const double z, double, double, double)
+{
+    if (nodeId.isEmpty()) return;
+    setActiveNodeId(nodeId);
+    measurementController_.recordPoint({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
+}
+
 } // namespace loupe::app

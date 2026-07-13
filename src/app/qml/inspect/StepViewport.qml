@@ -38,7 +38,7 @@ Item {
         if (geometryByNode[nodeId]) return
         const geometry = geometryComponent.createObject(sceneRoot)
         if (!geometry.appendWorkerMesh(meshJson)) { geometry.destroy(); return }
-        const model = modelComponent.createObject(sceneRoot, { "geometry": geometry })
+        const model = modelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId })
         geometryByNode[nodeId] = geometry
         modelByNode[nodeId] = model
         applyPresentation()
@@ -64,6 +64,8 @@ Item {
     Component {
         id: modelComponent
         Model {
+            property string nodeId: ""
+            pickable: true
             materials: DefaultMaterial { diffuseColor: "#67d5c0"; roughness: 0.34 }
         }
     }
@@ -78,6 +80,15 @@ Item {
         Node { id: sceneRoot }
         onWidthChanged: if (root.controller) root.controller.capture.setViewportSize(width, height)
         onHeightChanged: if (root.controller) root.controller.capture.setViewportSize(width, height)
+        MouseArea {
+            anchors.fill: parent
+            onClicked: function(mouse) {
+                const hit = view.pick(mouse.x, mouse.y)
+                if (hit.objectHit && hit.objectHit.nodeId)
+                    root.controller.acceptViewPick(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
+                                                    hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
+            }
+        }
     }
 
     Connections {

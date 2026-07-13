@@ -6,7 +6,9 @@ namespace {
 
 QString formatValue(const double value)
 {
-    return QString::number(value, 'g', 8);
+    const auto rounded = std::round(value);
+    const auto normalized = std::abs(value - rounded) <= 1.0e-6 ? rounded : value;
+    return QString::number(normalized, 'g', 8);
 }
 
 } // namespace
@@ -57,6 +59,21 @@ void MeasurementController::clearSelectedGeometry()
     emit resultChanged();
 }
 
+void MeasurementController::recordPoint(const QVector3D& pointMm)
+{
+    if (mode_ != MeasurementMode::PointToPoint) return;
+    if (pickedPointsMm_.size() == 2) pickedPointsMm_.clear();
+    pickedPointsMm_.append(pointMm);
+    emit resultChanged();
+}
+
+void MeasurementController::clearPicks()
+{
+    if (pickedPointsMm_.isEmpty()) return;
+    pickedPointsMm_.clear();
+    emit resultChanged();
+}
+
 void MeasurementController::setModeName(const QString& modeName)
 {
     const auto mode = modeName.toLower();
@@ -94,6 +111,7 @@ MeasurementResult MeasurementController::pointDistance(const QVector3D& first, c
 
 double MeasurementController::resultValue() const
 {
+    if (mode_ == MeasurementMode::PointToPoint && pickedPointsMm_.size() == 2) return pointDistance(pickedPointsMm_.at(0), pickedPointsMm_.at(1)).value;
     if (!hasSelectedGeometry_) return 0.0;
     const auto divisor = effectiveUnit_ == QStringLiteral("in") ? 25.4 : 1.0;
     switch (mode_) {
@@ -105,6 +123,7 @@ double MeasurementController::resultValue() const
 
 QString MeasurementController::resultUnit() const
 {
+    if (mode_ == MeasurementMode::PointToPoint) return pickedPointsMm_.size() == 2 ? effectiveUnit_ : QString{};
     switch (mode_) {
     case MeasurementMode::SurfaceArea: return effectiveUnit_ == QStringLiteral("in") ? QStringLiteral("in²") : QStringLiteral("mm²");
     case MeasurementMode::Volume: return effectiveUnit_ == QStringLiteral("in") ? QStringLiteral("in³") : QStringLiteral("mm³");
@@ -115,6 +134,9 @@ QString MeasurementController::resultUnit() const
 
 QString MeasurementController::resultLabel() const
 {
+    if (mode_ == MeasurementMode::PointToPoint) {
+        return pickedPointsMm_.size() == 2 ? QStringLiteral("%1 %2").arg(formatValue(resultValue()), resultUnit()) : QString{};
+    }
     if (!hasSelectedGeometry_) return {};
     if (mode_ == MeasurementMode::Bounds) {
         const auto divisor = effectiveUnit_ == QStringLiteral("in") ? 25.4F : 1.0F;

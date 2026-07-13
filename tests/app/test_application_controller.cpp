@@ -26,6 +26,7 @@ private slots:
     void reopensUnchangedStepFromLocalSnapshotCache();
     void manualUnitOverrideReimportsAtTheRequestedScale();
     void selectedComponentFeedsGeometryBackedMeasurementModes();
+    void viewportPickSelectsNodeAndRecordsPointMeasurement();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -171,6 +172,18 @@ void ApplicationControllerTest::selectedComponentFeedsGeometryBackedMeasurementM
     measurement->setMode(loupe::app::tools::MeasurementMode::Volume);
     QVERIFY(measurement->resultValue() > 0.0);
     QCOMPARE(measurement->resultUnit(), QStringLiteral("mm³"));
+}
+
+void ApplicationControllerTest::viewportPickSelectsNodeAndRecordsPointMeasurement()
+{
+    loupe::app::ApplicationController controller;
+    controller.acceptViewPick(QStringLiteral("occ-picked"), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+    controller.acceptViewPick(QStringLiteral("occ-picked"), 25.4, 0.0, 0.0, 0.0, 0.0, 1.0);
+
+    QCOMPARE(controller.activeNodeId(), QStringLiteral("occ-picked"));
+    auto* measurement = qobject_cast<loupe::app::tools::MeasurementController*>(controller.measurementController());
+    QVERIFY(measurement != nullptr);
+    QCOMPARE(measurement->resultLabel(), QStringLiteral("25.4 mm"));
 }
 
 QTEST_MAIN(ApplicationControllerTest)

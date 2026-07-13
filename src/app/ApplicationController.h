@@ -89,6 +89,7 @@ public:
     Q_INVOKABLE void restoreFullAssembly();
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
     Q_INVOKABLE bool setUnitOverride(const QString& unit);
+    Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
 
 signals:
     void workspaceChanged();

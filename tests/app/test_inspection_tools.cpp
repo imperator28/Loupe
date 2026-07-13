@@ -13,6 +13,7 @@ private slots:
     void pointDistanceUsesEffectiveUnit();
     void measurementModeTracksTheRequestedOperation();
     void componentMeasurementsUseNormalizedGeometryMetrics();
+    void viewportPicksProducePointToPointMeasurement();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void captureSettingsResolveTransparentPngDimensions();
@@ -53,6 +54,19 @@ void InspectionToolsTest::componentMeasurementsUseNormalizedGeometryMetrics()
     controller.setEffectiveUnit(QStringLiteral("in"));
     controller.setMode(loupe::app::tools::MeasurementMode::Volume);
     QCOMPARE(controller.resultLabel(), QStringLiteral("0.061023744 in³"));
+}
+
+void InspectionToolsTest::viewportPicksProducePointToPointMeasurement()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.recordPoint({0.0F, 0.0F, 0.0F});
+    controller.recordPoint({25.4F, 0.0F, 0.0F});
+
+    QCOMPARE(controller.resultLabel(), QStringLiteral("25.4 mm"));
+    controller.setEffectiveUnit(QStringLiteral("in"));
+    QCOMPARE(controller.resultLabel(), QStringLiteral("1 in"));
+    controller.clearPicks();
+    QVERIFY(controller.resultLabel().isEmpty());
 }
 
 void InspectionToolsTest::sectionStateNeverMutatesExportShape()

@@ -40,6 +40,12 @@ Rectangle {
             wrapMode: Text.WordWrap
             color: "#b6c2cc"
         }
+        Button {
+            text: qsTr("Clear picks")
+            Layout.fillWidth: true
+            enabled: root.taskController && root.taskController.mode === 0
+            onClicked: root.taskController.clearPicks()
+        }
         Label {
             Layout.fillWidth: true
             visible: root.taskController && root.taskController.resultLabel.length > 0

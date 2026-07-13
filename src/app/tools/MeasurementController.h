@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVector>
 #include <QVector3D>
 
 namespace loupe::app::tools {
@@ -37,6 +38,8 @@ public:
     void setMode(MeasurementMode mode);
     void setSelectedGeometry(double surfaceAreaMm2, double volumeMm3, const QVector3D& boundsMm);
     void clearSelectedGeometry();
+    void recordPoint(const QVector3D& pointMm);
+    Q_INVOKABLE void clearPicks();
     Q_INVOKABLE void setModeName(const QString& modeName);
     [[nodiscard]] MeasurementMode mode() const noexcept { return mode_; }
     [[nodiscard]] QString pickInstruction() const;
@@ -56,6 +59,7 @@ private:
     double volumeMm3_{};
     QVector3D boundsMm_;
     bool hasSelectedGeometry_{false};
+    QVector<QVector3D> pickedPointsMm_;
 };
 
 } // namespace loupe::app::tools
