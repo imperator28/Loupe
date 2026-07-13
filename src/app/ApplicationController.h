@@ -49,6 +49,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(bool cacheHit READ cacheHit NOTIFY cacheHitChanged)
     Q_PROPERTY(double modelExtentMm READ modelExtentMm NOTIFY modelExtentChanged)
     Q_PROPERTY(ViewerPresentation viewerPresentation READ viewerPresentation NOTIFY viewerPresentationChanged)
+    Q_PROPERTY(QString effectiveUnit READ effectiveUnit NOTIFY effectiveUnitChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -73,6 +74,7 @@ public:
     [[nodiscard]] bool cacheHit() const noexcept { return cacheHit_; }
     [[nodiscard]] double modelExtentMm() const noexcept { return modelExtentMm_; }
     [[nodiscard]] ViewerPresentation viewerPresentation() const noexcept { return viewerPresentation_; }
+    [[nodiscard]] const QString& effectiveUnit() const noexcept { return effectiveUnit_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -97,6 +99,7 @@ signals:
     void modelExtentChanged();
     void fitRequested();
     void viewerPresentationChanged();
+    void effectiveUnitChanged();
     void meshReady(const QString& nodeId, const QByteArray& meshJson);
 
 private:
@@ -122,6 +125,7 @@ private:
     bool cacheHit_{false};
     double modelExtentMm_{};
     ViewerPresentation viewerPresentation_{ViewerPresentation::Full};
+    QString effectiveUnit_{QStringLiteral("mm")};
     QHash<QString, ComponentGeometry> geometryByNode_;
     QHash<QString, QString> materialByNode_;
     tools::MeasurementController measurementController_{this};

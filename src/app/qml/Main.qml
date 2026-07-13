@@ -37,7 +37,7 @@ ApplicationWindow {
             }
             Item { Layout.fillWidth: true }
             Button {
-                text: qsTr("Bounds · mm")
+                text: qsTr("Units: %1").arg(root.controller.effectiveUnit)
                 Accessible.name: qsTr("Review source units")
                 onClicked: unitReview.open()
             }

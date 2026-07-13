@@ -69,6 +69,7 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
     QVERIFY(controller.assemblyTreeModel()->rowCount() > 0);
     QVERIFY(controller.modelExtentMm() > 0.0);
+    QCOMPARE(controller.effectiveUnit(), QStringLiteral("mm"));
     const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
     QVERIFY(!geometry.isEmpty());
     controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());

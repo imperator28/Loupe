@@ -139,6 +139,7 @@ void ApplicationController::openFile(const QUrl& file)
     geometryByNode_.clear();
     materialByNode_.clear();
     modelExtentMm_ = 0.0;
+    effectiveUnit_ = QStringLiteral("mm");
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
     cacheHit_ = false;
@@ -147,6 +148,7 @@ void ApplicationController::openFile(const QUrl& file)
     emit snapshotChanged();
     emit componentPropertiesChanged();
     emit modelExtentChanged();
+    emit effectiveUnitChanged();
     emit cacheHitChanged();
     if (cacheStore_) {
         if (const auto cached = cacheStore_->readSnapshotForSource(*pendingSource_, QStringLiteral("step-importer-1"), QStringLiteral("snapshot-1"))) {
@@ -209,6 +211,14 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
     const auto document = QJsonDocument::fromJson(snapshot);
     if (!document.isObject()) return;
     const auto nodes = document.object().value(QStringLiteral("nodes")).toArray();
+    const auto importedUnit = document.object().value(QStringLiteral("effectiveUnit")).toString();
+    if (importedUnit == QStringLiteral("mm") || importedUnit == QStringLiteral("in")) {
+        if (effectiveUnit_ != importedUnit) {
+            effectiveUnit_ = importedUnit;
+            emit effectiveUnitChanged();
+        }
+        measurementController_.setEffectiveUnit(effectiveUnit_);
+    }
     geometryByNode_.clear();
     double modelExtent = 0.0;
     for (const auto& value : document.object().value(QStringLiteral("geometry")).toArray()) {
