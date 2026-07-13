@@ -1,15 +1,41 @@
 #include "worker/WorkerServer.h"
 
+#include "core/import/StepImporter.h"
 #include "protocol/ProtocolTypes.h"
 
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
 #include <QTimer>
 
+#include <exception>
 #include <type_traits>
 
 namespace loupe::worker {
+namespace {
+
+QByteArray encodeSnapshot(const loupe::import::ImportResult& imported)
+{
+    QJsonArray nodes;
+    for (const auto& node : imported.snapshot.nodes) {
+        nodes.append(QJsonObject{
+            {QStringLiteral("id"), QString::fromStdString(node.id)},
+            {QStringLiteral("name"), QString::fromStdString(node.name)},
+            {QStringLiteral("kind"), static_cast<int>(node.kind)},
+            {QStringLiteral("definitionId"), node.definitionId ? QString::fromStdString(*node.definitionId) : QString{}},
+        });
+    }
+    return QJsonDocument(QJsonObject{
+        {QStringLiteral("sourceHash"), QString::fromStdString(imported.snapshot.sourceHash)},
+        {QStringLiteral("classification"), static_cast<int>(imported.snapshot.classification)},
+        {QStringLiteral("definitionCount"), static_cast<qint64>(imported.definitionCount)},
+        {QStringLiteral("occurrenceCount"), static_cast<qint64>(imported.occurrenceCount)},
+        {QStringLiteral("nodes"), nodes},
+    }).toJson(QJsonDocument::Compact);
+}
+
+} // namespace
 
 WorkerServer::WorkerServer(QObject* parent)
     : QObject(parent)
@@ -82,12 +108,19 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path)
     completion->setSingleShot(true);
     activeSessions_.insert(requestId, completion);
     connect(completion, &QTimer::timeout, this, [this, requestId, completion] {
+        const auto path = completion->property("sourcePath").toString();
         activeSessions_.remove(requestId);
-        send({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
-              {QStringLiteral("snapshotBase64"), QString()}});
+        try {
+            const auto imported = import::StepImporter{}.read(path.toStdString());
+            send({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("snapshotBase64"), QString::fromLatin1(encodeSnapshot(imported).toBase64())}});
+        } catch (const std::exception&) {
+            fail(requestId, QStringLiteral("import_failed"), QStringLiteral("The STEP file could not be imported"));
+        }
         completion->deleteLater();
     });
-    completion->start(500);
+    completion->setProperty("sourcePath", path);
+    completion->start(0);
 }
 
 void WorkerServer::cancel(const std::uint64_t requestId)

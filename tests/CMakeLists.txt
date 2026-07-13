@@ -15,6 +15,7 @@ add_executable(loupe-core-tests
     core/test_export_plan.cpp
     core/test_selected_export.cpp
     core/test_output_validation.cpp
+    core/test_geometry_analysis.cpp
     core/test_spike_cli.cpp
     fixtures/FixtureFactory.cpp
 )
@@ -38,8 +39,10 @@ add_test(NAME protocol COMMAND loupe-protocol-tests)
 
 add_executable(loupe-worker-process-tests
     worker/test_worker_process.cpp
+    fixtures/FixtureFactory.cpp
 )
-target_link_libraries(loupe-worker-process-tests PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+target_link_libraries(loupe-worker-process-tests PRIVATE Qt6::Core Qt6::Network Qt6::Test loupe::core)
+target_include_directories(loupe-worker-process-tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(loupe-worker-process-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
 add_dependencies(loupe-worker-process-tests loupe-worker)
 loupe_enable_warnings(loupe-worker-process-tests)

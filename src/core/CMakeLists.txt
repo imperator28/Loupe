@@ -4,6 +4,7 @@ add_library(loupe-core STATIC
     export/StepExporter.cpp
     export/StlExporter.cpp
     import/StepImporter.cpp
+    inspection/GeometryAnalysis.cpp
     report/EvidenceWriter.cpp
     units/UnitPolicy.cpp
     validation/OutputValidator.cpp

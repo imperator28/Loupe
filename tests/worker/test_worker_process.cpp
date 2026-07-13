@@ -8,6 +8,8 @@
 #include <QProcess>
 #include <QTemporaryFile>
 
+#include "fixtures/FixtureFactory.h"
+
 class WorkerProcessTest final : public QObject
 {
     Q_OBJECT
@@ -15,6 +17,7 @@ class WorkerProcessTest final : public QObject
 private slots:
     void readyThenCancel();
     void invalidFileDoesNotCrashWorker();
+    void validStepProducesNonEmptySnapshot();
 };
 
 namespace {
@@ -100,6 +103,27 @@ void WorkerProcessTest::invalidFileDoesNotCrashWorker()
     const auto event = readEvent(socket);
     QCOMPARE(event.value(QStringLiteral("type")).toString(), QStringLiteral("failed"));
     QCOMPARE(event.value(QStringLiteral("code")).toString(), QStringLiteral("read_failed"));
+    QVERIFY(worker.state() == QProcess::Running);
+}
+
+void WorkerProcessTest::validStepProducesNonEmptySnapshot()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("worker-repeated.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    readEvent(socket);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 9},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+
+    const auto event = readEvent(socket);
+    QCOMPARE(event.value(QStringLiteral("type")).toString(), QStringLiteral("snapshotReady"));
+    QVERIFY(!QByteArray::fromBase64(event.value(QStringLiteral("snapshotBase64")).toString().toLatin1()).isEmpty());
     QVERIFY(worker.state() == QProcess::Running);
 }
 
