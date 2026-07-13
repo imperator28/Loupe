@@ -14,6 +14,8 @@ private slots:
     void meshGeometryAppendsWorkerPayload();
     void meshGeometryClipsTrianglesAgainstSectionPlane();
     void meshGeometryClipsTrianglesAgainstArbitraryPlane();
+    void meshGeometryBuildsAPlanarCapForAClosedSection();
+    void meshGeometryCanRenderOnlyThePlanarSlice();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -74,6 +76,34 @@ void SceneModelTest::meshGeometryClipsTrianglesAgainstArbitraryPlane()
 
     QCOMPARE(geometry.triangleCount(), 1);
     QVERIFY(geometry.minimumCoordinate(1) >= 0.999F);
+}
+
+void SceneModelTest::meshGeometryBuildsAPlanarCapForAClosedSection()
+{
+    loupe::app::render::MeshGeometry geometry;
+    QVERIFY(geometry.appendWorkerMesh(QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7]}")));
+
+    geometry.setSection(true, 2, 0.0, false);
+    geometry.setSectionOptions(true, false);
+
+    QVERIFY(geometry.sectionCapTriangleCount() >= 2);
+    QVERIFY(geometry.triangleCount() > geometry.sectionCapTriangleCount());
+}
+
+void SceneModelTest::meshGeometryCanRenderOnlyThePlanarSlice()
+{
+    loupe::app::render::MeshGeometry geometry;
+    QVERIFY(geometry.appendWorkerMesh(QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7]}")));
+
+    geometry.setSection(true, 2, 0.0, false);
+    geometry.setSectionOptions(true, true);
+
+    QCOMPARE(geometry.triangleCount(), geometry.sectionCapTriangleCount());
+    QVERIFY(geometry.triangleCount() >= 2);
 }
 
 int main(int argc, char* argv[])

@@ -60,18 +60,17 @@ Rectangle {
         }
         Switch { text: qsTr("Flip section"); checked: root.taskController && root.taskController.flipped; onToggled: root.taskController.flipped = checked }
         Switch {
-            text: qsTr("Cap cut faces (not yet available)")
-            enabled: false
-            checked: false
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("Cut-face generation is not implemented in the P1 viewer yet.")
+            text: qsTr("Cap cut faces")
+            checked: root.taskController && root.taskController.capEnabled
+            onToggled: if (root.taskController) root.taskController.capEnabled = checked
         }
         Switch {
-            text: qsTr("2D slice only (not yet available)")
-            enabled: false
-            checked: false
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("2D slice rendering is not implemented in the P1 viewer yet.")
+            text: qsTr("2D slice only")
+            checked: root.taskController && root.taskController.sliceOnly
+            onToggled: if (root.taskController) {
+                root.taskController.sliceOnly = checked
+                if (checked) root.taskController.capEnabled = true
+            }
         }
         Label { text: qsTr("Sectioning affects only the Inspect view; export geometry remains unchanged."); Layout.fillWidth: true; wrapMode: Text.WordWrap; color: "#7e8d99" }
     }

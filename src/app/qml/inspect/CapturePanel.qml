@@ -64,11 +64,9 @@ Rectangle {
             onToggled: root.taskController.includeMeasurements = checked
         }
         Switch {
-            text: qsTr("Include section caps (not yet available)")
-            enabled: false
-            checked: false
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("Section caps will be enabled when cut-face generation is available.")
+            text: qsTr("Include section caps")
+            checked: !root.taskController || root.taskController.includeSectionCaps
+            onToggled: root.taskController.includeSectionCaps = checked
         }
         Label {
             text: root.taskController ? qsTr("Output: %1 × %2 PNG").arg(root.taskController.resolvedWidth).arg(root.taskController.resolvedHeight)

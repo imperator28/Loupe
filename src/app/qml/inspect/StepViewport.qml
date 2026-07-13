@@ -37,6 +37,7 @@ Item {
                 geometryByNode[id].setSectionPlane(section.enabled, section.planeNormal.x, section.planeNormal.y, section.planeNormal.z, section.planeOffset, section.flipped)
             else
                 geometryByNode[id].setSection(section.enabled, axis, section.position, section.flipped)
+            geometryByNode[id].setSectionOptions(section.capEnabled, section.sliceOnly)
         }
     }
     function appendMesh(nodeId, meshJson) {
@@ -59,11 +60,16 @@ Item {
             view.environment.clearColor = "transparent"
         }
         root.captureInProgress = capture.includeMeasurements && root.controller.measurement.resultLabel.length > 0
+        if (!capture.includeSectionCaps) {
+            for (let id in geometryByNode)
+                geometryByNode[id].setSectionOptions(false, false)
+        }
         root.grabToImage(function(result) {
             result.saveToFile(fileUrl.toLocalFile())
             view.environment.backgroundMode = originalBackgroundMode
             view.environment.clearColor = originalColor
             root.captureInProgress = false
+            root.applySection()
         }, Qt.size(capture.resolvedWidth, capture.resolvedHeight))
     }
 
