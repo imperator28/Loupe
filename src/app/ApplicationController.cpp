@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "core/inspection/MaterialProperties.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -89,6 +90,7 @@ void ApplicationController::setActiveNodeId(const QString& activeNodeId)
     if (previousMode != inspectorMode()) {
         emit inspectorModeChanged();
     }
+    emit componentPropertiesChanged();
 }
 
 void ApplicationController::openFile(const QUrl& file)
@@ -104,11 +106,14 @@ void ApplicationController::openFile(const QUrl& file)
     }
     pendingPath_ = file.toLocalFile();
     snapshotJson_.clear();
+    geometryByNode_.clear();
+    materialByNode_.clear();
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
     serverName_ = QStringLiteral("loupe-shell-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
     documentState_ = DocumentState::Opening;
     emit snapshotChanged();
+    emit componentPropertiesChanged();
     emit documentStateChanged();
     workerProcess_.start(workerExecutable_, {QStringLiteral("--server-name"), serverName_});
 }
@@ -132,6 +137,12 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
     const auto document = QJsonDocument::fromJson(snapshot);
     if (!document.isObject()) return;
     const auto nodes = document.object().value(QStringLiteral("nodes")).toArray();
+    geometryByNode_.clear();
+    for (const auto& value : document.object().value(QStringLiteral("geometry")).toArray()) {
+        const auto object = value.toObject();
+        const auto nodeId = object.value(QStringLiteral("nodeId")).toString();
+        if (!nodeId.isEmpty()) geometryByNode_.insert(nodeId, {object.value(QStringLiteral("surfaceAreaMm2")).toDouble(), object.value(QStringLiteral("volumeMm3")).toDouble()});
+    }
     QHash<QString, int> quantities;
     for (const auto& value : nodes) {
         const auto object = value.toObject();
@@ -152,6 +163,36 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
         });
     }
     assemblyTreeModel_.replaceSnapshot(treeNodes);
+}
+
+double ApplicationController::activeSurfaceAreaMm2() const noexcept
+{
+    return geometryByNode_.value(activeNodeId_).surfaceAreaMm2;
+}
+
+double ApplicationController::activeVolumeMm3() const noexcept
+{
+    return geometryByNode_.value(activeNodeId_).volumeMm3;
+}
+
+QString ApplicationController::activeMaterialId() const
+{
+    return materialByNode_.value(activeNodeId_);
+}
+
+double ApplicationController::estimatedMassKg() const noexcept
+{
+    const auto material = inspection::MaterialLibrary::find(activeMaterialId().toStdString());
+    if (!material) return 0.0;
+    return inspection::estimateMassKg(activeVolumeMm3(), *material).value_or(0.0);
+}
+
+bool ApplicationController::assignActiveMaterial(const QString& materialId)
+{
+    if (activeNodeId_.isEmpty() || !geometryByNode_.contains(activeNodeId_) || !inspection::MaterialLibrary::find(materialId.toStdString())) return false;
+    materialByNode_.insert(activeNodeId_, materialId);
+    emit componentPropertiesChanged();
+    return true;
 }
 
 } // namespace loupe::app

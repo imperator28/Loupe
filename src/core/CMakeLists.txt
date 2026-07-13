@@ -5,12 +5,19 @@ add_library(loupe-core STATIC
     export/StlExporter.cpp
     import/StepImporter.cpp
     inspection/GeometryAnalysis.cpp
-    inspection/MaterialProperties.cpp
     report/EvidenceWriter.cpp
     units/UnitPolicy.cpp
     validation/OutputValidator.cpp
 )
 add_library(loupe::core ALIAS loupe-core)
+
+add_library(loupe-materials STATIC
+    inspection/MaterialProperties.cpp
+    inspection/MaterialProperties.h
+)
+add_library(loupe::materials ALIAS loupe-materials)
+target_include_directories(loupe-materials PUBLIC "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-materials)
 
 target_include_directories(loupe-core PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(loupe-core

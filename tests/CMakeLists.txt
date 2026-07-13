@@ -20,7 +20,7 @@ add_executable(loupe-core-tests
     core/test_spike_cli.cpp
     fixtures/FixtureFactory.cpp
 )
-target_link_libraries(loupe-core-tests PRIVATE Catch2::Catch2WithMain loupe::core)
+target_link_libraries(loupe-core-tests PRIVATE Catch2::Catch2WithMain loupe::core loupe::materials)
 target_include_directories(loupe-core-tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(loupe-core-tests PRIVATE LOUPE_SPIKE_PATH="$<TARGET_FILE:loupe-spike>")
 add_dependencies(loupe-core-tests loupe-spike)
@@ -66,7 +66,7 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::protocol Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
+target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
 target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(loupe-application-controller-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
 add_dependencies(loupe-application-controller-tests loupe-worker)
@@ -93,6 +93,10 @@ add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
@@ -100,7 +104,7 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-qml-smoke-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
+target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::Test)
 target_include_directories(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_definitions(loupe-qml-smoke-tests PRIVATE
     LOUPE_MAIN_QML_PATH="${PROJECT_SOURCE_DIR}/src/app/qml/Main.qml"

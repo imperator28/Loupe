@@ -1,5 +1,8 @@
 #include <QtTest/QTest>
 #include <QSignalSpy>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUrl>
 
 #include "app/ApplicationController.h"
@@ -60,6 +63,12 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QVERIFY(!controller.snapshotJson().isEmpty());
     QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
     QVERIFY(controller.assemblyTreeModel()->rowCount() > 0);
+    const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
+    QVERIFY(!geometry.isEmpty());
+    controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());
+    QVERIFY(controller.assignActiveMaterial(QStringLiteral("aluminum-6061")));
+    QVERIFY(controller.activeVolumeMm3() > 0.0);
+    QVERIFY(controller.estimatedMassKg() > 0.0);
 }
 
 QTEST_MAIN(ApplicationControllerTest)

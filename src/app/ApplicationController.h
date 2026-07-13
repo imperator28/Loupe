@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QProcess>
+#include <QHash>
 #include <QString>
 
 #include <cstdint>
@@ -33,6 +34,10 @@ class ApplicationController : public QObject {
     Q_PROPERTY(DocumentState documentState READ documentState NOTIFY documentStateChanged)
     Q_PROPERTY(QString snapshotJson READ snapshotJson NOTIFY snapshotChanged)
     Q_PROPERTY(QObject* assemblyTree READ assemblyTreeModelObject CONSTANT)
+    Q_PROPERTY(double activeSurfaceAreaMm2 READ activeSurfaceAreaMm2 NOTIFY componentPropertiesChanged)
+    Q_PROPERTY(double activeVolumeMm3 READ activeVolumeMm3 NOTIFY componentPropertiesChanged)
+    Q_PROPERTY(double estimatedMassKg READ estimatedMassKg NOTIFY componentPropertiesChanged)
+    Q_PROPERTY(QString activeMaterialId READ activeMaterialId NOTIFY componentPropertiesChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -49,6 +54,10 @@ public:
     [[nodiscard]] const QString& snapshotJson() const noexcept { return snapshotJson_; }
     [[nodiscard]] models::AssemblyTreeModel* assemblyTreeModel() noexcept { return &assemblyTreeModel_; }
     [[nodiscard]] QObject* assemblyTreeModelObject() noexcept { return &assemblyTreeModel_; }
+    [[nodiscard]] double activeSurfaceAreaMm2() const noexcept;
+    [[nodiscard]] double activeVolumeMm3() const noexcept;
+    [[nodiscard]] double estimatedMassKg() const noexcept;
+    [[nodiscard]] QString activeMaterialId() const;
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -56,6 +65,7 @@ public:
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
     Q_INVOKABLE void openFile(const QUrl& file);
+    Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
 
 signals:
     void workspaceChanged();
@@ -63,10 +73,13 @@ signals:
     void activeNodeIdChanged();
     void documentStateChanged();
     void snapshotChanged();
+    void componentPropertiesChanged();
 
 private:
     void connectWorker();
     void applySnapshotToTree(const QByteArray& snapshot);
+
+    struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; };
 
     Workspace workspace_{Workspace::Inspect};
     QString activeNodeId_;
@@ -80,6 +93,8 @@ private:
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
     models::AssemblyTreeModel assemblyTreeModel_{this};
+    QHash<QString, ComponentGeometry> geometryByNode_;
+    QHash<QString, QString> materialByNode_;
     tools::MeasurementController measurementController_{this};
     tools::SectionController sectionController_{this};
     tools::CaptureController captureController_{this};

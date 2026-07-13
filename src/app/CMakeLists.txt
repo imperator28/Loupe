@@ -45,6 +45,6 @@ qt_add_qml_module(loupe-app
         qml/inspect/CapturePanel.qml
 )
 
-target_link_libraries(loupe-app PRIVATE loupe::protocol Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Network Qt6::Sql)
+target_link_libraries(loupe-app PRIVATE loupe::materials loupe::protocol Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Network Qt6::Sql)
 target_include_directories(loupe-app PRIVATE "${PROJECT_SOURCE_DIR}/src")
 loupe_enable_warnings(loupe-app)
