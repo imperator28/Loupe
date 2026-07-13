@@ -1,6 +1,9 @@
 #include <QtTest/QTest>
+#include <QSignalSpy>
+#include <QUrl>
 
 #include "app/ApplicationController.h"
+#include "fixtures/FixtureFactory.h"
 
 class ApplicationControllerTest final : public QObject
 {
@@ -11,6 +14,7 @@ private slots:
     void emptyDocumentShowsDocumentInspector();
     void selectionShowsComponentInspector();
     void ownsInspectionTaskControllers();
+    void opensStepThroughWorkerAndRetainsSnapshot();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -43,6 +47,17 @@ void ApplicationControllerTest::ownsInspectionTaskControllers()
     QVERIFY(controller.measurementController() != nullptr);
     QVERIFY(controller.sectionController() != nullptr);
     QVERIFY(controller.captureController() != nullptr);
+}
+
+void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-worker.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+
+    QTRY_COMPARE_WITH_TIMEOUT(controller.documentState(), loupe::app::DocumentState::TreeReady, 10'000);
+    QVERIFY(!controller.snapshotJson().isEmpty());
+    QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
 }
 
 QTEST_MAIN(ApplicationControllerTest)

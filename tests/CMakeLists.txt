@@ -51,8 +51,11 @@ add_test(NAME worker-process COMMAND loupe-worker-process-tests)
 
 add_executable(loupe-application-controller-tests
     app/test_application_controller.cpp
+    fixtures/FixtureFactory.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
@@ -60,8 +63,10 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-application-controller-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
-target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::protocol Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
+target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(loupe-application-controller-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
+add_dependencies(loupe-application-controller-tests loupe-worker)
 loupe_enable_warnings(loupe-application-controller-tests)
 
 add_test(NAME application-controller COMMAND loupe-application-controller-tests)
