@@ -4,20 +4,40 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <cerrno>
+#include <cstring>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
+#endif
 
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
 
+std::string processId()
+{
+#ifdef _WIN32
+    return std::to_string(GetCurrentProcessId());
+#else
+    return std::to_string(getpid());
+#endif
+}
+
 class ScopedDirectory {
 public:
     explicit ScopedDirectory(const std::string& name)
-        : path_(std::filesystem::temp_directory_path() / ("loupe-spike-" + name + "-" + std::to_string(GetCurrentProcessId())))
+        : path_(std::filesystem::temp_directory_path() / ("loupe-spike-" + name + "-" + processId()))
     {
         std::filesystem::remove_all(path_);
         std::filesystem::create_directories(path_);
@@ -30,6 +50,14 @@ private:
 
 struct SpikeResult { int exitCode{}; nlohmann::json json; };
 
+SpikeResult parseSpikeResult(const int exitCode, std::string output)
+{
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) output.pop_back();
+    const auto jsonStart = output.find_last_of('\n');
+    return {exitCode, nlohmann::json::parse(jsonStart == std::string::npos ? output : output.substr(jsonStart + 1))};
+}
+
+#ifdef _WIN32
 std::wstring quote(const std::wstring& value)
 {
     return L"\"" + value + L"\"";
@@ -54,10 +82,92 @@ SpikeResult runSpike(const std::vector<std::filesystem::path>& arguments)
     std::string output; char bytes[512]; DWORD count{};
     while (ReadFile(readPipe, bytes, sizeof(bytes), &count, nullptr) && count != 0) output.append(bytes, count);
     CloseHandle(readPipe); WaitForSingleObject(process.hProcess, INFINITE); DWORD exitCode{}; GetExitCodeProcess(process.hProcess, &exitCode); CloseHandle(process.hProcess);
-    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) output.pop_back();
-    const auto jsonStart = output.find_last_of('\n');
-    return {static_cast<int>(exitCode), nlohmann::json::parse(jsonStart == std::string::npos ? output : output.substr(jsonStart + 1))};
+    return parseSpikeResult(static_cast<int>(exitCode), std::move(output));
 }
+#else
+[[noreturn]] void throwPosixError(const std::string& operation, const int error)
+{
+    throw std::runtime_error(operation + " failed: " + std::strerror(error));
+}
+
+SpikeResult runSpike(const std::vector<std::filesystem::path>& arguments)
+{
+    int pipeDescriptors[2]{};
+    if (pipe(pipeDescriptors) != 0) throwPosixError("pipe", errno);
+
+    posix_spawn_file_actions_t actions;
+    int error = posix_spawn_file_actions_init(&actions);
+    if (error != 0) {
+        close(pipeDescriptors[0]);
+        close(pipeDescriptors[1]);
+        throwPosixError("posix_spawn_file_actions_init", error);
+    }
+
+    const auto closeDescriptors = [&]() {
+        close(pipeDescriptors[0]);
+        close(pipeDescriptors[1]);
+    };
+    const auto checkAction = [&](const int result, const char* operation) {
+        if (result == 0) return;
+        posix_spawn_file_actions_destroy(&actions);
+        closeDescriptors();
+        throwPosixError(operation, result);
+    };
+
+    checkAction(posix_spawn_file_actions_addclose(&actions, pipeDescriptors[0]), "posix_spawn_file_actions_addclose");
+    checkAction(posix_spawn_file_actions_adddup2(&actions, pipeDescriptors[1], STDOUT_FILENO), "posix_spawn_file_actions_adddup2 stdout");
+    checkAction(posix_spawn_file_actions_adddup2(&actions, pipeDescriptors[1], STDERR_FILENO), "posix_spawn_file_actions_adddup2 stderr");
+    checkAction(posix_spawn_file_actions_addclose(&actions, pipeDescriptors[1]), "posix_spawn_file_actions_addclose");
+
+    std::vector<std::string> argumentStorage;
+    argumentStorage.reserve(arguments.size() + 1);
+    argumentStorage.emplace_back(LOUPE_SPIKE_PATH);
+    for (const auto& argument : arguments) argumentStorage.push_back(argument.string());
+
+    std::vector<char*> argumentPointers;
+    argumentPointers.reserve(argumentStorage.size() + 1);
+    for (auto& argument : argumentStorage) argumentPointers.push_back(argument.data());
+    argumentPointers.push_back(nullptr);
+
+    pid_t child{};
+    error = posix_spawn(&child, argumentStorage.front().c_str(), &actions, nullptr, argumentPointers.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (error != 0) {
+        closeDescriptors();
+        throwPosixError("posix_spawn", error);
+    }
+
+    close(pipeDescriptors[1]);
+    std::string output;
+    char bytes[512];
+    int readError{};
+    while (true) {
+        const auto count = read(pipeDescriptors[0], bytes, sizeof(bytes));
+        if (count > 0) {
+            output.append(bytes, static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count == 0) break;
+        if (errno == EINTR) continue;
+        readError = errno;
+        break;
+    }
+    close(pipeDescriptors[0]);
+
+    int status{};
+    pid_t waitResult{};
+    do {
+        waitResult = waitpid(child, &status, 0);
+    } while (waitResult < 0 && errno == EINTR);
+    if (waitResult < 0) throwPosixError("waitpid", errno);
+    if (readError != 0) throwPosixError("read", readError);
+
+    const int exitCode = WIFEXITED(status) ? WEXITSTATUS(status)
+        : WIFSIGNALED(status) ? 128 + WTERMSIG(status)
+                              : -1;
+    return parseSpikeResult(exitCode, std::move(output));
+}
+#endif
 
 std::filesystem::path textArg(const char* value) { return std::filesystem::path(value); }
 

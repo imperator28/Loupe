@@ -6,6 +6,11 @@ else()
     set(_loupe_qt_runtime_root "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/Qt6")
     set(_loupe_qt_runtime_bin "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
 endif()
+if(APPLE)
+    set(_loupe_qpa_platform "cocoa")
+else()
+    set(_loupe_qpa_platform "minimal")
+endif()
 
 add_executable(loupe-core-tests
     core/test_bootstrap.cpp
@@ -80,7 +85,7 @@ loupe_enable_warnings(loupe-application-controller-tests)
 
 add_test(NAME application-controller COMMAND loupe-application-controller-tests)
 set_tests_properties(application-controller PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
@@ -117,6 +122,22 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
 target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::Sql Qt6::Test)
+if(NOT QT6_IS_SHARED_LIBS_BUILD)
+    target_link_libraries(loupe-qml-smoke-tests PRIVATE
+        Qt6::qtquick2plugin
+        Qt6::qtquickcontrols2plugin
+        Qt6::qquicklayoutsplugin
+        Qt6::qtquickdialogsplugin
+        Qt6::qquick3dplugin
+    )
+    if(APPLE)
+        target_link_libraries(loupe-qml-smoke-tests PRIVATE
+            Qt6::qtquickcontrols2macosstyleplugin
+            Qt6::effectsplugin
+            Qt6::qmlshapesplugin
+        )
+    endif()
+endif()
 target_include_directories(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_definitions(loupe-qml-smoke-tests PRIVATE
     LOUPE_MAIN_QML_PATH="${PROJECT_SOURCE_DIR}/src/app/qml/Main.qml"
@@ -126,7 +147,7 @@ loupe_enable_warnings(loupe-qml-smoke-tests)
 
 add_test(NAME qml-smoke COMMAND loupe-qml-smoke-tests)
 set_tests_properties(qml-smoke PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
@@ -134,12 +155,27 @@ add_executable(loupe-qml-tests
     qml/qml_tests_main.cpp
 )
 target_link_libraries(loupe-qml-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::QuickTest)
+if(NOT QT6_IS_SHARED_LIBS_BUILD)
+    target_link_libraries(loupe-qml-tests PRIVATE
+        Qt6::qtquick2plugin
+        Qt6::QuickTestplugin
+        Qt6::qtquickcontrols2plugin
+        Qt6::qquicklayoutsplugin
+    )
+    if(APPLE)
+        target_link_libraries(loupe-qml-tests PRIVATE
+            Qt6::qtquickcontrols2macosstyleplugin
+            Qt6::effectsplugin
+            Qt6::qmlshapesplugin
+        )
+    endif()
+endif()
 target_compile_definitions(loupe-qml-tests PRIVATE QUICK_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml")
 loupe_enable_warnings(loupe-qml-tests)
 
 add_test(NAME qml-inspection-tools COMMAND loupe-qml-tests)
 set_tests_properties(qml-inspection-tools PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_QUICK_BACKEND=software;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_QUICK_BACKEND=software;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
@@ -171,7 +207,7 @@ loupe_enable_warnings(loupe-scene-model-tests)
 
 add_test(NAME scene-model COMMAND loupe-scene-model-tests)
 set_tests_properties(scene-model PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
@@ -199,7 +235,7 @@ loupe_enable_warnings(loupe-override-store-tests)
 
 add_test(NAME override-store COMMAND loupe-override-store-tests)
 set_tests_properties(override-store PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
@@ -218,7 +254,7 @@ loupe_enable_warnings(loupe-inspection-tools-tests)
 
 add_test(NAME inspection-tools COMMAND loupe-inspection-tools-tests)
 set_tests_properties(inspection-tools PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=minimal;QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
