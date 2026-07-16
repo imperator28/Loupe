@@ -19,8 +19,25 @@ void VisibilityModel::setNodes(const QStringList& nodeIds)
 
 void VisibilityModel::hide(const QString& nodeId)
 {
-    if (current_.contains(nodeId)) {
+    if (current_.contains(nodeId) && current_[nodeId].visible) {
+        previous_ = current_;
         current_[nodeId].visible = false;
+        emit presentationChanged();
+    }
+}
+
+void VisibilityModel::hide(const QStringList& nodeIds)
+{
+    bool changed = false;
+    const auto before = current_;
+    for (const auto& nodeId : nodeIds) {
+        if (current_.contains(nodeId) && current_[nodeId].visible) {
+            current_[nodeId].visible = false;
+            changed = true;
+        }
+    }
+    if (changed) {
+        previous_ = before;
         emit presentationChanged();
     }
 }
@@ -35,12 +52,20 @@ void VisibilityModel::show(const QString& nodeId)
 
 void VisibilityModel::isolate(const QString& nodeId)
 {
-    if (!current_.contains(nodeId)) {
-        return;
+    isolate(QStringList{nodeId});
+}
+
+void VisibilityModel::isolate(const QStringList& nodeIds)
+{
+    if (nodeIds.isEmpty()) return;
+    bool hasKnownNode = false;
+    for (const auto& nodeId : nodeIds) {
+        hasKnownNode = hasKnownNode || current_.contains(nodeId);
     }
+    if (!hasKnownNode) return;
     previous_ = current_;
     for (auto it = current_.begin(); it != current_.end(); ++it) {
-        it->visible = it.key() == nodeId;
+        it->visible = nodeIds.contains(it.key());
         it->ghosted = false;
     }
     emit presentationChanged();
@@ -67,6 +92,23 @@ void VisibilityModel::restorePrevious()
     current_ = previous_;
     previous_.clear();
     emit presentationChanged();
+}
+
+void VisibilityModel::showAll()
+{
+    const auto before = current_;
+    bool changed = false;
+    for (auto it = current_.begin(); it != current_.end(); ++it) {
+        if (!it->visible || it->ghosted) {
+            it->visible = true;
+            it->ghosted = false;
+            changed = true;
+        }
+    }
+    if (changed) {
+        previous_ = before;
+        emit presentationChanged();
+    }
 }
 
 bool VisibilityModel::isVisible(const QString& nodeId) const

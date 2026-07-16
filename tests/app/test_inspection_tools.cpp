@@ -1,5 +1,10 @@
 #include <QtTest/QTest>
 #include <QtCore/qmath.h>
+#include <QFileInfo>
+#include <QFile>
+#include <QImage>
+#include <QTemporaryDir>
+#include <QUrl>
 
 #include "app/tools/MeasurementController.h"
 #include "app/tools/CaptureController.h"
@@ -14,12 +19,14 @@ private slots:
     void measurementModeTracksTheRequestedOperation();
     void componentMeasurementsUseNormalizedGeometryMetrics();
     void viewportPicksProducePointToPointMeasurement();
+    void viewportPicksIdentifyTheSelectedSurface();
     void pickedSurfaceNormalsProduceAngleMeasurement();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void sectionCanUseASelectedFacePlane();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
+    void captureWritesAndVerifiesPngAtomically();
 };
 
 void InspectionToolsTest::pointDistanceUsesEffectiveUnit()
@@ -76,6 +83,18 @@ void InspectionToolsTest::viewportPicksProducePointToPointMeasurement()
     QVERIFY(controller.resultLabel().isEmpty());
 }
 
+void InspectionToolsTest::viewportPicksIdentifyTheSelectedSurface()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.recordPick({1.0F, 2.0F, 3.0F}, {0.0F, 0.0F, 1.0F}, QStringLiteral("Housing"), QStringLiteral("Surface point"));
+
+    QCOMPARE(controller.firstPickDescription(), QStringLiteral("Surface point on Housing at (1, 2, 3) mm"));
+    QVERIFY(controller.secondPickDescription().isEmpty());
+    const auto picks = controller.pickedPoints();
+    QCOMPARE(picks.size(), 1);
+    QCOMPARE(picks.first().value<QVector3D>(), QVector3D(1.0F, 2.0F, 3.0F));
+}
+
 void InspectionToolsTest::pickedSurfaceNormalsProduceAngleMeasurement()
 {
     loupe::app::tools::MeasurementController controller;
@@ -109,12 +128,14 @@ void InspectionToolsTest::sectionSupportsFlipPositionCapAndSliceOnly()
     section.setFlipped(true);
     section.setCapEnabled(false);
     section.setSliceOnly(true);
+    section.setSliceDisplay(QStringLiteral("filled"));
 
     QCOMPARE(section.axis(), loupe::app::tools::SectionAxis::Y);
     QCOMPARE(section.position(), 12.5);
     QVERIFY(section.flipped());
     QVERIFY(!section.capEnabled());
     QVERIFY(section.sliceOnly());
+    QCOMPARE(section.sliceDisplay(), QStringLiteral("filled"));
 }
 
 void InspectionToolsTest::sectionCanUseASelectedFacePlane()
@@ -154,6 +175,24 @@ void InspectionToolsTest::captureSettingsBoundCustomScaleAndInclusionOptions()
     QCOMPARE(capture.resolvedSize(), QSize(1600, 1200));
     QVERIFY(!capture.includeMeasurements());
     QVERIFY(!capture.includeSectionCaps());
+}
+
+void InspectionToolsTest::captureWritesAndVerifiesPngAtomically()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("capture.png"));
+    QImage image(32, 24, QImage::Format_RGBA8888);
+    image.fill(QColor(QStringLiteral("#336699")));
+    loupe::app::tools::CaptureController capture;
+
+    QVERIFY(capture.saveImage(image, QUrl::fromLocalFile(path)));
+    QVERIFY(capture.lastSaveSucceeded());
+    QVERIFY(capture.statusMessage().contains(QStringLiteral("capture.png")));
+    QVERIFY(QFileInfo(path).size() > 0);
+    QFile output(path);
+    QVERIFY(output.open(QIODevice::ReadOnly));
+    QCOMPARE(output.read(8), QByteArray::fromHex("89504e470d0a1a0a"));
 }
 
 QTEST_MAIN(InspectionToolsTest)

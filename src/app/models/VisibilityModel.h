@@ -13,13 +13,17 @@ public:
 
     void setNodes(const QStringList& nodeIds);
     void hide(const QString& nodeId);
+    void hide(const QStringList& nodeIds);
     void show(const QString& nodeId);
     void isolate(const QString& nodeId);
+    void isolate(const QStringList& nodeIds);
     void ghostComplements(const QString& nodeId);
+    void showAll();
     void restorePrevious();
 
     [[nodiscard]] bool isVisible(const QString& nodeId) const;
     [[nodiscard]] bool isGhosted(const QString& nodeId) const;
+    [[nodiscard]] bool canRestore() const noexcept { return !previous_.isEmpty(); }
 
 signals:
     void presentationChanged();

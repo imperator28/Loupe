@@ -14,6 +14,7 @@ include(LoupeWarnings)
 find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
+find_package(PNG REQUIRED)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Quick3D Network Test QuickTest Sql)
 qt_standard_project_setup(REQUIRES 6.8)
 

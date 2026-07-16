@@ -43,11 +43,29 @@ loupe_enable_warnings(loupe-protocol-tests)
 
 add_test(NAME protocol COMMAND loupe-protocol-tests)
 
+add_executable(loupe-protocol-frame-tests
+    protocol/test_protocol_frame.cpp
+)
+target_link_libraries(loupe-protocol-frame-tests PRIVATE Qt6::Test loupe::protocol)
+target_include_directories(loupe-protocol-frame-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-protocol-frame-tests)
+
+add_test(NAME protocol-frame COMMAND loupe-protocol-frame-tests)
+
+add_executable(loupe-geometry-payload-tests
+    protocol/test_geometry_payload.cpp
+)
+target_link_libraries(loupe-geometry-payload-tests PRIVATE Qt6::Test loupe::protocol)
+target_include_directories(loupe-geometry-payload-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-geometry-payload-tests)
+
+add_test(NAME geometry-payload COMMAND loupe-geometry-payload-tests)
+
 add_executable(loupe-worker-process-tests
     worker/test_worker_process.cpp
     fixtures/FixtureFactory.cpp
 )
-target_link_libraries(loupe-worker-process-tests PRIVATE Qt6::Core Qt6::Network Qt6::Test loupe::core)
+target_link_libraries(loupe-worker-process-tests PRIVATE Qt6::Core Qt6::Network Qt6::Test loupe::core loupe::protocol)
 target_include_directories(loupe-worker-process-tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(loupe-worker-process-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
 add_dependencies(loupe-worker-process-tests loupe-worker)
@@ -62,6 +80,12 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/MaterialLibraryModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/MaterialLibraryModel.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
     "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.cpp"
@@ -77,7 +101,7 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Network Qt6::Sql Qt6::Test)
+target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Core Qt6::Gui Qt6::Network Qt6::Sql Qt6::Test)
 target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
 target_compile_definitions(loupe-application-controller-tests PRIVATE LOUPE_WORKER_PATH="$<TARGET_FILE:loupe-worker>")
 add_dependencies(loupe-application-controller-tests loupe-worker)
@@ -88,6 +112,17 @@ set_tests_properties(application-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
+
+add_executable(loupe-material-store-tests
+    app/test_material_store.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
+)
+target_link_libraries(loupe-material-store-tests PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
+target_include_directories(loupe-material-store-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-material-store-tests)
+
+add_test(NAME material-store COMMAND loupe-material-store-tests)
 
 add_executable(loupe-worker-client-tests
     app/test_worker_client.cpp
@@ -104,8 +139,16 @@ add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/ThemePreference.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/ThemePreference.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/MaterialLibraryModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/MaterialLibraryModel.h"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
     "${PROJECT_SOURCE_DIR}/src/app/cache/CacheStore.cpp"
@@ -121,7 +164,7 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::materials loupe::protocol Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::Sql Qt6::Test)
+target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::materials loupe::protocol PNG::PNG Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network Qt6::Sql Qt6::Test)
 if(NOT QT6_IS_SHARED_LIBS_BUILD)
     target_link_libraries(loupe-qml-smoke-tests PRIVATE
         Qt6::qtquick2plugin
@@ -161,6 +204,7 @@ if(NOT QT6_IS_SHARED_LIBS_BUILD)
         Qt6::QuickTestplugin
         Qt6::qtquickcontrols2plugin
         Qt6::qquicklayoutsplugin
+        Qt6::qquick3dplugin
     )
     if(APPLE)
         target_link_libraries(loupe-qml-tests PRIVATE
@@ -196,12 +240,14 @@ add_executable(loupe-scene-model-tests
     app/test_scene_model.cpp
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SceneModel.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/SceneModel.h"
 )
-target_link_libraries(loupe-scene-model-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick3D Qt6::Test)
+target_link_libraries(loupe-scene-model-tests PRIVATE loupe::protocol Qt6::Core Qt6::Gui Qt6::Quick3D Qt6::Test)
 target_include_directories(loupe-scene-model-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 loupe_enable_warnings(loupe-scene-model-tests)
 
@@ -248,7 +294,7 @@ add_executable(loupe-inspection-tools-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
 )
-target_link_libraries(loupe-inspection-tools-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_link_libraries(loupe-inspection-tools-tests PRIVATE PNG::PNG Qt6::Core Qt6::Gui Qt6::Test)
 target_include_directories(loupe-inspection-tools-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 loupe_enable_warnings(loupe-inspection-tools-tests)
 

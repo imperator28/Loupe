@@ -15,6 +15,7 @@ class SectionController final : public QObject {
     Q_PROPERTY(bool flipped READ flipped WRITE setFlipped NOTIFY changed)
     Q_PROPERTY(bool capEnabled READ capEnabled WRITE setCapEnabled NOTIFY changed)
     Q_PROPERTY(bool sliceOnly READ sliceOnly WRITE setSliceOnly NOTIFY changed)
+    Q_PROPERTY(QString sliceDisplay READ sliceDisplay WRITE setSliceDisplay NOTIFY changed)
     Q_PROPERTY(bool hasSelectedPlane READ hasSelectedPlane NOTIFY changed)
     Q_PROPERTY(bool usingSelectedPlane READ usingSelectedPlane NOTIFY changed)
     Q_PROPERTY(QVector3D planeNormal READ planeNormal NOTIFY changed)
@@ -30,6 +31,7 @@ public:
     void setFlipped(bool flipped);
     void setCapEnabled(bool enabled);
     void setSliceOnly(bool sliceOnly);
+    void setSliceDisplay(const QString& sliceDisplay);
     void setCandidatePlane(const QVector3D& normal, const QVector3D& point);
     Q_INVOKABLE void useSelectedPlane();
     [[nodiscard]] bool enabled() const noexcept { return enabled_; }
@@ -39,6 +41,7 @@ public:
     [[nodiscard]] bool flipped() const noexcept { return flipped_; }
     [[nodiscard]] bool capEnabled() const noexcept { return capEnabled_; }
     [[nodiscard]] bool sliceOnly() const noexcept { return sliceOnly_; }
+    [[nodiscard]] QString sliceDisplay() const { return sliceDisplay_; }
     [[nodiscard]] bool hasSelectedPlane() const noexcept { return hasSelectedPlane_; }
     [[nodiscard]] bool usingSelectedPlane() const noexcept { return usingSelectedPlane_; }
     [[nodiscard]] QVector3D planeNormal() const noexcept { return planeNormal_; }
@@ -55,6 +58,7 @@ private:
     bool flipped_{false};
     bool capEnabled_{true};
     bool sliceOnly_{false};
+    QString sliceDisplay_{QStringLiteral("filled-outline")};
     bool hasSelectedPlane_{false};
     bool usingSelectedPlane_{false};
     QVector3D planeNormal_{0.0F, 0.0F, 1.0F};

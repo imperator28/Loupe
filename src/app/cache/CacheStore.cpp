@@ -146,6 +146,11 @@ std::optional<QByteArray> CacheStore::readSnapshotForSource(const SourceIdentity
     return bytes;
 }
 
+std::optional<QByteArray> CacheStore::readGeometryForSource(const SourceIdentity& source, const QString& importerVersion, const QString& meshProfile) const
+{
+    return readSnapshotForSource(source, importerVersion, meshProfile);
+}
+
 void CacheStore::clear()
 {
     const auto entriesDirectory = QDir(rootDirectory_).filePath(QStringLiteral("entries"));

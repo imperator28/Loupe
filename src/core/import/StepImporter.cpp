@@ -9,6 +9,8 @@
 #include <NCollection_Sequence.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <TCollection_AsciiString.hxx>
+#include <TCollection_ExtendedString.hxx>
+#include <TDataStd_Name.hxx>
 #include <TDF_Tool.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopLoc_Location.hxx>
@@ -22,6 +24,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -40,6 +43,37 @@ std::string labelEntry(const TDF_Label& label)
     TCollection_AsciiString entry;
     TDF_Tool::Entry(label, entry);
     return entry.ToCString();
+}
+
+std::optional<std::string> labelName(const TDF_Label& label)
+{
+    auto attribute = occ::handle<TDataStd_Name>();
+    if (!label.FindAttribute(TDataStd_Name::GetID(), attribute)) {
+        return std::nullopt;
+    }
+    const auto& value = attribute->Get();
+    const auto length = value.LengthOfCString();
+    if (length <= 0) {
+        return std::nullopt;
+    }
+    std::vector<char> utf8(static_cast<std::size_t>(length) + 1, '\0');
+    auto* output = utf8.data();
+    value.ToUTF8CString(output);
+    auto name = std::string(utf8.data());
+    return name.empty() ? std::nullopt : std::optional<std::string>{std::move(name)};
+}
+
+std::string displayName(const TDF_Label& primary, const TDF_Label& secondary, const std::string_view fallback)
+{
+    if (const auto name = labelName(primary)) {
+        if (!name->starts_with("=>[")) return *name;
+    }
+    if (primary != secondary) {
+        if (const auto name = labelName(secondary)) {
+            if (!name->starts_with("=>[")) return *name;
+        }
+    }
+    return std::string(fallback);
 }
 
 units::LengthUnit unitForName(const std::string_view name)
@@ -110,7 +144,7 @@ void addDefinition(const TDF_Label& label, const std::string& hash, ImportResult
     if (definitions.contains(entry)) return;
     const auto id = domain::stableId(hash, entry, "definition");
     definitions.emplace(entry, id);
-    result.snapshot.nodes.push_back({id, NodeKind::Definition, "definition", entry, std::nullopt, std::nullopt, identityTransform()});
+    result.snapshot.nodes.push_back({id, NodeKind::Definition, displayName(label, label, "definition"), entry, std::nullopt, std::nullopt, identityTransform()});
     ++result.definitionCount;
 }
 
@@ -129,7 +163,7 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
         const gp_Trsf location = composedLocation(label, parentLocation);
         const bool root = !component && !parentId;
         const auto id = domain::stableId(hash, entry, root ? "root" : "subassembly");
-        result.snapshot.nodes.push_back({id, root ? NodeKind::Root : NodeKind::Subassembly, "assembly", entry, parentId, std::nullopt, transformFor(location)});
+        result.snapshot.nodes.push_back({id, root ? NodeKind::Root : NodeKind::Subassembly, displayName(label, referred, "assembly"), entry, parentId, std::nullopt, transformFor(location)});
         if (root) result.snapshot.rootIds.push_back(id);
         NCollection_Sequence<TDF_Label> components;
         XCAFDoc_ShapeTool::GetComponents(referred, components);
@@ -141,13 +175,17 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     addDefinition(definition, hash, result, definitions);
     const auto definitionId = definitions.at(labelEntry(definition));
     const auto id = domain::stableId(hash, entry, component ? "occurrence" : "body");
-    result.snapshot.nodes.push_back({id, component ? NodeKind::Occurrence : NodeKind::Body, component ? "occurrence" : "body", entry, parentId, definitionId, transformFor(composedLocation(label, parentLocation))});
+    result.snapshot.nodes.push_back({id, component ? NodeKind::Occurrence : NodeKind::Body,
+                                     displayName(label, definition, component ? "occurrence" : "body"), entry, parentId, definitionId,
+                                     transformFor(composedLocation(label, parentLocation))});
     if (!parentId) result.snapshot.rootIds.push_back(id);
     if (component) ++result.occurrenceCount;
     auto native = std::const_pointer_cast<NativeDocument>(result.native);
     native->labels.push_back(label);
+    native->definitionLabels.push_back(definition);
     native->shapes.push_back(XCAFDoc_ShapeTool::GetShape(label));
     native->shapeNodeIds.push_back(id);
+    native->definitionIds.push_back(definitionId);
 }
 
 } // namespace
@@ -157,20 +195,26 @@ ImportResult StepImporter::read(const std::filesystem::path& file) const
     STEPCAFControl_Reader reader;
     reader.SetNameMode(true);
     reader.SetColorMode(true);
+    const auto readStarted = std::chrono::steady_clock::now();
     if (reader.ReadFile(file.string().c_str()) != IFSelect_RetDone) throw std::runtime_error("STEP read failed");
+    const auto readFinished = std::chrono::steady_clock::now();
 
     NCollection_Sequence<TCollection_AsciiString> lengthNames, angleNames, solidAngleNames;
     reader.ChangeReader().FileUnits(lengthNames, angleNames, solidAngleNames);
 
     auto native = std::make_shared<NativeDocument>();
+    const auto transferStarted = std::chrono::steady_clock::now();
     XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", native->document);
     if (!reader.Transfer(native->document)) throw std::runtime_error("STEP transfer failed");
+    const auto transferFinished = std::chrono::steady_clock::now();
 
     ImportResult result;
     result.native = native;
     result.snapshot.sourceHash = sourceHash(file);
     result.snapshot.stage = domain::LoadStage::TreeReady;
     result.snapshot.classification = InputClass::SinglePart;
+    result.phaseTimes.stepReadMs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(readFinished - readStarted).count());
+    result.phaseTimes.xcafTransferMs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(transferFinished - transferStarted).count());
     for (int i = 1; i <= lengthNames.Length(); ++i) result.unitEvidence.declaredRepresentationUnits.push_back(unitForName(lengthNames.Value(i).ToCString()));
     double xcafMeters = 0.0;
     const bool hasXcafUnit = XCAFDoc_DocumentTool::GetLengthUnit(native->document, xcafMeters);
@@ -201,6 +245,7 @@ ImportResult StepImporter::read(const std::filesystem::path& file) const
         result.snapshot.classification = hasAssembly ? InputClass::StructuredAssembly
             : freeShapes.Length() > 1 ? InputClass::FlatMultiSolid : InputClass::SinglePart;
     }
+    result.phaseTimes.snapshotBuildMs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - transferFinished).count());
     return result;
 }
 

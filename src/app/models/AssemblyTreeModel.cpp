@@ -77,6 +77,7 @@ QVariant AssemblyTreeModel::data(const QModelIndex& index, const int role) const
     const auto& node = nodes_.at(index.internalId());
     switch (role) {
     case Qt::DisplayRole:
+        return node.definitionQuantity > 0 ? QStringLiteral("%1  %2x").arg(node.name).arg(node.definitionQuantity) : node.name;
     case NameRole:
         return node.name;
     case StableIdRole:
@@ -92,7 +93,7 @@ QVariant AssemblyTreeModel::data(const QModelIndex& index, const int role) const
 
 QHash<int, QByteArray> AssemblyTreeModel::roleNames() const
 {
-    return {{StableIdRole, "stableId"}, {KindRole, "kind"}, {NameRole, "name"}, {DefinitionQuantityRole, "definitionQuantity"}};
+    return {{Qt::DisplayRole, "display"}, {StableIdRole, "stableId"}, {KindRole, "kind"}, {NameRole, "name"}, {DefinitionQuantityRole, "definitionQuantity"}};
 }
 
 int AssemblyTreeModel::rowForNode(const int nodeIndex) const

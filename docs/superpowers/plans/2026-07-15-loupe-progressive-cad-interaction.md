@@ -10,6 +10,22 @@
 
 **Tech Stack:** C++23, Qt 6.11 Core/Gui/Qml/Quick/QuickControls2/Quick3D/Network/Test/QuickTest, OpenCascade 8, SQLite cache, CMake/Ninja.
 
+## Revised Integration Order (2026-07-16)
+
+Live review of `corpus-c.stp` showed that the visible delay is dominated by STEP/XCAF transfer before tree-ready, not by the later Qt Quick 3D replacement work. The review build reached the `Translating XCAF assembly` stage at about 14 seconds, emitted the tree and began refinement around 36 seconds, and completed shortly afterward. The existing five-second interactive-preview objective is therefore not credible without attacking the source-import path first.
+
+The implementation order is revised accordingly:
+
+1. Record one privacy-safe metrics event per import and establish cold/warm corpus baselines.
+2. Keep valid cache replay visible while XCAF transfer runs in the background; follow with a deferred-transfer investigation only after proving retained-document operations remain available.
+3. Prepare OCCT triangulation once per stable definition while keeping the existing occurrence-scoped payloads, transforms, colors, and selection identities. Move to shared renderer geometry plus occurrence transforms only after the UX contract is stable.
+4. Only then introduce bounded independent-definition refinement, progress ETA, and cancellation.
+5. Resume exact section/topology work and the broad UX redesign after the preview path is demonstrably interactive.
+
+This keeps the current progress UI honest and avoids trading away final curve quality merely to improve a displayed percentage.
+
+**First definition-scoped preparation result:** the 19 MB motor changed from 29.37 s to 27.81 s preview-ready and 73.28 s to 71.31 s final-ready, while preview/final triangle counts remained effectively unchanged (151,516/1,275,878 before; 151,524/1,275,626 after). This validates the safe intermediate optimization; the larger remaining delay is still XCAF transfer and occurrence-scoped encoding.
+
 ## Execution Rules
 
 - Preserve the current dirty worktree. Stage only files named by the active task and review overlapping changes before editing.
@@ -48,23 +64,27 @@ Expected checkpoint: the current review build remains launchable and its existin
 
 ### Task 0.2: Add timing and quality baselines
 
-**Create:**
-
-- `src/worker/ImportMetrics.h`
-- `src/worker/ImportMetrics.cpp`
-- `tests/worker/test_import_metrics.cpp`
-- `scripts/benchmark/inspect-corpus.sh`
-
 **Modify:**
 
-- `src/worker/CMakeLists.txt`
 - `src/worker/WorkerServer.cpp`
-- `tests/CMakeLists.txt`
+- `src/protocol/ProtocolTypes.h`
+- `src/protocol/ProtocolJson.cpp`
+- `src/app/worker/WorkerClient.cpp`
+- `tests/worker/test_worker_process.cpp`
 
-- [ ] Add a deterministic metrics model for tree-ready, first-body, preview-ready, and final-ready timestamps plus triangle and body counts.
-- [ ] Emit privacy-safe metrics containing source basename and hash only, never source geometry or absolute path.
-- [ ] Add a corpus runner that accepts explicit local paths and writes JSONL beneath `build/`, not the repository.
-- [ ] Record the current cold-open baseline for all supplied STEP files before optimization.
+- [x] Emit deterministic tree-ready, first-body, preview-ready, and final-ready worker timestamps plus triangle and body counts.
+- [x] Emit privacy-safe metrics containing source basename and hash only, never source geometry or absolute path.
+- [x] Add a corpus runner that accepts explicit local paths and writes JSONL beneath `build/`, not the repository.
+- [x] Record the first live cold-open evidence: the 19 MB motor assembly is still upstream-import bound before preview tessellation.
+- [x] Record reproducible cold-open baselines for all supplied STEP files before optimization:
+
+| Source | Bodies | STEP read | XCAF transfer | Tree ready | Preview ready | Final ready | Preview triangles | Final triangles |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `corpus-a.stp` | 3 | 0.78 s | 3.66 s | 4.54 s | 5.06 s | 7.88 s | 18,674 | 66,106 |
+| `corpus-b.stp` | 37 | 1.20 s | 5.92 s | 7.32 s | 8.15 s | 20.94 s | 38,392 | 526,018 |
+| `corpus-c.stp` | 135 | 3.03 s | 15.30 s | 18.95 s | 29.37 s | 73.28 s | 151,516 | 1,275,878 |
+
+The JSONL source evidence is intentionally written only beneath `build/benchmark/` and remains uncommitted.
 - [ ] Record current screenshots of the known curved housing and section cases under `build/` as non-versioned comparison evidence.
 
 Run:
@@ -291,17 +311,25 @@ ctest --test-dir build/macos-arm64-debug --output-on-failure -R '^(geometry-cach
 - `src/app/qml/inspect/MeasurementPanel.qml`
 - `src/app/qml/inspect/CapturePanel.qml`
 - `src/app/qml/inspect/StepViewport.qml`
+- `src/app/qml/inspect/ViewportVisualTheme.qml`
 - `tests/CMakeLists.txt`
+- `tests/qml/tst_ViewportVisualTheme.qml`
 
 - [ ] Expose `System`, `Light`, and `Dark` through one `ThemePreference` object that persists the requested mode with `QSettings`.
 - [ ] Bind System mode to `QStyleHints::colorSchemeChanged` so the effective theme follows runtime OS changes.
-- [ ] Expand the existing `Theme.qml` singleton into the sole QML theme facade; do not introduce a second theme singleton.
-- [ ] Preserve temporary aliases for the existing `Theme.surface`, `Theme.surfaceRaised`, `Theme.onSurface`, and `Theme.accent` API while consumers migrate to semantic roles.
+- [ ] Create one root-owned semantic theme facade in `Main.qml`, sourced by `ThemePreference`, and pass that same object into every workspace, panel, control, and viewport. Compatibility `Theme.qml` files must not be independently instantiated by nested QML components.
+- [ ] Create `ViewportVisualTheme` as the sole renderer-facing consumer of the propagated facade. It derives canvas background, lighting, CAD-edge contrast, hover, selection, measurement/section overlays, and a scoped transparent-capture override without changing imported or user appearance colors.
+- [ ] Bind `View3D.SceneEnvironment.backgroundMode` and `clearColor`, viewport lighting, edge materials, selection materials, and capture background directly to `ViewportVisualTheme`; do not assign those `SceneEnvironment` properties from signal handlers or capture callbacks, because that destroys their theme bindings.
+- [ ] Limit capture to setting and clearing `ViewportVisualTheme.transparentCapture`; wait one event turn before `grabToImage` so the render state settles, then restore only that scoped override.
+- [ ] Preserve temporary aliases for the existing `Theme.surface`, `Theme.surfaceRaised`, `Theme.onSurface`, and `Theme.accent` API only at the root migration boundary.
 - [ ] Replace feature-local UI and viewer colors with semantic roles.
 - [ ] Keep imported STEP and user appearance colors unchanged.
 - [ ] Use dark defining edges on white and light defining edges on near-black.
 - [ ] Test text and control contrast, focus visibility, viewer edges, selection, hover, and section colors in all modes.
 - [ ] Verify capture solid-background choices reflect the active theme.
+- [ ] Make the QML test runner load the Qt Quick 3D plugin and test Light canvas/edge/selection contrast plus transparent capture override behavior.
+- [ ] Live-review both Light and Dark with a STEP model loaded: the viewer canvas, controls, edge contrast, selection, section UI, and view cube must all change together.
+- [ ] During the live review, toggle Light while preview geometry and final refinement are visible, then perform a transparent capture and return to Light; the viewport must never revert to the dark clear color.
 
 Run:
 

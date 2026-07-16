@@ -68,6 +68,16 @@ void SectionController::setSliceOnly(const bool sliceOnly)
     emit changed();
 }
 
+void SectionController::setSliceDisplay(const QString& sliceDisplay)
+{
+    const auto normalized = sliceDisplay == QStringLiteral("outline") ? sliceDisplay
+                          : sliceDisplay == QStringLiteral("filled") ? sliceDisplay
+                                                                        : QStringLiteral("filled-outline");
+    if (sliceDisplay_ == normalized) return;
+    sliceDisplay_ = normalized;
+    emit changed();
+}
+
 void SectionController::setCandidatePlane(const QVector3D& normal, const QVector3D& point)
 {
     if (normal.isNull()) return;

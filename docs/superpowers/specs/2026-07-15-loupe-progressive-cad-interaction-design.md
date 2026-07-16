@@ -32,9 +32,13 @@ Opening is divided into four user-visible stages:
 3. `Interactive preview ready` enables navigation, selection, sectioning, appearance, and measurement.
 4. `Refining geometry` replaces preview bodies individually with final adaptive tessellation and refined BRep boundary curves.
 
+The worker emits a final privacy-safe metrics record for every completed source import. It contains only source basename and source hash, plus STEP-read, XCAF-transfer, snapshot-build, tree-ready, first-geometry, preview-ready, and final-ready elapsed milliseconds, body count, and preview/final triangle counts. These metrics are the performance contract for subsequent integration work; they distinguish upstream XCAF transfer from geometry encoding and renderer work.
+
 The progress area reports the current stage, completed and total body counts, percentage, elapsed time, and estimated remaining time. `Interactive preview ready` remains visually distinct from `Final quality ready`. The user may cancel refinement while retaining the preview and all completed refined bodies.
 
 Large visible bodies are prioritized ahead of small internal bodies. Repeated occurrences are deduplicated by definition: each unique definition is meshed once and reused with occurrence transforms. Meshing uses a bounded worker pool sized conservatively from available CPU capacity. Jobs that could share mutable OCCT triangulation state are not executed concurrently; independent definitions use isolated shape copies. The UI batches incoming geometry updates so model construction does not block pointer interaction.
+
+The first implementation step prepares OCCT triangulation once per stable definition but continues to encode occurrence-scoped payloads. This preserves current per-occurrence source colors, selection identity, and renderer compatibility. Shared GPU buffers plus occurrence transforms remain the next step after the interaction contract is settled.
 
 Geometry transport moves from newline-delimited JSON numeric arrays wrapped in base64 to a length-prefixed protocol envelope. Small control and progress messages remain compact JSON payloads inside the envelope; geometry uses typed binary payloads. Each geometry payload carries protocol version, request and definition identity, refinement level, segment identity, source color, bounds, occurrence transforms, vertex format, and index format. A strict maximum frame size and checked vertex and index counts reject corrupt input before allocation. Preview and final payloads share the same stable definition and segment keys, allowing atomic replacement without duplicate geometry or selection loss.
 
@@ -109,9 +113,11 @@ Snapping preserves the navigation target and fits the current visible geometry. 
 
 Theme selection offers `System`, `Light`, and `Dark`. `System` follows operating-system appearance changes at runtime. Explicit Light and Dark choices are persisted across sessions.
 
-A QML singleton supplies semantic roles rather than feature-local color literals. Roles cover application background, panel surface, elevated surface, viewport background, primary and secondary text, border, control surface, focus, CAD defining edge, hover topology, accepted measurement picks, active selection, warning, and error.
+A root-owned QML theme facade supplies semantic roles rather than feature-local color literals. `Main.qml` creates it from the persisted preference and passes that exact object to every workspace descendant and the `SceneEnvironment`; nested imports must not create independent theme instances. Roles cover application background, panel surface, elevated surface, viewport background, primary and secondary text, border, control surface, focus, CAD defining edge, hover topology, accepted measurement picks, active selection, warning, and error.
 
 Theme changes update UI chrome, text, controls, viewer background, lighting, edge colors, section outlines, hover feedback, selection feedback, view cube, and capture background choices as one transaction. Imported STEP colors, material-library colors, and per-body appearance overrides are never altered by theme selection.
+
+`ViewportVisualTheme` is the sole renderer-facing projection of the root facade. `SceneEnvironment`, renderer lights, model/edge materials, and canvas overlays stay declaratively bound to it for the lifetime of the viewport. Transparent capture is a temporary `ViewportVisualTheme` override; it never writes or later restores `SceneEnvironment` values directly. This preserves the Light canvas binding across capture, refinement, and subsequent theme changes.
 
 The light viewport uses a white background with dark defining edges. The dark viewport uses a near-black neutral background with light defining edges. Selection and measurement use both color and shape or line-weight changes so state does not rely on color alone.
 
@@ -137,9 +143,11 @@ For every supplied corpus file, record:
 - preview and final triangle counts;
 - cache-hit and cold-open status.
 
-The supplied 19 MB motor assembly targets interactive preview within approximately five seconds on the current Mac. Final refinement may take longer, but its progress must remain explicit and the preview must remain fully interactive.
+The supplied 19 MB motor assembly targets interactive preview within approximately five seconds on the current Mac. The 2026-07-16 cold baseline is 29.37 seconds preview-ready (18.95 seconds tree-ready, including 15.30 seconds XCAF transfer) and 73.28 seconds final-ready. Final refinement may take longer, but its progress must remain explicit and the preview must remain fully interactive. Reaching the target requires cache-first replay and definition reuse; it cannot be achieved by changing final tessellation tolerance alone.
 
 Performance work focuses on binary transport, bounded parallel meshing, body prioritization, UI batching, and dual-level caching. Quality tolerances are not silently loosened merely to report a shorter final-refinement time.
+
+When baseline evidence shows tree-ready dominates the open path, cache replay and source-import work take precedence over parallel refinement. In particular, a valid cached preview must be replayed before XCAF transfer, and repeated definitions must be encoded once with occurrence transforms. Parallelizing tessellation alone is not considered a remedy for source-transfer delay.
 
 ## Verification Strategy
 

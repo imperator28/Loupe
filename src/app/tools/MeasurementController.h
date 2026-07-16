@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantList>
 #include <QVector>
 #include <QVector3D>
 
@@ -30,6 +31,9 @@ class MeasurementController final : public QObject {
     Q_PROPERTY(double resultValue READ resultValue NOTIFY resultChanged)
     Q_PROPERTY(QString resultUnit READ resultUnit NOTIFY resultChanged)
     Q_PROPERTY(QString resultLabel READ resultLabel NOTIFY resultChanged)
+    Q_PROPERTY(QString firstPickDescription READ firstPickDescription NOTIFY resultChanged)
+    Q_PROPERTY(QString secondPickDescription READ secondPickDescription NOTIFY resultChanged)
+    Q_PROPERTY(QVariantList pickedPoints READ pickedPoints NOTIFY resultChanged)
 
 public:
     explicit MeasurementController(QObject* parent = nullptr);
@@ -41,6 +45,7 @@ public:
     void clearSelectedGeometry();
     void recordPoint(const QVector3D& pointMm);
     void recordPick(const QVector3D& pointMm, const QVector3D& normal);
+    void recordPick(const QVector3D& pointMm, const QVector3D& normal, const QString& nodeLabel, const QString& entityLabel);
     Q_INVOKABLE void clearPicks();
     Q_INVOKABLE void setModeName(const QString& modeName);
     [[nodiscard]] MeasurementMode mode() const noexcept { return mode_; }
@@ -49,6 +54,9 @@ public:
     [[nodiscard]] double resultValue() const;
     [[nodiscard]] QString resultUnit() const;
     [[nodiscard]] QString resultLabel() const;
+    [[nodiscard]] QString firstPickDescription() const;
+    [[nodiscard]] QString secondPickDescription() const;
+    [[nodiscard]] QVariantList pickedPoints() const;
 
 signals:
     void modeChanged();
@@ -63,6 +71,7 @@ private:
     bool hasSelectedGeometry_{false};
     QVector<QVector3D> pickedPointsMm_;
     QVector<QVector3D> pickedNormals_;
+    QVector<QString> pickedDescriptions_;
     double longestEdgeMm_{};
     double circularRadiusMm_{};
     int planarFaceCount_{};

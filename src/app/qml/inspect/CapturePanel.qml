@@ -5,13 +5,16 @@ import QtQuick.Layouts
 Rectangle {
     id: root
     property QtObject taskController
+    property QtObject theme
+    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
+    readonly property color subduedForeground: theme && theme.dark ? "#aeb8c2" : "#53636c"
     signal closeRequested()
     signal captureRequested()
     implicitWidth: 320
     implicitHeight: content.implicitHeight + 32
     radius: 10
-    color: "#182027"
-    border.color: "#34414b"
+    color: root.theme.surfaceRaised
+    border.color: root.theme.border
 
     ColumnLayout {
         id: content
@@ -21,22 +24,23 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Label { text: qsTr("Capture PNG"); font.bold: true; Layout.fillWidth: true }
-            ToolButton { text: "×"; Accessible.name: qsTr("Close capture"); onClicked: root.closeRequested() }
+            Label { text: qsTr("Capture PNG"); font.bold: true; Layout.fillWidth: true; color: root.foreground }
+            ThemedToolButton { theme: root.theme; text: "×"; Accessible.name: qsTr("Close capture"); onClicked: root.closeRequested() }
         }
-        Label { text: qsTr("Background"); color: "#b6c2cc" }
+        Label { text: qsTr("Background"); color: root.subduedForeground }
         RowLayout {
             Layout.fillWidth: true
             RadioButton { text: qsTr("Transparent"); checked: !root.taskController || root.taskController.transparentBackground; onToggled: if (checked) root.taskController.transparentBackground = true }
             RadioButton { text: qsTr("Viewport solid"); checked: root.taskController && !root.taskController.transparentBackground; onToggled: if (checked) root.taskController.transparentBackground = false }
         }
-        Label { text: qsTr("Scale"); color: "#b6c2cc" }
+        Label { text: qsTr("Scale"); color: root.subduedForeground }
         RowLayout {
             Layout.fillWidth: true
             Repeater {
                 model: [1, 2, 3, 4]
-                delegate: Button {
+                delegate: ThemedButton {
                     required property int modelData
+                    theme: root.theme
                     text: qsTr("%1×").arg(modelData)
                     checkable: true
                     checked: root.taskController && root.taskController.scale === modelData
@@ -73,9 +77,17 @@ Rectangle {
                                       : qsTr("Resolved output dimensions update from the active viewport.")
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            color: "#7e8d99"
+            color: root.subduedForeground
         }
-        Button {
+        Label {
+            Layout.fillWidth: true
+            visible: root.taskController && root.taskController.statusMessage.length > 0
+            text: root.taskController ? root.taskController.statusMessage : ""
+            wrapMode: Text.WordWrap
+            color: root.taskController && root.taskController.lastSaveSucceeded ? root.theme.accent : root.theme.error
+        }
+        ThemedButton {
+            theme: root.theme
             text: qsTr("Save PNG…")
             Layout.fillWidth: true
             enabled: root.taskController && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0

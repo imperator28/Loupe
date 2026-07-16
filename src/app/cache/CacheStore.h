@@ -30,6 +30,7 @@ public:
     [[nodiscard]] bool contains(const CacheKey& key) const;
     [[nodiscard]] std::optional<QByteArray> read(const CacheKey& key) const;
     [[nodiscard]] std::optional<QByteArray> readSnapshotForSource(const SourceIdentity& source, const QString& importerVersion, const QString& meshProfile) const;
+    [[nodiscard]] std::optional<QByteArray> readGeometryForSource(const SourceIdentity& source, const QString& importerVersion, const QString& meshProfile) const;
     void clear();
 
 private:

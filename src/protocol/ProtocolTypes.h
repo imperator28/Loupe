@@ -10,7 +10,7 @@
 
 namespace loupe::protocol {
 
-struct Version { std::uint16_t major{1}; std::uint16_t minor{0}; };
+struct Version { std::uint16_t major{2}; std::uint16_t minor{0}; };
 struct UnitOverride { QString unit; double customFactor{1.0}; QString reason; };
 struct OpenFile { std::uint64_t requestId{}; QString path; std::optional<UnitOverride> unitOverride; };
 struct Cancel { std::uint64_t requestId{}; };
@@ -19,12 +19,40 @@ struct SetVisible { QString nodeId; bool visible{}; };
 struct Ready { Version version; };
 struct Progress { std::uint64_t requestId{}; QString stage; double fraction{}; };
 struct SnapshotReady { std::uint64_t requestId{}; QByteArray snapshotJson; };
+struct ComponentMetadata {
+    std::uint64_t requestId{};
+    QString nodeId;
+    double surfaceAreaMm2{};
+    double volumeMm3{};
+    double widthMm{};
+    double heightMm{};
+    double depthMm{};
+    double longestEdgeMm{};
+    double circularRadiusMm{};
+    int planarFaceCount{};
+};
 struct MeshReady { std::uint64_t requestId{}; QString definitionId; int refinement{}; QString segmentKey; QByteArray meshJson; };
+struct EdgeReady { std::uint64_t requestId{}; QString nodeId; QByteArray edgeJson; };
+struct ImportMetrics {
+    std::uint64_t requestId{};
+    QString sourceName;
+    QString sourceHash;
+    qint64 stepReadMs{};
+    qint64 xcafTransferMs{};
+    qint64 snapshotBuildMs{};
+    qint64 treeReadyMs{};
+    qint64 firstGeometryMs{};
+    qint64 previewReadyMs{};
+    qint64 finalReadyMs{};
+    qint64 previewTriangleCount{};
+    qint64 refinedTriangleCount{};
+    int bodyCount{};
+};
 struct Failed { std::uint64_t requestId{}; QString code; QString message; bool recoverable{}; };
 struct Canceled { std::uint64_t requestId{}; };
 
 using Command = std::variant<OpenFile, Cancel, MeasureAtPoint, SetVisible>;
-using Event = std::variant<Ready, Progress, SnapshotReady, MeshReady, Failed, Canceled>;
+using Event = std::variant<Ready, Progress, SnapshotReady, ComponentMetadata, MeshReady, EdgeReady, ImportMetrics, Failed, Canceled>;
 
 class ProtocolError final : public std::runtime_error {
 public:

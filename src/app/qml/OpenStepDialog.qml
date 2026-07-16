@@ -3,8 +3,10 @@ import QtQuick.Dialogs
 
 FileDialog {
     id: root
-    signal fileSelected(url path)
+    property var controller
     title: qsTr("Open STEP assembly")
     nameFilters: [qsTr("STEP files (*.step *.stp)")]
-    onAccepted: root.fileSelected(selectedFile)
+    onAccepted: {
+        if (controller) controller.openFile(selectedFile)
+    }
 }

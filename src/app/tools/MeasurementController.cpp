@@ -78,11 +78,24 @@ void MeasurementController::recordPoint(const QVector3D& pointMm)
 
 void MeasurementController::recordPick(const QVector3D& pointMm, const QVector3D& normal)
 {
+    recordPick(pointMm, normal, {}, QStringLiteral("Surface point"));
+}
+
+void MeasurementController::recordPick(const QVector3D& pointMm, const QVector3D& normal, const QString& nodeLabel, const QString& entityLabel)
+{
     if (mode_ != MeasurementMode::PointToPoint && mode_ != MeasurementMode::SurfaceToSurface && mode_ != MeasurementMode::Angle) return;
-    if (pickedPointsMm_.size() == 2) pickedPointsMm_.clear();
-    if (pickedNormals_.size() == 2) pickedNormals_.clear();
+    if (pickedPointsMm_.size() == 2) {
+        pickedPointsMm_.clear();
+        pickedNormals_.clear();
+        pickedDescriptions_.clear();
+    }
     pickedPointsMm_.append(pointMm);
     pickedNormals_.append(normal);
+    const auto coordinates = QStringLiteral("(%1, %2, %3) mm")
+                                 .arg(formatValue(pointMm.x()), formatValue(pointMm.y()), formatValue(pointMm.z()));
+    pickedDescriptions_.append(nodeLabel.isEmpty()
+                                   ? QStringLiteral("%1 at %2").arg(entityLabel, coordinates)
+                                   : QStringLiteral("%1 on %2 at %3").arg(entityLabel, nodeLabel, coordinates));
     emit resultChanged();
 }
 
@@ -91,6 +104,7 @@ void MeasurementController::clearPicks()
     if (pickedPointsMm_.isEmpty()) return;
     pickedPointsMm_.clear();
     pickedNormals_.clear();
+    pickedDescriptions_.clear();
     emit resultChanged();
 }
 
@@ -179,6 +193,26 @@ QString MeasurementController::resultLabel() const
     if (mode_ == MeasurementMode::RadiusDiameter) return QStringLiteral("Radius: %1 %2 · Diameter: %3 %2").arg(formatValue(resultValue()), resultUnit(), formatValue(resultValue() * 2.0));
     const auto unit = resultUnit();
     return unit.isEmpty() ? QString{} : QStringLiteral("%1 %2").arg(formatValue(resultValue()), unit);
+}
+
+QString MeasurementController::firstPickDescription() const
+{
+    return pickedDescriptions_.isEmpty() ? QString{} : pickedDescriptions_.front();
+}
+
+QString MeasurementController::secondPickDescription() const
+{
+    return pickedDescriptions_.size() < 2 ? QString{} : pickedDescriptions_.at(1);
+}
+
+QVariantList MeasurementController::pickedPoints() const
+{
+    QVariantList result;
+    result.reserve(pickedPointsMm_.size());
+    for (const auto& point : pickedPointsMm_) {
+        result.append(QVariant::fromValue(point));
+    }
+    return result;
 }
 
 } // namespace loupe::app::tools

@@ -18,7 +18,7 @@ namespace {
 
 QJsonObject versionObject()
 {
-    return {{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}};
+    return {{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}};
 }
 
 QJsonObject frame(const QByteArray& bytes)
@@ -41,7 +41,7 @@ void validateVersion(const QJsonObject& object)
         fail("Protocol version missing");
     }
     const auto major = version.toObject().value(QStringLiteral("major"));
-    if (!major.isDouble() || major.toInt(-1) != 1) {
+    if (!major.isDouble() || major.toInt(-1) != 2) {
         fail("Unsupported protocol major version");
     }
 }
@@ -164,10 +164,46 @@ Event decodeEvent(const QByteArray& bytes)
     if (type == QStringLiteral("snapshotReady")) {
         return SnapshotReady{requestId(object), QByteArray::fromBase64(stringField(object, QStringLiteral("snapshotBase64")).toLatin1())};
     }
+    if (type == QStringLiteral("componentMetadata")) {
+        const auto bounds = object.value(QStringLiteral("boundsMm"));
+        if (!bounds.isObject()) fail("Protocol component bounds missing");
+        const auto boundsObject = bounds.toObject();
+        const auto surfaceArea = object.value(QStringLiteral("surfaceAreaMm2"));
+        const auto volume = object.value(QStringLiteral("volumeMm3"));
+        const auto width = boundsObject.value(QStringLiteral("width"));
+        const auto height = boundsObject.value(QStringLiteral("height"));
+        const auto depth = boundsObject.value(QStringLiteral("depth"));
+        const auto longest = object.value(QStringLiteral("longestEdgeMm"));
+        const auto radius = object.value(QStringLiteral("circularRadiusMm"));
+        const auto planarCount = object.value(QStringLiteral("planarFaceCount"));
+        if (!surfaceArea.isDouble() || !volume.isDouble() || !width.isDouble() || !height.isDouble() || !depth.isDouble()
+            || !longest.isDouble() || !radius.isDouble() || !planarCount.isDouble()) fail("Protocol component metadata invalid");
+        return ComponentMetadata{requestId(object), stringField(object, QStringLiteral("nodeId")), surfaceArea.toDouble(), volume.toDouble(),
+                                 width.toDouble(), height.toDouble(), depth.toDouble(), longest.toDouble(), radius.toDouble(), planarCount.toInt()};
+    }
+    if (type == QStringLiteral("importMetrics")) {
+        const auto number = [&object](const QString& name) {
+            const auto value = object.value(name);
+            if (!value.isDouble()) fail("Import metrics numeric field missing");
+            return static_cast<qint64>(value.toDouble());
+        };
+        return ImportMetrics{requestId(object), stringField(object, QStringLiteral("sourceName")),
+                             stringField(object, QStringLiteral("sourceHash")),
+                             number(QStringLiteral("stepReadMs")), number(QStringLiteral("xcafTransferMs")),
+                             number(QStringLiteral("snapshotBuildMs")),
+                             number(QStringLiteral("treeReadyMs")), number(QStringLiteral("firstGeometryMs")),
+                             number(QStringLiteral("previewReadyMs")), number(QStringLiteral("finalReadyMs")),
+                             number(QStringLiteral("previewTriangleCount")), number(QStringLiteral("refinedTriangleCount")),
+                             static_cast<int>(number(QStringLiteral("bodyCount")))};
+    }
     if (type == QStringLiteral("meshReady")) {
         return MeshReady{requestId(object), stringField(object, QStringLiteral("definitionId")), object.value(QStringLiteral("refinement")).toInt(),
                          stringField(object, QStringLiteral("segmentKey")),
                          QByteArray::fromBase64(stringField(object, QStringLiteral("meshBase64")).toLatin1())};
+    }
+    if (type == QStringLiteral("edgeReady")) {
+        return EdgeReady{requestId(object), stringField(object, QStringLiteral("nodeId")),
+                         QByteArray::fromBase64(stringField(object, QStringLiteral("edgeBase64")).toLatin1())};
     }
     if (type == QStringLiteral("failed")) {
         const auto recoverable = object.value(QStringLiteral("recoverable"));

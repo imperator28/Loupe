@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 preset="${1:-macos-arm64-debug}"
 build_root="$root/build/$preset"
-app="$build_root/src/app/loupe-app"
+app="$build_root/src/app/Loupe.app/Contents/MacOS/Loupe"
 configuration_root="debug"
 
 if [[ "$preset" == "macos-arm64-release" ]]; then

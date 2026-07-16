@@ -1,5 +1,8 @@
 #include "app/render/MeshGeometry.h"
 
+#include "protocol/GeometryPayload.h"
+#include "protocol/ProtocolTypes.h"
+
 #include <QVector3D>
 #include <QVector2D>
 #include <QJsonArray>
@@ -11,28 +14,71 @@
 #include <cmath>
 
 namespace loupe::app::render {
+namespace {
+
+QVector<float> calculateNormals(const QVector<float>& vertices, const QVector<quint32>& indices)
+{
+    QVector<QVector3D> accumulated(vertices.size() / 3, QVector3D{});
+    const auto pointAt = [&vertices](const quint32 index) {
+        const auto offset = static_cast<qsizetype>(index) * 3;
+        return QVector3D{vertices.at(offset), vertices.at(offset + 1), vertices.at(offset + 2)};
+    };
+    for (qsizetype index = 0; index + 2 < indices.size(); index += 3) {
+        const auto firstIndex = indices.at(index);
+        const auto secondIndex = indices.at(index + 1);
+        const auto thirdIndex = indices.at(index + 2);
+        const auto normal = QVector3D::crossProduct(pointAt(secondIndex) - pointAt(firstIndex),
+                                                    pointAt(thirdIndex) - pointAt(firstIndex));
+        if (normal.isNull()) continue;
+        accumulated[static_cast<qsizetype>(firstIndex)] += normal;
+        accumulated[static_cast<qsizetype>(secondIndex)] += normal;
+        accumulated[static_cast<qsizetype>(thirdIndex)] += normal;
+    }
+    QVector<float> result;
+    result.reserve(vertices.size());
+    for (const auto& value : accumulated) {
+        const auto normal = value.isNull() ? QVector3D{0.0F, 0.0F, 1.0F} : value.normalized();
+        result.append(normal.x()); result.append(normal.y()); result.append(normal.z());
+    }
+    return result;
+}
+
+} // namespace
 
 MeshGeometry::MeshGeometry(QQuick3DObject* parent)
     : QQuick3DGeometry(parent)
 {
     setPrimitiveType(PrimitiveType::Triangles);
-    setStride(static_cast<int>(3 * sizeof(float)));
+    setStride(static_cast<int>(6 * sizeof(float)));
     addAttribute(Attribute::PositionSemantic, 0, Attribute::F32Type);
+    addAttribute(Attribute::NormalSemantic, static_cast<int>(3 * sizeof(float)), Attribute::F32Type);
     addAttribute(Attribute::IndexSemantic, 0, Attribute::U32Type);
 }
 
 void MeshGeometry::replaceMesh(const MeshData& mesh)
 {
     sourceVertexData_ = mesh.vertexData;
+    sourceNormalData_ = mesh.normalData;
     sourceIndexData_ = mesh.indexData;
+    if (sourceNormalData_.size() != sourceVertexData_.size()) rebuildSourceNormals();
     rebuildDisplayMesh();
 }
 
 bool MeshGeometry::appendWorkerMesh(const QByteArray& meshJson)
 {
+    try {
+        const auto payload = protocol::decodeGeometry(meshJson);
+        const auto* mesh = std::get_if<protocol::MeshPayload>(&payload);
+        if (!mesh) return false;
+        MeshData data{mesh->definitionId, mesh->vertices, mesh->indices, mesh->normals};
+        replaceMesh(data);
+        return true;
+    } catch (const protocol::ProtocolError&) {
+    }
     const auto payload = QJsonDocument::fromJson(meshJson);
     if (!payload.isObject()) return false;
     const auto vertices = payload.object().value(QStringLiteral("vertices")).toArray();
+    const auto normals = payload.object().value(QStringLiteral("normals")).toArray();
     const auto indices = payload.object().value(QStringLiteral("indices")).toArray();
     if (vertices.isEmpty() || vertices.size() % 3 != 0 || indices.isEmpty() || indices.size() % 3 != 0) return false;
     const auto offset = static_cast<quint32>(sourceVertexData_.size() / 3);
@@ -40,10 +86,20 @@ bool MeshGeometry::appendWorkerMesh(const QByteArray& meshJson)
         if (!value.isDouble()) return false;
         sourceVertexData_.append(static_cast<float>(value.toDouble()));
     }
+    const auto hasNormals = normals.size() == vertices.size();
+    if (hasNormals) {
+        for (const auto& value : normals) {
+            if (!value.isDouble()) return false;
+            sourceNormalData_.append(static_cast<float>(value.toDouble()));
+        }
+    } else {
+        sourceNormalData_.resize(sourceVertexData_.size());
+    }
     for (const auto& value : indices) {
         if (!value.isDouble() || value.toInt(-1) < 0 || value.toInt() >= vertices.size() / 3) return false;
         sourceIndexData_.append(offset + static_cast<quint32>(value.toInt()));
     }
+    if (!hasNormals) rebuildSourceNormals();
     rebuildDisplayMesh();
     return true;
 }
@@ -51,8 +107,10 @@ bool MeshGeometry::appendWorkerMesh(const QByteArray& meshJson)
 void MeshGeometry::clearMesh()
 {
     sourceVertexData_.clear();
+    sourceNormalData_.clear();
     sourceIndexData_.clear();
     vertexData_.clear();
+    normalData_.clear();
     indexData_.clear();
     upload();
 }
@@ -79,11 +137,14 @@ void MeshGeometry::setSectionPlane(const bool enabled, const double normalX, con
     rebuildDisplayMesh();
 }
 
-void MeshGeometry::setSectionOptions(const bool capEnabled, const bool sliceOnly)
+void MeshGeometry::setSectionOptions(const bool capEnabled, const bool sliceOnly, const bool sliceFill, const bool sliceOutline)
 {
-    if (sectionCapEnabled_ == capEnabled && sectionSliceOnly_ == sliceOnly) return;
+    if (sectionCapEnabled_ == capEnabled && sectionSliceOnly_ == sliceOnly
+        && sectionSliceFill_ == sliceFill && sectionSliceOutline_ == sliceOutline) return;
     sectionCapEnabled_ = capEnabled;
     sectionSliceOnly_ = sliceOnly;
+    sectionSliceFill_ = sliceFill;
+    sectionSliceOutline_ = sliceOutline;
     rebuildDisplayMesh();
 }
 
@@ -96,13 +157,24 @@ float MeshGeometry::minimumCoordinate(const int axis) const noexcept
     return value;
 }
 
+float MeshGeometry::maximumCoordinate(const int axis) const noexcept
+{
+    if (vertexData_.isEmpty()) return std::numeric_limits<float>::quiet_NaN();
+    const auto normalizedAxis = std::clamp(axis, 0, 2);
+    float value = std::numeric_limits<float>::lowest();
+    for (qsizetype index = normalizedAxis; index < vertexData_.size(); index += 3) value = std::max(value, vertexData_.at(index));
+    return value;
+}
+
 void MeshGeometry::rebuildDisplayMesh()
 {
     vertexData_.clear();
+    normalData_.clear();
     indexData_.clear();
     sectionCapTriangleCount_ = 0;
     if (!sectionEnabled_) {
         vertexData_ = sourceVertexData_;
+        normalData_ = sourceNormalData_;
         indexData_ = sourceIndexData_;
         upload();
         return;
@@ -149,7 +221,53 @@ void MeshGeometry::rebuildDisplayMesh()
         if (intersections.size() == 2 && !near(intersections.at(0), intersections.at(1))) segments.append({intersections.at(0), intersections.at(1)});
     }
 
-    if (sectionCapEnabled_ && !segments.isEmpty()) {
+    const auto appendSliceOutline = [this, &appendVertex](const QVector<Segment>& sliceSegments) {
+        QVector3D sourceMinimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+        QVector3D sourceMaximum(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+        for (qsizetype index = 0; index + 2 < sourceVertexData_.size(); index += 3) {
+            const QVector3D point{sourceVertexData_.at(index), sourceVertexData_.at(index + 1), sourceVertexData_.at(index + 2)};
+            sourceMinimum.setX(std::min(sourceMinimum.x(), point.x()));
+            sourceMinimum.setY(std::min(sourceMinimum.y(), point.y()));
+            sourceMinimum.setZ(std::min(sourceMinimum.z(), point.z()));
+            sourceMaximum.setX(std::max(sourceMaximum.x(), point.x()));
+            sourceMaximum.setY(std::max(sourceMaximum.y(), point.y()));
+            sourceMaximum.setZ(std::max(sourceMaximum.z(), point.z()));
+        }
+        const auto halfWidth = std::max(0.01F, (sourceMaximum - sourceMinimum).length() * 0.00035F);
+        for (const auto& segment : sliceSegments) {
+            const auto direction = (segment.end - segment.start).normalized();
+            const auto offset = QVector3D::crossProduct(sectionNormal_, direction).normalized() * halfWidth;
+            if (offset.isNull()) continue;
+            const auto firstLeft = segment.start - offset;
+            const auto firstRight = segment.start + offset;
+            const auto secondLeft = segment.end - offset;
+            const auto secondRight = segment.end + offset;
+            appendVertex(firstLeft); appendVertex(secondLeft); appendVertex(secondRight);
+            appendVertex(firstLeft); appendVertex(secondRight); appendVertex(firstRight);
+            appendVertex(secondRight); appendVertex(secondLeft); appendVertex(firstLeft);
+            appendVertex(firstRight); appendVertex(secondRight); appendVertex(firstLeft);
+        }
+    };
+    const auto sliceSegments = segments;
+
+    if (sectionSliceOnly_ && !sectionSliceFill_) {
+        vertexData_.clear();
+        normalData_.clear();
+        indexData_.clear();
+        if (sectionSliceOutline_) appendSliceOutline(sliceSegments);
+        sectionCapTriangleCount_ = static_cast<int>(indexData_.size() / 3);
+        rebuildDisplayNormals();
+        upload();
+        return;
+    }
+
+    if (sectionSliceOnly_) {
+        vertexData_.clear();
+        normalData_.clear();
+        indexData_.clear();
+    }
+
+    if ((sectionCapEnabled_ || (sectionSliceOnly_ && sectionSliceFill_)) && !segments.isEmpty()) {
         QVector<float> capVertices;
         const auto appendCapTriangle = [&capVertices](const QVector3D& first, const QVector3D& second, const QVector3D& third) {
             const auto append = [&capVertices](const QVector3D& point) { capVertices.append(point.x()); capVertices.append(point.y()); capVertices.append(point.z()); };
@@ -211,16 +329,42 @@ void MeshGeometry::rebuildDisplayMesh()
                 if (!clipped) break;
             }
         }
-        sectionCapTriangleCount_ = capVertices.size() / 9;
-        if (sectionSliceOnly_) { vertexData_ = capVertices; indexData_.clear(); for (quint32 index = 0; index < static_cast<quint32>(vertexData_.size() / 3); ++index) indexData_.append(index); }
-        else for (qsizetype index = 0; index + 2 < capVertices.size(); index += 3) appendVertex({capVertices.at(index), capVertices.at(index + 1), capVertices.at(index + 2)});
+        sectionCapTriangleCount_ = static_cast<int>(capVertices.size() / 9);
+        for (qsizetype index = 0; index + 2 < capVertices.size(); index += 3) appendVertex({capVertices.at(index), capVertices.at(index + 1), capVertices.at(index + 2)});
     }
+    if (sectionSliceOnly_ && sectionSliceOutline_) appendSliceOutline(sliceSegments);
+    if (sectionSliceOnly_) sectionCapTriangleCount_ = static_cast<int>(indexData_.size() / 3);
+    rebuildDisplayNormals();
     upload();
+}
+
+void MeshGeometry::rebuildSourceNormals()
+{
+    sourceNormalData_ = calculateNormals(sourceVertexData_, sourceIndexData_);
+}
+
+void MeshGeometry::rebuildDisplayNormals()
+{
+    normalData_ = calculateNormals(vertexData_, indexData_);
 }
 
 void MeshGeometry::upload()
 {
-    QByteArray vertices(reinterpret_cast<const char*>(vertexData_.constData()), static_cast<int>(vertexData_.size() * sizeof(float)));
+    QVector<float> interleaved;
+    interleaved.reserve(vertexData_.size() * 2);
+    for (qsizetype index = 0; index + 2 < vertexData_.size(); index += 3) {
+        interleaved.append(vertexData_.at(index));
+        interleaved.append(vertexData_.at(index + 1));
+        interleaved.append(vertexData_.at(index + 2));
+        if (index + 2 < normalData_.size()) {
+            interleaved.append(normalData_.at(index));
+            interleaved.append(normalData_.at(index + 1));
+            interleaved.append(normalData_.at(index + 2));
+        } else {
+            interleaved.append(0.0F); interleaved.append(0.0F); interleaved.append(1.0F);
+        }
+    }
+    QByteArray vertices(reinterpret_cast<const char*>(interleaved.constData()), static_cast<int>(interleaved.size() * static_cast<qsizetype>(sizeof(float))));
     QByteArray indices(reinterpret_cast<const char*>(indexData_.constData()), static_cast<int>(indexData_.size() * sizeof(quint32)));
     setVertexData(vertices);
     setIndexData(indices);

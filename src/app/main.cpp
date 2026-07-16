@@ -1,16 +1,40 @@
 #include "app/ApplicationController.h"
+#include "app/render/CadEdgeGeometry.h"
 #include "app/render/MeshGeometry.h"
+#include "app/models/ThemePreference.h"
 
 #include <QGuiApplication>
+#include <QPalette>
 #include <QQmlApplicationEngine>
+#include <QQuickStyle>
 #include <qqml.h>
 
 int main(int argc, char* argv[])
 {
     QGuiApplication application(argc, argv);
+    // The native macOS control style does not reliably honor the dynamic QML
+    // palette. Basic keeps every control on the semantic theme roles below.
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    application.setOrganizationName(QStringLiteral("imperator28"));
+    application.setApplicationName(QStringLiteral("Loupe"));
+    QPalette palette;
+    palette.setColor(QPalette::Window, QColor("#182027"));
+    palette.setColor(QPalette::WindowText, QColor("#e6edf3"));
+    palette.setColor(QPalette::Base, QColor("#11181e"));
+    palette.setColor(QPalette::AlternateBase, QColor("#202a33"));
+    palette.setColor(QPalette::Text, QColor("#e6edf3"));
+    palette.setColor(QPalette::Button, QColor("#26323c"));
+    palette.setColor(QPalette::ButtonText, QColor("#e6edf3"));
+    palette.setColor(QPalette::Highlight, QColor("#315b64"));
+    palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+    palette.setColor(QPalette::ToolTipBase, QColor("#26323c"));
+    palette.setColor(QPalette::ToolTipText, QColor("#e6edf3"));
+    application.setPalette(palette);
     qmlRegisterUncreatableMetaObject(loupe::app::staticMetaObject, "Loupe.App", 1, 0, "AppState", "Application state only");
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");
+    qmlRegisterType<loupe::app::models::ThemePreference>("Loupe.App", 1, 0, "ThemePreference");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
+    qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
 
     QQmlApplicationEngine engine;
     engine.loadFromModule("Loupe.App", "Main");

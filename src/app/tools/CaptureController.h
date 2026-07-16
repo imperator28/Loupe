@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QImage>
 #include <QSize>
+#include <QUrl>
 
 namespace loupe::app::tools {
 
@@ -13,6 +15,8 @@ class CaptureController final : public QObject {
     Q_PROPERTY(bool includeSectionCaps READ includeSectionCaps WRITE setIncludeSectionCaps NOTIFY changed)
     Q_PROPERTY(int resolvedWidth READ resolvedWidth NOTIFY changed)
     Q_PROPERTY(int resolvedHeight READ resolvedHeight NOTIFY changed)
+    Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusChanged)
+    Q_PROPERTY(bool lastSaveSucceeded READ lastSaveSucceeded NOTIFY statusChanged)
 
 public:
     explicit CaptureController(QObject* parent = nullptr);
@@ -24,6 +28,7 @@ public:
     void setTransparentBackground(bool transparent);
     void setIncludeMeasurements(bool include);
     void setIncludeSectionCaps(bool include);
+    Q_INVOKABLE bool saveImage(const QImage& image, const QUrl& destination);
     [[nodiscard]] QString format() const { return QStringLiteral("png"); }
     [[nodiscard]] QSize resolvedSize() const;
     [[nodiscard]] int resolvedWidth() const { return resolvedSize().width(); }
@@ -32,9 +37,12 @@ public:
     [[nodiscard]] bool transparentBackground() const noexcept { return transparentBackground_; }
     [[nodiscard]] bool includeMeasurements() const noexcept { return includeMeasurements_; }
     [[nodiscard]] bool includeSectionCaps() const noexcept { return includeSectionCaps_; }
+    [[nodiscard]] const QString& statusMessage() const noexcept { return statusMessage_; }
+    [[nodiscard]] bool lastSaveSucceeded() const noexcept { return lastSaveSucceeded_; }
 
 signals:
     void changed();
+    void statusChanged();
 
 private:
     QSize viewportSize_;
@@ -42,6 +50,8 @@ private:
     bool transparentBackground_{true};
     bool includeMeasurements_{true};
     bool includeSectionCaps_{true};
+    QString statusMessage_;
+    bool lastSaveSucceeded_{false};
 };
 
 } // namespace loupe::app::tools

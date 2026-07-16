@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "app/models/ThemePreference.h"
 
 #include <QGuiApplication>
 #include <QQmlComponent>
@@ -19,6 +20,7 @@ void QmlSmokeTest::mainLoads()
 {
     qmlRegisterUncreatableMetaObject(loupe::app::staticMetaObject, "Loupe.App", 1, 0, "AppState", "Application state only");
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");
+    qmlRegisterType<loupe::app::models::ThemePreference>("Loupe.App", 1, 0, "ThemePreference");
     QQmlEngine engine;
     QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_MAIN_QML_PATH)));
     QVERIFY2(component.isReady(), qPrintable(component.errorString()));

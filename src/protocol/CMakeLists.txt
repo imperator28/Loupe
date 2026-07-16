@@ -1,4 +1,8 @@
 qt_add_library(loupe-protocol STATIC
+    GeometryPayload.cpp
+    GeometryPayload.h
+    ProtocolFrame.cpp
+    ProtocolFrame.h
     ProtocolJson.cpp
     ProtocolTypes.h
 )

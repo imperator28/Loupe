@@ -11,6 +11,8 @@
 #include <QTemporaryFile>
 
 #include "fixtures/FixtureFactory.h"
+#include "protocol/GeometryPayload.h"
+#include "protocol/ProtocolFrame.h"
 
 #include <algorithm>
 
@@ -29,22 +31,45 @@ namespace {
 
 QString serverName()
 {
-    return QStringLiteral("loupe-worker-test-%1").arg(QCoreApplication::applicationPid());
+    static quint64 sequence{};
+    return QStringLiteral("loupe-worker-test-%1-%2").arg(QCoreApplication::applicationPid()).arg(++sequence);
 }
 
-QJsonObject readEvent(QLocalSocket& socket)
+std::optional<loupe::protocol::Frame> readFrame(QLocalSocket& socket, loupe::protocol::FrameDecoder& decoder)
 {
-    if (!socket.waitForReadyRead(3'000)) {
-        return {};
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 10'000) {
+        if (const auto frame = decoder.take()) return frame;
+        if (!socket.waitForReadyRead(100)) continue;
+        decoder.append(socket.readAll());
     }
-    const auto line = socket.readLine();
-    const auto document = QJsonDocument::fromJson(line);
+    return std::nullopt;
+}
+
+QJsonObject readEvent(QLocalSocket& socket, loupe::protocol::FrameDecoder& decoder)
+{
+    const auto frame = readFrame(socket, decoder);
+    if (!frame || frame->type != loupe::protocol::FrameType::ControlJson) return {};
+    const auto document = QJsonDocument::fromJson(frame->payload);
     return document.isObject() ? document.object() : QJsonObject{};
+}
+
+QJsonObject readEventOfType(QLocalSocket& socket, loupe::protocol::FrameDecoder& decoder, const QString& type)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 10'000) {
+        const auto event = readEvent(socket, decoder);
+        if (event.value(QStringLiteral("type")).toString() == type) return event;
+    }
+    return {};
 }
 
 void send(QLocalSocket& socket, const QJsonObject& object)
 {
-    socket.write(QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n');
+    socket.write(loupe::protocol::encodeFrame(loupe::protocol::FrameType::ControlJson,
+                                              QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n'));
     socket.waitForBytesWritten(1'000);
 }
 
@@ -79,15 +104,16 @@ void WorkerProcessTest::readyThenCancel()
 
     QLocalSocket socket;
     QVERIFY(connectToWorker(socket, name));
-    QCOMPARE(readEvent(socket).value(QStringLiteral("type")).toString(), QStringLiteral("ready"));
+    loupe::protocol::FrameDecoder decoder;
+    QCOMPARE(readEvent(socket, decoder).value(QStringLiteral("type")).toString(), QStringLiteral("ready"));
 
-    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
                   {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 7},
                   {QStringLiteral("path"), fixture.fileName()}});
-    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
                   {QStringLiteral("type"), QStringLiteral("cancel")}, {QStringLiteral("requestId"), 7}});
 
-    QCOMPARE(readEvent(socket).value(QStringLiteral("type")).toString(), QStringLiteral("canceled"));
+    QCOMPARE(readEvent(socket, decoder).value(QStringLiteral("type")).toString(), QStringLiteral("canceled"));
     QVERIFY(worker.state() == QProcess::Running);
 }
 
@@ -100,12 +126,13 @@ void WorkerProcessTest::invalidFileDoesNotCrashWorker()
 
     QLocalSocket socket;
     QVERIFY(connectToWorker(socket, name));
-    readEvent(socket);
-    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
                   {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 8},
                   {QStringLiteral("path"), QStringLiteral("missing.step")}});
 
-    const auto event = readEvent(socket);
+    const auto event = readEvent(socket, decoder);
     QCOMPARE(event.value(QStringLiteral("type")).toString(), QStringLiteral("failed"));
     QCOMPARE(event.value(QStringLiteral("code")).toString(), QStringLiteral("read_failed"));
     QVERIFY(worker.state() == QProcess::Running);
@@ -121,12 +148,13 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
 
     QLocalSocket socket;
     QVERIFY(connectToWorker(socket, name));
-    readEvent(socket);
-    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
                   {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 9},
                   {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
 
-    const auto event = readEvent(socket);
+    const auto event = readEventOfType(socket, decoder, QStringLiteral("snapshotReady"));
     QCOMPARE(event.value(QStringLiteral("type")).toString(), QStringLiteral("snapshotReady"));
     const auto snapshot = QByteArray::fromBase64(event.value(QStringLiteral("snapshotBase64")).toString().toLatin1());
     QVERIFY(!snapshot.isEmpty());
@@ -137,7 +165,22 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
     }));
     const auto geometry = document.value(QStringLiteral("geometry")).toArray();
     QVERIFY(!geometry.isEmpty());
-    QVERIFY(geometry.first().toObject().value(QStringLiteral("volumeMm3")).toDouble() > 0.0);
+    QVERIFY(!geometry.first().toObject().value(QStringLiteral("nodeId")).toString().isEmpty());
+    const auto metadata = readEventOfType(socket, decoder, QStringLiteral("componentMetadata"));
+    QVERIFY(metadata.value(QStringLiteral("volumeMm3")).toDouble() > 0.0);
+    const auto metrics = readEventOfType(socket, decoder, QStringLiteral("importMetrics"));
+    QCOMPARE(metrics.value(QStringLiteral("sourceName")).toString(), QString::fromStdString(fixture.filename().string()));
+    QVERIFY(!metrics.value(QStringLiteral("sourceHash")).toString().isEmpty());
+    QVERIFY(metrics.value(QStringLiteral("stepReadMs")).toInteger() >= 0);
+    QVERIFY(metrics.value(QStringLiteral("xcafTransferMs")).toInteger() >= 0);
+    QVERIFY(metrics.value(QStringLiteral("snapshotBuildMs")).toInteger() >= 0);
+    QVERIFY(metrics.value(QStringLiteral("treeReadyMs")).toInteger() >= 0);
+    QVERIFY(metrics.value(QStringLiteral("firstGeometryMs")).toInteger() >= metrics.value(QStringLiteral("treeReadyMs")).toInteger());
+    QVERIFY(metrics.value(QStringLiteral("previewReadyMs")).toInteger() >= metrics.value(QStringLiteral("firstGeometryMs")).toInteger());
+    QVERIFY(metrics.value(QStringLiteral("finalReadyMs")).toInteger() >= metrics.value(QStringLiteral("previewReadyMs")).toInteger());
+    QVERIFY(metrics.value(QStringLiteral("previewTriangleCount")).toInteger() > 0);
+    QVERIFY(metrics.value(QStringLiteral("refinedTriangleCount")).toInteger() > 0);
+    QVERIFY(metrics.value(QStringLiteral("bodyCount")).toInt() > 0);
     QVERIFY(worker.state() == QProcess::Running);
 }
 
@@ -151,17 +194,31 @@ void WorkerProcessTest::validStepStreamsTriangulatedMesh()
 
     QLocalSocket socket;
     QVERIFY(connectToWorker(socket, name));
-    readEvent(socket);
-    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 1}, {QStringLiteral("minor"), 0}}},
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
                   {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 10},
                   {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
 
-    QCOMPARE(readEvent(socket).value(QStringLiteral("type")).toString(), QStringLiteral("snapshotReady"));
-    const auto meshEvent = readEvent(socket);
-    QCOMPARE(meshEvent.value(QStringLiteral("type")).toString(), QStringLiteral("meshReady"));
-    const auto mesh = QJsonDocument::fromJson(QByteArray::fromBase64(meshEvent.value(QStringLiteral("meshBase64")).toString().toLatin1())).object();
-    QVERIFY(mesh.value(QStringLiteral("vertices")).toArray().size() >= 9);
-    QVERIFY(mesh.value(QStringLiteral("indices")).toArray().size() >= 3);
+    QVERIFY(!readEventOfType(socket, decoder, QStringLiteral("snapshotReady")).isEmpty());
+    std::optional<loupe::protocol::MeshPayload> mesh;
+    std::optional<loupe::protocol::EdgePayload> edges;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 10'000 && (!mesh || !edges)) {
+        const auto frame = readFrame(socket, decoder);
+        if (!frame || frame->type != loupe::protocol::FrameType::Geometry) continue;
+        const auto geometry = loupe::protocol::decodeGeometry(frame->payload);
+        if (const auto* value = std::get_if<loupe::protocol::MeshPayload>(&geometry)) mesh = *value;
+        if (const auto* value = std::get_if<loupe::protocol::EdgePayload>(&geometry)) edges = *value;
+    }
+    QVERIFY(mesh.has_value());
+    QVERIFY(mesh->vertices.size() >= 9);
+    QCOMPARE(mesh->normals.size(), mesh->vertices.size());
+    QVERIFY(mesh->indices.size() >= 3);
+    QVERIFY(edges.has_value());
+    QVERIFY(edges->vertices.size() >= 6);
+    QVERIFY(edges->indices.size() >= 2);
     QVERIFY(worker.state() == QProcess::Running);
 }
 

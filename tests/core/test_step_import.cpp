@@ -31,6 +31,9 @@ TEST_CASE("STEP importer preserves definition and repeated occurrences", "[step]
     }
     REQUIRE(occurrenceDefinitions.size() == 2);
     REQUIRE(occurrenceDefinitions[0] == occurrenceDefinitions[1]);
+    REQUIRE(result.native->shapes.size() == 2);
+    REQUIRE(result.native->definitionIds.size() == result.native->shapes.size());
+    REQUIRE(result.native->definitionIds[0] == result.native->definitionIds[1]);
 
     const auto secondOccurrence = std::ranges::find_if(result.snapshot.nodes, [](const auto& node) {
         return node.kind == loupe::domain::NodeKind::Occurrence && node.hierarchyPath.ends_with(":2");
