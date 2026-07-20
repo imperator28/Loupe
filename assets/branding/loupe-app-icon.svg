@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Loupe application icon</title>
+  <desc id="description">A flat off-white magnifying loupe on a rounded teal gradient background.</desc>
+  <defs>
+    <linearGradient id="background" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#073C49"/>
+      <stop offset="0.52" stop-color="#087A83"/>
+      <stop offset="1" stop-color="#20BDAE"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="246" y1="218" x2="520" y2="536" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E5FBF8" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#91E0DB" stop-opacity="0.62"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="56" y="56" width="912" height="912" rx="216" fill="url(#background)"/>
+
+  <path d="M548 526L786 764" fill="none" stroke="#064A53" stroke-width="184" stroke-linecap="round"/>
+  <path d="M548 526L786 764" fill="none" stroke="#F7F3E8" stroke-width="120" stroke-linecap="round"/>
+
+  <circle cx="382" cy="356" r="250" fill="#F7F3E8"/>
+  <circle cx="382" cy="356" r="174" fill="url(#glass)"/>
+  <path d="M262 330C282 267 332 223 397 210" fill="none" stroke="#FFFFFF" stroke-opacity="0.56" stroke-width="42" stroke-linecap="round"/>
+</svg>

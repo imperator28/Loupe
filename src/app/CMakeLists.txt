@@ -45,11 +45,27 @@ qt_add_executable(loupe-app
     render/SceneModel.h
 )
 
+set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")
+set(loupe_app_icon_svg "${loupe_branding_dir}/loupe-app-icon.svg")
+
+qt_add_resources(loupe-app "loupe-branding"
+    PREFIX "/branding"
+    BASE "${loupe_branding_dir}"
+    FILES
+        "${loupe_app_icon_svg}"
+)
+
 if(APPLE)
+    set(loupe_app_icon_macos "${loupe_branding_dir}/Loupe.icns")
+    set_source_files_properties("${loupe_app_icon_macos}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
+    target_sources(loupe-app PRIVATE "${loupe_app_icon_macos}")
     set_target_properties(loupe-app PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME Loupe
         MACOSX_BUNDLE_GUI_IDENTIFIER com.imperator28.Loupe
+        MACOSX_BUNDLE_ICON_FILE Loupe.icns
         OUTPUT_NAME Loupe
     )
 endif()
@@ -96,7 +112,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/shaders/section-clip.frag
 )
 
-target_link_libraries(loupe-app PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Network Qt6::Sql)
+target_link_libraries(loupe-app PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Network Qt6::Sql Qt6::Svg)
 target_include_directories(loupe-app PRIVATE "${PROJECT_SOURCE_DIR}/src")
 if(LOUPE_ENABLE_QML_PROFILING)
     target_compile_definitions(loupe-app PRIVATE QT_QML_DEBUG)

@@ -4,6 +4,7 @@
 #include "app/models/ThemePreference.h"
 
 #include <QGuiApplication>
+#include <QIcon>
 #include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
@@ -17,6 +18,7 @@ int main(int argc, char* argv[])
     QGuiApplication application(argc, argv);
     application.setOrganizationName(QStringLiteral("imperator28"));
     application.setApplicationName(QStringLiteral("Loupe"));
+    application.setWindowIcon(QIcon(QStringLiteral(":/branding/loupe-app-icon.svg")));
     QPalette palette;
     palette.setColor(QPalette::Window, QColor("#182027"));
     palette.setColor(QPalette::WindowText, QColor("#e6edf3"));
