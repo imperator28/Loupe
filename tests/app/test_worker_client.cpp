@@ -7,6 +7,7 @@
 #include "app/worker/WorkerClient.h"
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolFrame.h"
+#include "protocol/ProtocolTypes.h"
 
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -57,6 +58,7 @@ private slots:
     void openFileSendsRequestedUnitOverride();
     void meshEventDeliversTriangulationPayload();
     void edgeEventDeliversCadCurvePayload();
+    void exportPlanAndResultsRoundTrip();
 };
 
 void WorkerClientTest::openFileDeliversWorkerSnapshot()
@@ -122,7 +124,7 @@ void WorkerClientTest::meshEventDeliversTriangulationPayload()
 
     sendGeometryFrame(*peer, loupe::protocol::MeshPayload{1, 0, QStringLiteral("body-1"), QStringLiteral("body-1"), QStringLiteral("body-1"), QStringLiteral("#67D5C0"), 0,
                                                            {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
-                                                           {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F}, {0, 1, 2}});
+        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F}, {0, 1, 2}, {}});
     QTRY_COMPARE_WITH_TIMEOUT(meshSpy.count(), 1, 3'000);
     QCOMPARE(meshSpy.first().at(0).toULongLong(), 1ULL);
     QCOMPARE(meshSpy.first().at(1).toString(), QStringLiteral("body-1"));
@@ -146,11 +148,40 @@ void WorkerClientTest::edgeEventDeliversCadCurvePayload()
     QVERIFY(peer != nullptr);
 
     sendGeometryFrame(*peer, loupe::protocol::EdgePayload{1, 0, QStringLiteral("body-1"), QStringLiteral("body-1"), 0,
-                                                           {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F}, {0, 1}});
+        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F}, {0, 1}, {}});
     QTRY_COMPARE_WITH_TIMEOUT(edgeSpy.count(), 1, 3'000);
     QCOMPARE(edgeSpy.first().at(0).toULongLong(), 1ULL);
     QCOMPARE(edgeSpy.first().at(1).toString(), QStringLiteral("body-1"));
     QVERIFY(!edgeSpy.first().at(2).toByteArray().isEmpty());
+}
+
+void WorkerClientTest::exportPlanAndResultsRoundTrip()
+{
+    QLocalServer server;
+    const auto name = serverName();
+    QLocalServer::removeServer(name);
+    QVERIFY(server.listen(name));
+
+    loupe::app::worker::WorkerClient client;
+    QSignalSpy progressSpy(&client, &loupe::app::worker::WorkerClient::exportProgress);
+    QSignalSpy resultSpy(&client, &loupe::app::worker::WorkerClient::exportRowResult);
+    QSignalSpy completedSpy(&client, &loupe::app::worker::WorkerClient::exportCompleted);
+    QVERIFY(client.connectToServer(name));
+    QVERIFY(server.waitForNewConnection(3'000));
+    auto* peer = server.nextPendingConnection();
+    QVERIFY(peer != nullptr);
+
+    const auto requestId = client.executeExportPlan(QByteArrayLiteral("{\"schemaVersion\":1}"),
+                                                     QStringLiteral("reviewed"));
+    const auto command = loupe::protocol::decodeCommand(readControlFrame(*peer));
+    QCOMPARE(std::get<loupe::protocol::ExecuteExportPlan>(command).requestId, requestId);
+
+    sendControlFrame(*peer, "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportProgress\",\"requestId\":1,\"rowIndex\":0,\"rowCount\":1,\"stage\":\"Writing\",\"fraction\":0.25}\n");
+    sendControlFrame(*peer, "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportRowResult\",\"requestId\":1,\"rowIndex\":0,\"nodeId\":\"cover\",\"path\":\"/tmp/Cover.step\",\"passed\":true,\"message\":\"ok\"}\n");
+    sendControlFrame(*peer, "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportCompleted\",\"requestId\":1,\"succeededCount\":1,\"failedCount\":0}\n");
+    QTRY_COMPARE_WITH_TIMEOUT(progressSpy.count(), 1, 3'000);
+    QTRY_COMPARE_WITH_TIMEOUT(resultSpy.count(), 1, 3'000);
+    QTRY_COMPARE_WITH_TIMEOUT(completedSpy.count(), 1, 3'000);
 }
 
 QTEST_MAIN(WorkerClientTest)

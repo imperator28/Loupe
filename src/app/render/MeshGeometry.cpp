@@ -1,5 +1,7 @@
 #include "app/render/MeshGeometry.h"
 
+#include "app/render/SectionMeshBuilder.h"
+
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolTypes.h"
 
@@ -8,6 +10,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <limits>
 #include <algorithm>
@@ -15,6 +19,49 @@
 
 namespace loupe::app::render {
 namespace {
+
+float pointTriangleDistanceSquared(const QVector3D& point, const QVector3D& first,
+                                   const QVector3D& second, const QVector3D& third)
+{
+    const auto firstSecond = second - first;
+    const auto firstThird = third - first;
+    const auto firstPoint = point - first;
+    const auto d1 = QVector3D::dotProduct(firstSecond, firstPoint);
+    const auto d2 = QVector3D::dotProduct(firstThird, firstPoint);
+    if (d1 <= 0.0F && d2 <= 0.0F) return (point - first).lengthSquared();
+
+    const auto secondPoint = point - second;
+    const auto d3 = QVector3D::dotProduct(firstSecond, secondPoint);
+    const auto d4 = QVector3D::dotProduct(firstThird, secondPoint);
+    if (d3 >= 0.0F && d4 <= d3) return (point - second).lengthSquared();
+
+    const auto vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0F && d1 >= 0.0F && d3 <= 0.0F) {
+        const auto amount = d1 / (d1 - d3);
+        return (point - (first + firstSecond * amount)).lengthSquared();
+    }
+
+    const auto thirdPoint = point - third;
+    const auto d5 = QVector3D::dotProduct(firstSecond, thirdPoint);
+    const auto d6 = QVector3D::dotProduct(firstThird, thirdPoint);
+    if (d6 >= 0.0F && d5 <= d6) return (point - third).lengthSquared();
+
+    const auto vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0F && d2 >= 0.0F && d6 <= 0.0F) {
+        const auto amount = d2 / (d2 - d6);
+        return (point - (first + firstThird * amount)).lengthSquared();
+    }
+
+    const auto va = d3 * d6 - d5 * d4;
+    if (va <= 0.0F && (d4 - d3) >= 0.0F && (d5 - d6) >= 0.0F) {
+        const auto amount = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (point - (second + (third - second) * amount)).lengthSquared();
+    }
+
+    const auto denominator = 1.0F / (va + vb + vc);
+    const auto closest = first + firstSecond * (vb * denominator) + firstThird * (vc * denominator);
+    return (point - closest).lengthSquared();
+}
 
 QVector<float> calculateNormals(const QVector<float>& vertices, const QVector<quint32>& indices)
 {
@@ -57,6 +104,7 @@ MeshGeometry::MeshGeometry(QQuick3DObject* parent)
 
 void MeshGeometry::replaceMesh(const MeshData& mesh)
 {
+    sectionSource_.clear();
     sourceVertexData_ = mesh.vertexData;
     sourceNormalData_ = mesh.normalData;
     sourceIndexData_ = mesh.indexData;
@@ -72,6 +120,7 @@ bool MeshGeometry::appendWorkerMesh(const QByteArray& meshJson)
         if (!mesh) return false;
         MeshData data{mesh->definitionId, mesh->vertices, mesh->indices, mesh->normals};
         replaceMesh(data);
+        sourceTopology_ = mesh->topology;
         return true;
     } catch (const protocol::ProtocolError&) {
     }
@@ -100,19 +149,109 @@ bool MeshGeometry::appendWorkerMesh(const QByteArray& meshJson)
         sourceIndexData_.append(offset + static_cast<quint32>(value.toInt()));
     }
     if (!hasNormals) rebuildSourceNormals();
+    sourceTopology_.clear();
     rebuildDisplayMesh();
     return true;
 }
 
+bool MeshGeometry::replaceWorkerMesh(const QByteArray& meshJson)
+{
+    clearMesh();
+    return appendWorkerMesh(meshJson);
+}
+
 void MeshGeometry::clearMesh()
 {
+    sectionSource_.clear();
     sourceVertexData_.clear();
     sourceNormalData_.clear();
     sourceIndexData_.clear();
+    sourceTopology_.clear();
     vertexData_.clear();
     normalData_.clear();
     indexData_.clear();
     upload();
+}
+
+QVariantMap MeshGeometry::topologyAtPoint(const double x, const double y, const double z) const
+{
+    if (sourceTopology_.isEmpty()) return {};
+    const QVector3D point{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
+    const auto pointAt = [this](const quint32 index) {
+        const auto offset = static_cast<qsizetype>(index) * 3;
+        return QVector3D{sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1), sourceVertexData_.at(offset + 2)};
+    };
+    const protocol::TopologyRange* closestRange = nullptr;
+    auto closestDistance = std::numeric_limits<float>::max();
+    for (const auto& range : sourceTopology_) {
+        const auto end = static_cast<qsizetype>(range.firstIndex + range.indexCount);
+        for (auto index = static_cast<qsizetype>(range.firstIndex); index + 2 < end; index += 3) {
+            const auto distance = pointTriangleDistanceSquared(point, pointAt(sourceIndexData_.at(index)),
+                                                               pointAt(sourceIndexData_.at(index + 1)),
+                                                               pointAt(sourceIndexData_.at(index + 2)));
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestRange = &range;
+            }
+        }
+    }
+    if (!closestRange) return {};
+    return {{QStringLiteral("topologyId"), closestRange->topologyId},
+            {QStringLiteral("entityKind"), QStringLiteral("face")},
+            {QStringLiteral("measureMm"), closestRange->measureMm},
+            {QStringLiteral("radiusMm"), closestRange->radiusMm}};
+}
+
+bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
+{
+    const auto* sourceGeometry = qobject_cast<MeshGeometry*>(source);
+    if (!sourceGeometry) return false;
+    const auto range = std::find_if(sourceGeometry->sourceTopology_.cbegin(), sourceGeometry->sourceTopology_.cend(),
+                                    [topologyId](const auto& value) { return value.topologyId == topologyId; });
+    if (range == sourceGeometry->sourceTopology_.cend()) return false;
+
+    sectionSource_.clear();
+    sourceVertexData_.clear();
+    sourceNormalData_.clear();
+    sourceIndexData_.clear();
+    const auto end = static_cast<qsizetype>(range->firstIndex + range->indexCount);
+    for (auto index = static_cast<qsizetype>(range->firstIndex); index < end; ++index) {
+        const auto sourceIndex = static_cast<qsizetype>(sourceGeometry->sourceIndexData_.at(index));
+        const auto sourceOffset = sourceIndex * 3;
+        sourceVertexData_.append(sourceGeometry->sourceVertexData_.at(sourceOffset));
+        sourceVertexData_.append(sourceGeometry->sourceVertexData_.at(sourceOffset + 1));
+        sourceVertexData_.append(sourceGeometry->sourceVertexData_.at(sourceOffset + 2));
+        sourceNormalData_.append(sourceGeometry->sourceNormalData_.at(sourceOffset));
+        sourceNormalData_.append(sourceGeometry->sourceNormalData_.at(sourceOffset + 1));
+        sourceNormalData_.append(sourceGeometry->sourceNormalData_.at(sourceOffset + 2));
+        sourceIndexData_.append(static_cast<quint32>(sourceIndexData_.size()));
+    }
+    sourceTopology_ = {{topologyId, protocol::TopologyKind::Face, 0,
+                        static_cast<quint32>(sourceIndexData_.size()), range->measureMm, range->radiusMm}};
+    sectionEnabled_ = false;
+    sectionPreview_ = false;
+    rebuildDisplayMesh();
+    return true;
+}
+
+bool MeshGeometry::copySectionOverlayFrom(QObject* source)
+{
+    const auto* sourceGeometry = qobject_cast<MeshGeometry*>(source);
+    if (!sourceGeometry) return false;
+    auto sectionSource = QSharedPointer<SectionSourceData>::create();
+    sectionSource->vertices = sourceGeometry->sourceVertexData_;
+    sectionSource->indices = sourceGeometry->sourceIndexData_;
+    sectionSource_ = sectionSource;
+    sourceVertexData_.clear();
+    sourceNormalData_.clear();
+    sourceIndexData_.clear();
+    sourceTopology_.clear();
+    sectionOverlayOnly_ = true;
+    ++sectionBuildGeneration_;
+    sectionEnabled_ = false;
+    sectionPreview_ = false;
+    rebuildDisplayMesh();
+    return true;
 }
 
 void MeshGeometry::setSection(const bool enabled, const int axis, const double position, const bool flipped)
@@ -126,26 +265,48 @@ void MeshGeometry::setSection(const bool enabled, const int axis, const double p
 
 void MeshGeometry::setSectionPlane(const bool enabled, const double normalX, const double normalY, const double normalZ, const double offset, const bool flipped)
 {
+    configureSection(enabled, normalX, normalY, normalZ, offset, flipped, sectionCapEnabled_,
+                     sectionSliceOnly_, sectionSliceFill_, sectionSliceOutline_, false);
+}
+
+void MeshGeometry::configureSection(const bool enabled, const double normalX, const double normalY,
+                                    const double normalZ, const double offset, const bool flipped,
+                                    const bool capEnabled, const bool sliceOnly, const bool sliceFill,
+                                    const bool sliceOutline, const bool preview)
+{
     const QVector3D normal{static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)};
     if (normal.isNull()) return;
     const auto normalized = normal.normalized();
-    if (sectionEnabled_ == enabled && sectionNormal_ == normalized && qFuzzyCompare(sectionOffset_ + 1.0, offset + 1.0) && sectionFlipped_ == flipped) return;
+    if (sectionEnabled_ == enabled && sectionNormal_ == normalized
+        && qFuzzyCompare(sectionOffset_ + 1.0, offset + 1.0) && sectionFlipped_ == flipped
+        && sectionCapEnabled_ == capEnabled && sectionSliceOnly_ == sliceOnly
+        && sectionSliceFill_ == sliceFill && sectionSliceOutline_ == sliceOutline
+        && sectionPreview_ == preview) return;
     sectionEnabled_ = enabled;
     sectionNormal_ = normalized;
     sectionOffset_ = offset;
     sectionFlipped_ = flipped;
+    sectionCapEnabled_ = capEnabled;
+    sectionSliceOnly_ = sliceOnly;
+    sectionSliceFill_ = sliceFill;
+    sectionSliceOutline_ = sliceOutline;
+    sectionPreview_ = preview;
+    if (sectionOverlayOnly_) {
+        if (sectionEnabled_ && !sectionPreview_)
+            startSectionOverlayBuild();
+        else {
+            ++sectionBuildGeneration_;
+            rebuildDisplayMesh();
+        }
+        return;
+    }
     rebuildDisplayMesh();
 }
 
 void MeshGeometry::setSectionOptions(const bool capEnabled, const bool sliceOnly, const bool sliceFill, const bool sliceOutline)
 {
-    if (sectionCapEnabled_ == capEnabled && sectionSliceOnly_ == sliceOnly
-        && sectionSliceFill_ == sliceFill && sectionSliceOutline_ == sliceOutline) return;
-    sectionCapEnabled_ = capEnabled;
-    sectionSliceOnly_ = sliceOnly;
-    sectionSliceFill_ = sliceFill;
-    sectionSliceOutline_ = sliceOutline;
-    rebuildDisplayMesh();
+    configureSection(sectionEnabled_, sectionNormal_.x(), sectionNormal_.y(), sectionNormal_.z(),
+                     sectionOffset_, sectionFlipped_, capEnabled, sliceOnly, sliceFill, sliceOutline, false);
 }
 
 float MeshGeometry::minimumCoordinate(const int axis) const noexcept
@@ -172,6 +333,10 @@ void MeshGeometry::rebuildDisplayMesh()
     normalData_.clear();
     indexData_.clear();
     sectionCapTriangleCount_ = 0;
+    if (!sectionEnabled_ && sectionOverlayOnly_) {
+        upload();
+        return;
+    }
     if (!sectionEnabled_) {
         vertexData_ = sourceVertexData_;
         normalData_ = sourceNormalData_;
@@ -215,10 +380,18 @@ void MeshGeometry::rebuildDisplayMesh()
             }
             if (endInside) output.append(end);
         }
-        for (qsizetype index = 1; index + 1 < output.size(); ++index) {
-            appendVertex(output.at(0)); appendVertex(output.at(index)); appendVertex(output.at(index + 1));
-        }
-        if (intersections.size() == 2 && !near(intersections.at(0), intersections.at(1))) segments.append({intersections.at(0), intersections.at(1)});
+        if (!sectionOverlayOnly_)
+            for (qsizetype index = 1; index + 1 < output.size(); ++index) {
+                appendVertex(output.at(0)); appendVertex(output.at(index)); appendVertex(output.at(index + 1));
+            }
+        if (!sectionPreview_ && intersections.size() == 2 && !near(intersections.at(0), intersections.at(1)))
+            segments.append({intersections.at(0), intersections.at(1)});
+    }
+
+    if (sectionPreview_) {
+        rebuildDisplayNormals();
+        upload();
+        return;
     }
 
     const auto appendSliceOutline = [this, &appendVertex](const QVector<Segment>& sliceSegments) {
@@ -346,6 +519,36 @@ void MeshGeometry::rebuildSourceNormals()
 void MeshGeometry::rebuildDisplayNormals()
 {
     normalData_ = calculateNormals(vertexData_, indexData_);
+}
+
+void MeshGeometry::startSectionOverlayBuild()
+{
+    if (!sectionSource_) return;
+    const auto generation = ++sectionBuildGeneration_;
+    SectionBuildRequest request{sectionSource_, sectionNormal_, sectionOffset_,
+                                sectionFlipped_, sectionCapEnabled_, sectionSliceOnly_, sectionSliceFill_,
+                                sectionSliceOutline_};
+    const auto wasBusy = sectionBusy();
+    ++pendingSectionBuilds_;
+    if (!wasBusy) emit sectionBusyChanged();
+
+    auto* watcher = new QFutureWatcher<SectionBuildResult>(this);
+    connect(watcher, &QFutureWatcher<SectionBuildResult>::finished, this, [this, watcher, generation]() {
+        const auto result = watcher->result();
+        if (generation == sectionBuildGeneration_) {
+            vertexData_ = result.vertices;
+            indexData_ = result.indices;
+            sectionCapTriangleCount_ = result.capTriangleCount;
+            rebuildDisplayNormals();
+            upload();
+        }
+        watcher->deleteLater();
+        --pendingSectionBuilds_;
+        if (!sectionBusy()) emit sectionBusyChanged();
+    });
+    watcher->setFuture(QtConcurrent::run([request = std::move(request)]() {
+        return buildSectionOverlay(request);
+    }));
 }
 
 void MeshGeometry::upload()

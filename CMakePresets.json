@@ -51,6 +51,13 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_OSX_ARCHITECTURES": "arm64"
       }
+    },
+    {
+      "name": "macos-arm64-profile",
+      "inherits": "macos-arm64-debug",
+      "cacheVariables": {
+        "LOUPE_ENABLE_QML_PROFILING": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -69,6 +76,10 @@
     {
       "name": "macos-arm64-release",
       "configurePreset": "macos-arm64-release"
+    },
+    {
+      "name": "macos-arm64-profile",
+      "configurePreset": "macos-arm64-profile"
     }
   ],
   "testPresets": [

@@ -7,11 +7,11 @@
 #include <set>
 #include <string_view>
 
-#include <xxhash.h>
+#include <QByteArrayView>
+#include <QString>
+#include <QStringDecoder>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#include <xxhash.h>
 
 namespace loupe::exporting {
 namespace {
@@ -121,45 +121,21 @@ namespace {
     return result;
 }
 
-[[nodiscard]] std::wstring windowsComparablePath(std::string path)
+[[nodiscard]] std::u16string windowsComparablePath(std::string path)
 {
-#ifdef _WIN32
     for (char& character : path) {
         if (character == '/') {
             character = '\\';
         }
     }
-    const int wideLength = MultiByteToWideChar(
-        CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), static_cast<int>(path.size()), nullptr, 0);
-    if (wideLength == 0) {
+
+    QStringDecoder decoder(QStringDecoder::Utf8);
+    QString comparable = decoder(QByteArrayView(path.data(), static_cast<qsizetype>(path.size())));
+    if (decoder.hasError()) {
         throw PlanError(PlanError::Code::UnsafeOutputName, "output path is not valid UTF-8");
     }
-    std::wstring wide(static_cast<std::size_t>(wideLength), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), static_cast<int>(path.size()), wide.data(), wideLength);
-    const int foldedLength = LCMapStringEx(
-        LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, wide.data(), wideLength, nullptr, 0, nullptr, nullptr, 0);
-    if (foldedLength == 0) {
-        throw PlanError(PlanError::Code::UnsafeOutputName, "output path case folding failed");
-    }
-    std::wstring folded(static_cast<std::size_t>(foldedLength), L'\0');
-    LCMapStringEx(LOCALE_NAME_INVARIANT,
-                  LCMAP_LOWERCASE,
-                  wide.data(),
-                  wideLength,
-                  folded.data(),
-                  foldedLength,
-                  nullptr,
-                  nullptr,
-                  0);
-    return folded;
-#else
-    std::wstring result;
-    result.reserve(path.size());
-    for (const unsigned char character : path) {
-        result.push_back(static_cast<wchar_t>(character < 0x80U ? std::tolower(character) : character));
-    }
-    return result;
-#endif
+    comparable = comparable.normalized(QString::NormalizationForm_C).toCaseFolded();
+    return comparable.toStdU16String();
 }
 
 [[nodiscard]] bool isValid(const SelectionKind value)
@@ -385,13 +361,17 @@ ExportPlan buildPlan(const PlanRequest& request)
     const double scale = request.format == Format::Stl
         ? request.unitDecision.sourceToMillimeters
         : request.unitDecision.sourceToMillimeters / millimetersPerStepUnit(effectiveUnit);
-    std::set<std::wstring> finalPaths;
+    std::set<std::u16string> finalPaths;
     std::vector<OutputRow> outputs;
     outputs.reserve(resolved.size());
     for (const auto& item : resolved) {
+        const auto reviewedName = request.outputLeafNames.find(item.selection.nodeId);
+        const auto outputLeaf = reviewedName == request.outputLeafNames.end()
+            ? sanitizedLeaf(item.hierarchyPath)
+            : sanitizedLeaf(reviewedName->second);
         OutputRow row(item.selection.nodeId,
                       item.hierarchyPath,
-                      destination + "/" + sanitizedLeaf(item.hierarchyPath) + extension(request.format),
+                      destination + "/" + outputLeaf + extension(request.format),
                       item.selection.kind,
                       request.format,
                       request.coordinates,

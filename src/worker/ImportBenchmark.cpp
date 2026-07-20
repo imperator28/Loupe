@@ -1,7 +1,10 @@
 #include "protocol/ProtocolFrame.h"
 
 #include <QCoreApplication>
+#include <QCommandLineOption>
+#include <QCommandLineParser>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -86,19 +89,66 @@ std::optional<QJsonObject> benchmarkFile(const QString& sourcePath)
     return result;
 }
 
+std::optional<QJsonObject> readBudgets(const QString& path)
+{
+    if (path.isEmpty()) return QJsonObject{};
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
+    const auto document = QJsonDocument::fromJson(file.readAll());
+    if (!document.isObject()) return std::nullopt;
+    return document.object().value(QStringLiteral("cases")).toObject();
+}
+
+bool applyBudget(QJsonObject& result, const QString& sourcePath, const QJsonObject& budgets)
+{
+    if (budgets.isEmpty()) return true;
+    const auto sourceName = QFileInfo(sourcePath).fileName();
+    const auto budget = budgets.value(sourceName).toObject();
+    if (budget.isEmpty()) {
+        result.insert(QStringLiteral("budgetPassed"), false);
+        result.insert(QStringLiteral("budgetError"), QStringLiteral("No performance budget for %1").arg(sourceName));
+        return false;
+    }
+    const auto firstLimit = budget.value(QStringLiteral("maxFirstGeometryMs")).toInt(-1);
+    const auto finalLimit = budget.value(QStringLiteral("maxFinalReadyMs")).toInt(-1);
+    const auto firstElapsed = result.value(QStringLiteral("firstGeometryMs")).toInt(-1);
+    const auto finalElapsed = result.value(QStringLiteral("finalReadyMs")).toInt(-1);
+    const auto passed = firstLimit > 0 && finalLimit > 0 && firstElapsed >= 0 && finalElapsed >= 0
+        && firstElapsed <= firstLimit && finalElapsed <= finalLimit;
+    result.insert(QStringLiteral("budgetPassed"), passed);
+    result.insert(QStringLiteral("maxFirstGeometryMs"), firstLimit);
+    result.insert(QStringLiteral("maxFinalReadyMs"), finalLimit);
+    return passed;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
     QCoreApplication application(argc, argv);
-    const auto paths = application.arguments().sliced(1);
+    QCommandLineParser parser;
+    parser.setApplicationDescription(QStringLiteral("Benchmark Loupe STEP import responsiveness"));
+    parser.addHelpOption();
+    const QCommandLineOption budgetFileOption{
+        QStringLiteral("budget-file"), QStringLiteral("Fail when a case exceeds limits from JSON."),
+        QStringLiteral("path")};
+    parser.addOption(budgetFileOption);
+    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("STEP files to benchmark."),
+                                 QStringLiteral("[files...]"));
+    parser.process(application);
+    const auto paths = parser.positionalArguments();
     if (paths.isEmpty()) return 2;
+    const auto budgets = readBudgets(parser.value(budgetFileOption));
+    if (!budgets) return 2;
+    bool budgetsPassed = true;
     for (const auto& path : paths) {
-        const auto result = benchmarkFile(path);
+        auto result = benchmarkFile(path);
         if (!result) return 1;
+        budgetsPassed = applyBudget(*result, path, *budgets) && budgetsPassed;
         const auto line = QJsonDocument(*result).toJson(QJsonDocument::Compact);
         fwrite(line.constData(), 1, static_cast<std::size_t>(line.size()), stdout);
         fputc('\n', stdout);
+        fflush(stdout);
     }
-    return 0;
+    return budgetsPassed ? 0 : 3;
 }

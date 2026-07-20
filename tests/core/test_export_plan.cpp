@@ -13,12 +13,23 @@ PlanRequest baseRequest()
 {
     return {{CheckedSelection{"bolt", SelectionKind::Occurrence}},
             {{"bolt", "root/assembly/bolt[1]"}},
+            {},
             "C:/exports",
             Format::Stl,
             Coordinates::Assembly,
             Grouping::SeparateFiles,
             StepOutputUnit::Requested,
             1.0};
+}
+
+TEST_CASE("reviewed output leaf names override component leaves", "[export-plan]")
+{
+    PlanRequest request = baseRequest();
+    request.outputLeafNames = {{"bolt", "Bracket-001"}};
+
+    const ExportPlan plan = buildPlan(request);
+
+    REQUIRE(plan.outputs().front().finalPath() == "C:/exports/Bracket-001.stl");
 }
 
 } // namespace

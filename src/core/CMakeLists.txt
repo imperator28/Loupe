@@ -32,6 +32,8 @@ target_link_libraries(loupe-core
         TKPrim
         TKMesh
         TKDESTL
+    PRIVATE
+        Qt6::Core
 )
 
 loupe_enable_warnings(loupe-core)

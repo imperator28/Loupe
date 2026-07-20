@@ -27,6 +27,8 @@ struct ExpectedOutput {
     Bounds boundsMm{};
     Vec3 centroidMm{};
     double relativeTolerance{1.0e-5};
+    bool compareBounds{true};
+    bool compareCentroid{true};
 };
 
 struct ValidationIssue { std::string code; std::string message; };

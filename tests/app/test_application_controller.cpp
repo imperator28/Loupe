@@ -22,13 +22,16 @@ private slots:
     void opensStepThroughWorkerAndRetainsSnapshot();
     void reportsWorkerStartupFailure();
     void forwardsWorkerMeshToViewer();
+    void replaysGeometryWithoutBlockingTheCaller();
     void fitViewNotifiesViewport();
     void isolatesHidesAndRestoresTheActiveComponentForViewerPresentation();
     void openingDocumentResetsTransientInspectionState();
     void reopensUnchangedStepFromLocalSnapshotCache();
     void manualUnitOverrideReimportsAtTheRequestedScale();
     void selectedComponentFeedsGeometryBackedMeasurementModes();
-    void viewportPickSelectsNodeAndRecordsPointMeasurement();
+    void viewportSelectionDoesNotRecordMeasurementPick();
+    void viewportPickRecordsPointMeasurementWithoutChangingSelection();
+    void topologyPickRecordsEntityMeasurementWithoutChangingSelection();
     void appearanceOverridesMaterialAndSourceColor();
     void reopensSourceWithPersistedAppearanceOverrides();
 };
@@ -113,6 +116,23 @@ void ApplicationControllerTest::forwardsWorkerMeshToViewer()
     QVERIFY(!meshSpy.first().at(1).toString().isEmpty());
     const auto mesh = meshSpy.first().at(3).toByteArray();
     QVERIFY(!mesh.isEmpty());
+}
+
+void ApplicationControllerTest::replaysGeometryWithoutBlockingTheCaller()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(
+        QStringLiteral("controller-replay.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QTemporaryDir cacheDirectory;
+    QVERIFY(cacheDirectory.isValid());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH), cacheDirectory.path());
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress(), 10'000);
+
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    controller.replayGeometry();
+
+    QCOMPARE(meshSpy.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 3'000);
 }
 
 void ApplicationControllerTest::fitViewNotifiesViewport()
@@ -217,16 +237,42 @@ void ApplicationControllerTest::selectedComponentFeedsGeometryBackedMeasurementM
     QCOMPARE(measurement->resultUnit(), QStringLiteral("mm³"));
 }
 
-void ApplicationControllerTest::viewportPickSelectsNodeAndRecordsPointMeasurement()
+void ApplicationControllerTest::viewportPickRecordsPointMeasurementWithoutChangingSelection()
 {
     loupe::app::ApplicationController controller;
     controller.acceptViewPick(QStringLiteral("occ-picked"), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
     controller.acceptViewPick(QStringLiteral("occ-picked"), 25.4, 0.0, 0.0, 0.0, 0.0, 1.0);
 
-    QCOMPARE(controller.activeNodeId(), QStringLiteral("occ-picked"));
+    QVERIFY(controller.activeNodeId().isEmpty());
     auto* measurement = qobject_cast<loupe::app::tools::MeasurementController*>(controller.measurementController());
     QVERIFY(measurement != nullptr);
     QCOMPARE(measurement->resultLabel(), QStringLiteral("25.4 mm"));
+}
+
+void ApplicationControllerTest::topologyPickRecordsEntityMeasurementWithoutChangingSelection()
+{
+    loupe::app::ApplicationController controller;
+    auto* measurement = qobject_cast<loupe::app::tools::MeasurementController*>(controller.measurementController());
+    QVERIFY(measurement != nullptr);
+    measurement->setMode(loupe::app::tools::MeasurementMode::EdgeLength);
+
+    QVERIFY(controller.acceptTopologyPick(QStringLiteral("occ-picked"), QStringLiteral("edge"), 6,
+                                          1.0, 2.0, 3.0, 0.0, 0.0, 1.0, 431.0, 0.0));
+
+    QVERIFY(controller.activeNodeId().isEmpty());
+    QCOMPARE(measurement->resultLabel(), QStringLiteral("Edge length: 431 mm"));
+}
+
+void ApplicationControllerTest::viewportSelectionDoesNotRecordMeasurementPick()
+{
+    loupe::app::ApplicationController controller;
+    auto* measurement = qobject_cast<loupe::app::tools::MeasurementController*>(controller.measurementController());
+    QVERIFY(measurement != nullptr);
+
+    controller.acceptViewSelection(QStringLiteral("occ-selected"), 12.0, 4.0, 2.0, 0.0, 0.0, 1.0);
+
+    QCOMPARE(controller.activeNodeId(), QStringLiteral("occ-selected"));
+    QVERIFY(measurement->pickedPoints().isEmpty());
 }
 
 void ApplicationControllerTest::appearanceOverridesMaterialAndSourceColor()

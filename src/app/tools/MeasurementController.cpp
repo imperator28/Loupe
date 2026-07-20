@@ -34,6 +34,7 @@ void MeasurementController::setMode(const MeasurementMode mode)
     if (mode_ == mode) {
         return;
     }
+    clearPicks();
     mode_ = mode;
     emit modeChanged();
     emit resultChanged();
@@ -88,9 +89,17 @@ void MeasurementController::recordPick(const QVector3D& pointMm, const QVector3D
         pickedPointsMm_.clear();
         pickedNormals_.clear();
         pickedDescriptions_.clear();
+        pickedKinds_.clear();
+        pickedTopologyIds_.clear();
+        pickedMeasuresMm_.clear();
+        pickedRadiiMm_.clear();
     }
     pickedPointsMm_.append(pointMm);
     pickedNormals_.append(normal);
+    pickedKinds_.append(QStringLiteral("point"));
+    pickedTopologyIds_.append(0);
+    pickedMeasuresMm_.append(0.0);
+    pickedRadiiMm_.append(0.0);
     const auto coordinates = QStringLiteral("(%1, %2, %3) mm")
                                  .arg(formatValue(pointMm.x()), formatValue(pointMm.y()), formatValue(pointMm.z()));
     pickedDescriptions_.append(nodeLabel.isEmpty()
@@ -99,12 +108,55 @@ void MeasurementController::recordPick(const QVector3D& pointMm, const QVector3D
     emit resultChanged();
 }
 
+bool MeasurementController::recordTopologyPick(const QString& entityKind, const quint32 topologyId,
+                                               const QVector3D& pointMm, const QVector3D& normal,
+                                               const double measureMm, const double radiusMm,
+                                               const QString& nodeLabel)
+{
+    const auto kind = entityKind.toLower();
+    const auto isFace = kind == QStringLiteral("face");
+    const auto isEdge = kind == QStringLiteral("edge");
+    const auto eligible = (mode_ == MeasurementMode::EdgeLength && isEdge)
+        || (mode_ == MeasurementMode::SurfaceToSurface && isFace)
+        || (mode_ == MeasurementMode::RadiusDiameter && (isEdge || isFace) && radiusMm > 0.0)
+        || (mode_ == MeasurementMode::Angle && isFace)
+        || (mode_ == MeasurementMode::SurfaceArea && isFace);
+    if (!eligible || topologyId == 0 || !std::isfinite(measureMm) || measureMm < 0.0
+        || !std::isfinite(radiusMm) || radiusMm < 0.0) return false;
+
+    const auto requiredPickCount = mode_ == MeasurementMode::SurfaceToSurface || mode_ == MeasurementMode::Angle ? 2 : 1;
+    if (pickedPointsMm_.size() >= requiredPickCount) {
+        pickedPointsMm_.clear();
+        pickedNormals_.clear();
+        pickedDescriptions_.clear();
+        pickedKinds_.clear();
+        pickedTopologyIds_.clear();
+        pickedMeasuresMm_.clear();
+        pickedRadiiMm_.clear();
+    }
+    pickedPointsMm_.append(pointMm);
+    pickedNormals_.append(normal);
+    pickedKinds_.append(kind);
+    pickedTopologyIds_.append(topologyId);
+    pickedMeasuresMm_.append(measureMm);
+    pickedRadiiMm_.append(radiusMm);
+    const auto entity = isFace ? QStringLiteral("Face %1").arg(topologyId)
+                               : QStringLiteral("Edge %1").arg(topologyId);
+    pickedDescriptions_.append(nodeLabel.isEmpty() ? entity : QStringLiteral("%1 on %2").arg(entity, nodeLabel));
+    emit resultChanged();
+    return true;
+}
+
 void MeasurementController::clearPicks()
 {
     if (pickedPointsMm_.isEmpty()) return;
     pickedPointsMm_.clear();
     pickedNormals_.clear();
     pickedDescriptions_.clear();
+    pickedKinds_.clear();
+    pickedTopologyIds_.clear();
+    pickedMeasuresMm_.clear();
+    pickedRadiiMm_.clear();
     emit resultChanged();
 }
 
@@ -153,13 +205,16 @@ double MeasurementController::resultValue() const
         constexpr double radiansToDegrees = 180.0 / 3.14159265358979323846;
         return std::acos(std::clamp(static_cast<double>(QVector3D::dotProduct(first, second)), -1.0, 1.0)) * radiansToDegrees;
     }
-    if (!hasSelectedGeometry_) return 0.0;
     const auto divisor = effectiveUnit_ == QStringLiteral("in") ? 25.4 : 1.0;
+    if (mode_ == MeasurementMode::EdgeLength && pickedMeasuresMm_.size() == 1) return pickedMeasuresMm_.front() / divisor;
+    if (mode_ == MeasurementMode::RadiusDiameter && pickedRadiiMm_.size() == 1) return pickedRadiiMm_.front() / divisor;
+    if (mode_ == MeasurementMode::SurfaceArea && pickedMeasuresMm_.size() == 1) return pickedMeasuresMm_.front() / (divisor * divisor);
+    if (!hasSelectedGeometry_) return 0.0;
     switch (mode_) {
-    case MeasurementMode::SurfaceArea: return surfaceAreaMm2_ / (divisor * divisor);
+    case MeasurementMode::SurfaceArea: return 0.0;
     case MeasurementMode::Volume: return volumeMm3_ / (divisor * divisor * divisor);
-    case MeasurementMode::EdgeLength: return longestEdgeMm_ / divisor;
-    case MeasurementMode::RadiusDiameter: return circularRadiusMm_ / divisor;
+    case MeasurementMode::EdgeLength: return 0.0;
+    case MeasurementMode::RadiusDiameter: return 0.0;
     default: return 0.0;
     }
 }
@@ -183,14 +238,18 @@ QString MeasurementController::resultLabel() const
     if (mode_ == MeasurementMode::PointToPoint || mode_ == MeasurementMode::SurfaceToSurface || mode_ == MeasurementMode::Angle) {
         return pickedPointsMm_.size() == 2 ? QStringLiteral("%1 %2").arg(formatValue(resultValue()), resultUnit()) : QString{};
     }
+    if (mode_ == MeasurementMode::EdgeLength)
+        return pickedMeasuresMm_.size() == 1 ? QStringLiteral("Edge length: %1 %2").arg(formatValue(resultValue()), resultUnit()) : QString{};
+    if (mode_ == MeasurementMode::RadiusDiameter)
+        return pickedRadiiMm_.size() == 1 ? QStringLiteral("Radius: %1 %2 · Diameter: %3 %2").arg(formatValue(resultValue()), resultUnit(), formatValue(resultValue() * 2.0)) : QString{};
+    if (mode_ == MeasurementMode::SurfaceArea)
+        return pickedMeasuresMm_.size() == 1 ? QStringLiteral("%1 %2").arg(formatValue(resultValue()), resultUnit()) : QString{};
     if (!hasSelectedGeometry_) return {};
     if (mode_ == MeasurementMode::Bounds) {
         const auto divisor = effectiveUnit_ == QStringLiteral("in") ? 25.4F : 1.0F;
         return QStringLiteral("%1 × %2 × %3 %4")
             .arg(formatValue(boundsMm_.x() / divisor), formatValue(boundsMm_.y() / divisor), formatValue(boundsMm_.z() / divisor), resultUnit());
     }
-    if (mode_ == MeasurementMode::EdgeLength) return QStringLiteral("Longest edge: %1 %2").arg(formatValue(resultValue()), resultUnit());
-    if (mode_ == MeasurementMode::RadiusDiameter) return QStringLiteral("Radius: %1 %2 · Diameter: %3 %2").arg(formatValue(resultValue()), resultUnit(), formatValue(resultValue() * 2.0));
     const auto unit = resultUnit();
     return unit.isEmpty() ? QString{} : QStringLiteral("%1 %2").arg(formatValue(resultValue()), unit);
 }
@@ -211,6 +270,20 @@ QVariantList MeasurementController::pickedPoints() const
     result.reserve(pickedPointsMm_.size());
     for (const auto& point : pickedPointsMm_) {
         result.append(QVariant::fromValue(point));
+    }
+    return result;
+}
+
+QVariantList MeasurementController::pickedEntities() const
+{
+    QVariantList result;
+    result.reserve(pickedPointsMm_.size());
+    for (qsizetype index = 0; index < pickedPointsMm_.size(); ++index) {
+        result.append(QVariantMap{{QStringLiteral("entityKind"), pickedKinds_.value(index)},
+                                  {QStringLiteral("topologyId"), pickedTopologyIds_.value(index)},
+                                  {QStringLiteral("point"), QVariant::fromValue(pickedPointsMm_.at(index))},
+                                  {QStringLiteral("measureMm"), pickedMeasuresMm_.value(index)},
+                                  {QStringLiteral("radiusMm"), pickedRadiiMm_.value(index)}});
     }
     return result;
 }

@@ -20,6 +20,9 @@ class SectionController final : public QObject {
     Q_PROPERTY(bool usingSelectedPlane READ usingSelectedPlane NOTIFY changed)
     Q_PROPERTY(QVector3D planeNormal READ planeNormal NOTIFY changed)
     Q_PROPERTY(double planeOffset READ planeOffset NOTIFY changed)
+    Q_PROPERTY(QVector3D effectiveNormal READ effectiveNormal NOTIFY changed)
+    Q_PROPERTY(double effectiveOffset READ effectiveOffset NOTIFY changed)
+    Q_PROPERTY(bool interacting READ interacting NOTIFY interactionChanged)
 
 public:
     explicit SectionController(QObject* parent = nullptr);
@@ -34,6 +37,10 @@ public:
     void setSliceDisplay(const QString& sliceDisplay);
     void setCandidatePlane(const QVector3D& normal, const QVector3D& point);
     Q_INVOKABLE void useSelectedPlane();
+    Q_INVOKABLE void beginInteraction();
+    Q_INVOKABLE void previewPosition(double position);
+    Q_INVOKABLE void commitInteraction();
+    Q_INVOKABLE void cancelInteraction();
     [[nodiscard]] bool enabled() const noexcept { return enabled_; }
     [[nodiscard]] SectionAxis axis() const noexcept { return axis_; }
     [[nodiscard]] QString axisName() const;
@@ -46,10 +53,14 @@ public:
     [[nodiscard]] bool usingSelectedPlane() const noexcept { return usingSelectedPlane_; }
     [[nodiscard]] QVector3D planeNormal() const noexcept { return planeNormal_; }
     [[nodiscard]] double planeOffset() const noexcept { return planeOffset_; }
+    [[nodiscard]] QVector3D effectiveNormal() const noexcept;
+    [[nodiscard]] double effectiveOffset() const noexcept;
+    [[nodiscard]] bool interacting() const noexcept { return interacting_; }
     [[nodiscard]] int exportMutationCount() const noexcept { return 0; }
 
 signals:
     void changed();
+    void interactionChanged();
 
 private:
     bool enabled_{false};
@@ -63,6 +74,8 @@ private:
     bool usingSelectedPlane_{false};
     QVector3D planeNormal_{0.0F, 0.0F, 1.0F};
     double planeOffset_{};
+    bool interacting_{false};
+    double interactionStartPosition_{};
 };
 
 } // namespace loupe::app::tools

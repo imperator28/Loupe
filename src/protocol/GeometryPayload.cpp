@@ -5,6 +5,7 @@
 #include <QtEndian>
 
 #include <bit>
+#include <cmath>
 #include <limits>
 #include <type_traits>
 
@@ -12,10 +13,11 @@ namespace loupe::protocol {
 namespace {
 
 constexpr quint32 kMagic = 0x4c504750; // LPGP
-constexpr quint16 kVersion = 1;
+constexpr quint16 kVersion = 2;
 constexpr quint32 kMaximumStringBytes = 4 * 1024;
 constexpr quint32 kMaximumVertices = 10 * 1000 * 1000;
 constexpr quint32 kMaximumIndices = 30 * 1000 * 1000;
+constexpr quint32 kMaximumTopologyRanges = 2 * 1000 * 1000;
 
 enum class GeometryType : quint8 {
     Mesh = 1,
@@ -118,6 +120,18 @@ void validate(const Payload& payload)
             throw ProtocolError("Geometry index is outside the vertex range");
         }
     }
+    quint64 previousEnd = 0;
+    for (const auto& range : payload.topology) {
+        const auto expectedKind = std::is_same_v<Payload, MeshPayload> ? TopologyKind::Face : TopologyKind::Edge;
+        const auto end = static_cast<quint64>(range.firstIndex) + range.indexCount;
+        if (range.topologyId == 0 || range.kind != expectedKind || range.indexCount == 0
+            || end > static_cast<quint64>(payload.indices.size()) || range.firstIndex < previousEnd
+            || !std::isfinite(range.measureMm) || range.measureMm < 0.0F
+            || !std::isfinite(range.radiusMm) || range.radiusMm < 0.0F) {
+            throw ProtocolError("Geometry topology range is invalid");
+        }
+        previousEnd = end;
+    }
 }
 
 template<typename Payload>
@@ -140,6 +154,10 @@ void writeHeader(Writer& writer, const GeometryType type, const Payload& payload
     }
     writer.u32(static_cast<quint32>(payload.vertices.size() / 3));
     writer.u32(static_cast<quint32>(payload.indices.size()));
+    if (payload.topology.size() > static_cast<qsizetype>(kMaximumTopologyRanges)) {
+        throw ProtocolError("Geometry topology count is invalid");
+    }
+    writer.u32(static_cast<quint32>(payload.topology.size()));
 }
 
 template<typename Payload>
@@ -150,10 +168,19 @@ void writeData(Writer& writer, const Payload& payload)
         for (const auto value : payload.normals) writer.number(value);
     }
     for (const auto value : payload.indices) writer.u32(value);
+    for (const auto& range : payload.topology) {
+        writer.u32(range.topologyId);
+        writer.u8(static_cast<quint8>(range.kind));
+        writer.u32(range.firstIndex);
+        writer.u32(range.indexCount);
+        writer.number(range.measureMm);
+        writer.number(range.radiusMm);
+    }
 }
 
 template<typename Payload>
-void readData(Reader& reader, Payload& payload, const quint32 vertexCount, const quint32 indexCount)
+void readData(Reader& reader, Payload& payload, const quint32 vertexCount, const quint32 indexCount,
+              const quint32 topologyCount)
 {
     if (vertexCount == 0 || vertexCount > kMaximumVertices || indexCount == 0 || indexCount > kMaximumIndices) {
         throw ProtocolError("Geometry counts are invalid");
@@ -166,6 +193,14 @@ void readData(Reader& reader, Payload& payload, const quint32 vertexCount, const
     }
     payload.indices.reserve(static_cast<qsizetype>(indexCount));
     for (quint32 index = 0; index < indexCount; ++index) payload.indices.append(reader.u32());
+    if (topologyCount > kMaximumTopologyRanges) {
+        throw ProtocolError("Geometry topology count is invalid");
+    }
+    payload.topology.reserve(topologyCount);
+    for (quint32 index = 0; index < topologyCount; ++index) {
+        payload.topology.append({reader.u32(), static_cast<TopologyKind>(reader.u8()), reader.u32(), reader.u32(),
+                                 reader.number(), reader.number()});
+    }
     validate(payload);
 }
 
@@ -208,9 +243,10 @@ GeometryPayload decodeGeometry(const QByteArray& bytes)
     const auto sourceColor = reader.string();
     const auto vertexCount = reader.u32();
     const auto indexCount = reader.u32();
+    const auto topologyCount = reader.u32();
     if (type == static_cast<quint8>(GeometryType::Mesh)) {
-        MeshPayload payload{requestId, documentGeneration, definitionId, nodeId, segmentKey, sourceColor, refinement, {}, {}, {}};
-        readData(reader, payload, vertexCount, indexCount);
+        MeshPayload payload{requestId, documentGeneration, definitionId, nodeId, segmentKey, sourceColor, refinement, {}, {}, {}, {}};
+        readData(reader, payload, vertexCount, indexCount, topologyCount);
         reader.ensureRemaining();
         return payload;
     }
@@ -218,8 +254,8 @@ GeometryPayload decodeGeometry(const QByteArray& bytes)
         if (!segmentKey.isEmpty() || !sourceColor.isEmpty()) {
             throw ProtocolError("Edge payload metadata is invalid");
         }
-        EdgePayload payload{requestId, documentGeneration, definitionId, nodeId, refinement, {}, {}};
-        readData(reader, payload, vertexCount, indexCount);
+        EdgePayload payload{requestId, documentGeneration, definitionId, nodeId, refinement, {}, {}, {}};
+        readData(reader, payload, vertexCount, indexCount, topologyCount);
         reader.ensureRemaining();
         return payload;
     }

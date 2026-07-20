@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Loupe.App
 import "inspect" as Inspect
+import "export" as Export
 
 ApplicationWindow {
     id: root
@@ -51,6 +52,7 @@ ApplicationWindow {
         readonly property color control: dark ? "#26323c" : "#dde5e9"
         readonly property color border: dark ? "#34414b" : "#b9c5cb"
         readonly property color onSurface: dark ? "#e6edf3" : "#172127"
+        readonly property color foreground: onSurface
         readonly property color muted: dark ? "#aeb8c2" : "#53636c"
         readonly property color accent: dark ? "#67d5c0" : "#087b74"
         readonly property color selection: dark ? "#315b64" : "#a8ddd7"
@@ -177,11 +179,9 @@ ApplicationWindow {
             theme: appTheme
             onOpenFileRequested: openStepDialog.open()
         }
-        Item {
-            Label {
-                anchors.centerIn: parent
-                text: qsTr("Export workspace")
-            }
+        Export.ExportWorkspace {
+            controller: root.controller
+            theme: appTheme
         }
     }
 

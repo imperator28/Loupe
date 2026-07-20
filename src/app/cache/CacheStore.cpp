@@ -40,7 +40,9 @@ QString CacheStore::defaultRoot()
 
 bool CacheStore::isSafeLocalRoot(const QString& rootDirectory)
 {
-    const auto normalized = QDir::fromNativeSeparators(rootDirectory).toLower();
+    auto normalized = rootDirectory;
+    normalized.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    normalized = normalized.toLower();
     if (normalized.startsWith(QStringLiteral("//"))) return false;
     return !normalized.contains(QStringLiteral("/onedrive/"))
         && !normalized.contains(QStringLiteral("/dropbox/"))

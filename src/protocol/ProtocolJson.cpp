@@ -97,6 +97,11 @@ QByteArray encode(const Command& command)
         } else if constexpr (std::is_same_v<Value, Cancel>) {
             return serialize({{QStringLiteral("type"), QStringLiteral("cancel")},
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)}});
+        } else if constexpr (std::is_same_v<Value, ExecuteExportPlan>) {
+            return serialize({{QStringLiteral("type"), QStringLiteral("executeExportPlan")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
+                              {QStringLiteral("planBase64"), QString::fromLatin1(value.planJson.toBase64())},
+                              {QStringLiteral("fingerprint"), value.fingerprint}});
         } else if constexpr (std::is_same_v<Value, MeasureAtPoint>) {
             return serialize({{QStringLiteral("type"), QStringLiteral("measureAtPoint")},
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
@@ -134,6 +139,14 @@ Command decodeCommand(const QByteArray& bytes)
     }
     if (type == QStringLiteral("cancel")) {
         return Cancel{requestId(object)};
+    }
+    if (type == QStringLiteral("executeExportPlan")) {
+        const auto encoded = stringField(object, QStringLiteral("planBase64")).toLatin1();
+        const auto planJson = QByteArray::fromBase64(encoded, QByteArray::AbortOnBase64DecodingErrors);
+        if (planJson.isEmpty()) fail("Protocol export plan invalid");
+        const auto fingerprint = stringField(object, QStringLiteral("fingerprint"));
+        if (fingerprint.isEmpty()) fail("Protocol export fingerprint invalid");
+        return ExecuteExportPlan{requestId(object), planJson, fingerprint};
     }
     if (type == QStringLiteral("measureAtPoint")) {
         const auto x = object.value(QStringLiteral("x")); const auto y = object.value(QStringLiteral("y")); const auto z = object.value(QStringLiteral("z"));
@@ -204,6 +217,37 @@ Event decodeEvent(const QByteArray& bytes)
     if (type == QStringLiteral("edgeReady")) {
         return EdgeReady{requestId(object), stringField(object, QStringLiteral("nodeId")),
                          QByteArray::fromBase64(stringField(object, QStringLiteral("edgeBase64")).toLatin1())};
+    }
+    if (type == QStringLiteral("exportProgress")) {
+        const auto rowIndex = object.value(QStringLiteral("rowIndex"));
+        const auto rowCount = object.value(QStringLiteral("rowCount"));
+        const auto fraction = object.value(QStringLiteral("fraction"));
+        if (!rowIndex.isDouble() || !rowCount.isDouble() || !fraction.isDouble()
+            || rowIndex.toInt(-1) < 0 || rowCount.toInt(-1) < 1
+            || !std::isfinite(fraction.toDouble())) {
+            fail("Protocol export progress invalid");
+        }
+        return ExportProgress{requestId(object), rowIndex.toInt(), rowCount.toInt(),
+                              stringField(object, QStringLiteral("stage")), fraction.toDouble()};
+    }
+    if (type == QStringLiteral("exportRowResult")) {
+        const auto rowIndex = object.value(QStringLiteral("rowIndex"));
+        const auto passed = object.value(QStringLiteral("passed"));
+        if (!rowIndex.isDouble() || rowIndex.toInt(-1) < 0 || !passed.isBool()) {
+            fail("Protocol export row result invalid");
+        }
+        return ExportRowResult{requestId(object), rowIndex.toInt(),
+                               stringField(object, QStringLiteral("nodeId")),
+                               stringField(object, QStringLiteral("path")), passed.toBool(),
+                               stringField(object, QStringLiteral("message"))};
+    }
+    if (type == QStringLiteral("exportCompleted")) {
+        const auto succeeded = object.value(QStringLiteral("succeededCount"));
+        const auto failed = object.value(QStringLiteral("failedCount"));
+        if (!succeeded.isDouble() || !failed.isDouble() || succeeded.toInt(-1) < 0 || failed.toInt(-1) < 0) {
+            fail("Protocol export completion invalid");
+        }
+        return ExportCompleted{requestId(object), succeeded.toInt(), failed.toInt()};
     }
     if (type == QStringLiteral("failed")) {
         const auto recoverable = object.value(QStringLiteral("recoverable"));

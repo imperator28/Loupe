@@ -17,6 +17,7 @@
 #include "app/models/MaterialLibraryModel.h"
 #include "app/models/VisibilityModel.h"
 #include "app/cache/OverrideStore.h"
+#include "app/export/ExportWorkspaceController.h"
 #include "app/tools/MeasurementController.h"
 #include "app/tools/SectionController.h"
 #include "app/worker/WorkerClient.h"
@@ -69,6 +70,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
+    Q_PROPERTY(QObject* exportWorkspace READ exportWorkspaceController CONSTANT)
 
 public:
     explicit ApplicationController(QObject* parent = nullptr);
@@ -105,12 +107,14 @@ public:
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
+    [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
 
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();
     Q_INVOKABLE void fitView();
+    Q_INVOKABLE void replayGeometry();
     Q_INVOKABLE void isolateActiveNode();
     Q_INVOKABLE void toggleIsolateActiveNode();
     Q_INVOKABLE void hideActiveNode();
@@ -125,7 +129,11 @@ public:
     Q_INVOKABLE bool clearActiveAppearanceColor(const QString& scope);
     Q_INVOKABLE QString resolvedAppearanceColor(const QString& nodeId, const QString& sourceColor) const;
     Q_INVOKABLE bool setUnitOverride(const QString& unit);
+    Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
+    Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
+                                        double x, double y, double z, double normalX, double normalY, double normalZ,
+                                        double measureMm, double radiusMm);
 
 signals:
     void workspaceChanged();
@@ -161,9 +169,18 @@ private:
     void appendCachedMesh(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& payload);
     void appendCachedEdges(const QString& nodeId, const QByteArray& payload);
     void replayCachedGeometry(const QByteArray& archive);
+    void replayGeometryChunk();
     void saveGeometryCache();
 
     struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; QVector3D boundsMm; double longestEdgeMm{}; double circularRadiusMm{}; int planarFaceCount{}; };
+    struct GeometryReplayEntry final {
+        quint8 kind{};
+        QString nodeId;
+        QString segmentKey;
+        QString sourceColor;
+        QByteArray payload;
+    };
+    [[nodiscard]] static std::optional<QVector<GeometryReplayEntry>> decodeGeometryArchive(const QByteArray& archive);
 
     Workspace workspace_{Workspace::Inspect};
     QString activeNodeId_;
@@ -179,6 +196,7 @@ private:
     worker::WorkerClient workerClient_{this};
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
+    std::uint64_t activeExportRequestId_{};
     models::AssemblyTreeModel assemblyTreeModel_{this};
     models::MaterialLibraryModel materialLibrary_{this};
     models::VisibilityModel visibilityModel_{this};
@@ -193,7 +211,12 @@ private:
     bool importInProgress_{false};
     bool preservePreviewOnCancel_{false};
     bool previewGeometryReceived_{false};
+    bool cachedGeometryLoaded_{false};
     QByteArray geometryCacheArchive_;
+    QVector<GeometryReplayEntry> geometryReplayQueue_;
+    qsizetype geometryReplayIndex_{};
+    quint64 geometryReplayGeneration_{};
+    QTimer geometryReplayTimer_{this};
     QElapsedTimer importElapsed_;
     QTimer importProgressTimer_{this};
     double modelExtentMm_{};
@@ -210,6 +233,7 @@ private:
     tools::MeasurementController measurementController_{this};
     tools::SectionController sectionController_{this};
     tools::CaptureController captureController_{this};
+    exporting::ExportWorkspaceController exportWorkspaceController_{this};
 };
 
 } // namespace loupe::app

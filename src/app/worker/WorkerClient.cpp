@@ -38,6 +38,13 @@ std::uint64_t WorkerClient::openFile(const QString& path, const std::optional<QS
     return requestId;
 }
 
+std::uint64_t WorkerClient::executeExportPlan(const QByteArray& planJson, const QString& fingerprint)
+{
+    const auto requestId = nextRequestId_++;
+    writeCommand(protocol::encode(protocol::Command{protocol::ExecuteExportPlan{requestId, planJson, fingerprint}}));
+    return requestId;
+}
+
 void WorkerClient::cancel(const std::uint64_t requestId)
 {
     writeCommand(protocol::encode(protocol::Command{protocol::Cancel{requestId}}));
@@ -81,6 +88,13 @@ void WorkerClient::readEvents()
                                        value.xcafTransferMs, value.snapshotBuildMs, value.treeReadyMs, value.firstGeometryMs,
                                        value.previewReadyMs, value.finalReadyMs, value.previewTriangleCount,
                                        value.refinedTriangleCount, value.bodyCount);
+                } else if constexpr (std::is_same_v<Value, protocol::ExportProgress>) {
+                    emit exportProgress(value.requestId, value.rowIndex, value.rowCount, value.stage, value.fraction);
+                } else if constexpr (std::is_same_v<Value, protocol::ExportRowResult>) {
+                    emit exportRowResult(value.requestId, value.rowIndex, value.nodeId, value.path,
+                                         value.passed, value.message);
+                } else if constexpr (std::is_same_v<Value, protocol::ExportCompleted>) {
+                    emit exportCompleted(value.requestId, value.succeededCount, value.failedCount);
                 } else if constexpr (std::is_same_v<Value, protocol::Failed>) {
                     emit requestFailed(value.requestId, value.code, value.message, value.recoverable);
                 } else if constexpr (std::is_same_v<Value, protocol::Canceled>) {

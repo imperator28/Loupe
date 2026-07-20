@@ -9,7 +9,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryFile>
+#include <QTemporaryDir>
 
+#include "core/export/ExportPlan.h"
+#include "core/validation/OutputValidator.h"
 #include "fixtures/FixtureFactory.h"
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolFrame.h"
@@ -21,10 +24,12 @@ class WorkerProcessTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void disconnectStopsWorker();
     void readyThenCancel();
     void invalidFileDoesNotCrashWorker();
     void validStepProducesNonEmptySnapshot();
     void validStepStreamsTriangulatedMesh();
+    void reviewedPlanWritesAndValidatesStep();
 };
 
 namespace {
@@ -89,6 +94,24 @@ bool connectToWorker(QLocalSocket& socket, const QString& name)
 }
 
 } // namespace
+
+void WorkerProcessTest::disconnectStopsWorker()
+{
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    QCOMPARE(readEvent(socket, decoder).value(QStringLiteral("type")).toString(), QStringLiteral("ready"));
+
+    socket.disconnectFromServer();
+    if (socket.state() != QLocalSocket::UnconnectedState) QVERIFY(socket.waitForDisconnected(1'000));
+    QVERIFY(worker.waitForFinished(3'000));
+    QCOMPARE(worker.exitStatus(), QProcess::NormalExit);
+}
 
 void WorkerProcessTest::readyThenCancel()
 {
@@ -220,6 +243,103 @@ void WorkerProcessTest::validStepStreamsTriangulatedMesh()
     QVERIFY(edges->vertices.size() >= 6);
     QVERIFY(edges->indices.size() >= 2);
     QVERIFY(worker.state() == QProcess::Running);
+}
+
+void WorkerProcessTest::reviewedPlanWritesAndValidatesStep()
+{
+    const auto fixture = loupe::tests::writeFlatTwoSolidStep(
+        QStringLiteral("worker-export-source.step").toStdString());
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 20},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+
+    const auto snapshotEvent = readEventOfType(socket, decoder, QStringLiteral("snapshotReady"));
+    const auto snapshot = QJsonDocument::fromJson(
+        QByteArray::fromBase64(snapshotEvent.value(QStringLiteral("snapshotBase64")).toString().toLatin1())).object();
+    const auto geometry = snapshot.value(QStringLiteral("geometry")).toArray();
+    QVERIFY(geometry.size() >= 2);
+    const auto firstNodeId = geometry.at(0).toObject().value(QStringLiteral("nodeId")).toString();
+    const auto secondNodeId = geometry.at(1).toObject().value(QStringLiteral("nodeId")).toString();
+    QVERIFY(!firstNodeId.isEmpty());
+    QVERIFY(!secondNodeId.isEmpty());
+
+    QElapsedTimer readyTimer;
+    readyTimer.start();
+    bool ready = false;
+    while (readyTimer.elapsed() < 15'000 && !ready) {
+        const auto event = readEvent(socket, decoder);
+        ready = event.value(QStringLiteral("type")).toString() == QStringLiteral("progress")
+            && event.value(QStringLiteral("fraction")).toDouble() >= 1.0;
+    }
+    QVERIFY(ready);
+
+    loupe::exporting::PlanRequest request;
+    request.selections = {{firstNodeId.toStdString(), loupe::exporting::SelectionKind::Body},
+                          {secondNodeId.toStdString(), loupe::exporting::SelectionKind::Body}};
+    request.hierarchyPaths.emplace(firstNodeId.toStdString(), "Assembly/Zed");
+    request.hierarchyPaths.emplace(secondNodeId.toStdString(), "Assembly/Alpha");
+    request.outputLeafNames.emplace(firstNodeId.toStdString(), "Reviewed-first");
+    request.outputLeafNames.emplace(secondNodeId.toStdString(), "Reviewed-second");
+    request.destination = destination.path().toStdString();
+    request.format = loupe::exporting::Format::Step;
+    request.coordinates = loupe::exporting::Coordinates::Assembly;
+    request.grouping = loupe::exporting::Grouping::SeparateFiles;
+    request.stepOutputUnit = loupe::exporting::StepOutputUnit::Millimeter;
+    request.requestedUnitToMillimeters = 1.0;
+    request.unitDecision = {loupe::units::LengthUnit::Millimeter, loupe::units::UnitConfidence::Confirmed,
+                            1.0, "worker integration test"};
+    const auto plan = loupe::exporting::buildPlan(request);
+    const auto planJson = QJsonDocument(QJsonObject{
+        {QStringLiteral("schemaVersion"), 1},
+        {QStringLiteral("destination"), destination.path()},
+        {QStringLiteral("format"), QStringLiteral("STEP")},
+        {QStringLiteral("coordinates"), QStringLiteral("Assembly")},
+        {QStringLiteral("effectiveUnit"), QStringLiteral("mm")},
+        {QStringLiteral("sourceToMillimeters"), 1.0},
+        {QStringLiteral("selections"), QJsonArray{
+            QJsonObject{{QStringLiteral("nodeId"), firstNodeId},
+                        {QStringLiteral("kind"), static_cast<int>(loupe::exporting::SelectionKind::Body)},
+                        {QStringLiteral("hierarchyPath"), QStringLiteral("Assembly/Zed")},
+                        {QStringLiteral("leafName"), QStringLiteral("Reviewed-first")}},
+            QJsonObject{{QStringLiteral("nodeId"), secondNodeId},
+                        {QStringLiteral("kind"), static_cast<int>(loupe::exporting::SelectionKind::Body)},
+                        {QStringLiteral("hierarchyPath"), QStringLiteral("Assembly/Alpha")},
+                        {QStringLiteral("leafName"), QStringLiteral("Reviewed-second")}},
+        }},
+    }).toJson(QJsonDocument::Compact);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("executeExportPlan")},
+                  {QStringLiteral("requestId"), 21},
+                  {QStringLiteral("planBase64"), QString::fromLatin1(planJson.toBase64())},
+                  {QStringLiteral("fingerprint"), QString::fromStdString(plan.fingerprint())}});
+
+    const auto firstResult = readEventOfType(socket, decoder, QStringLiteral("exportRowResult"));
+    const auto secondResult = readEventOfType(socket, decoder, QStringLiteral("exportRowResult"));
+    QVERIFY(firstResult.value(QStringLiteral("passed")).toBool());
+    QVERIFY(secondResult.value(QStringLiteral("passed")).toBool());
+    QCOMPARE(firstResult.value(QStringLiteral("rowIndex")).toInt(), 1);
+    QCOMPARE(secondResult.value(QStringLiteral("rowIndex")).toInt(), 0);
+    const auto completed = readEventOfType(socket, decoder, QStringLiteral("exportCompleted"));
+    QCOMPARE(completed.value(QStringLiteral("succeededCount")).toInt(), 2);
+    QCOMPARE(completed.value(QStringLiteral("failedCount")).toInt(), 0);
+    for (const auto* name : {"Reviewed-first.step", "Reviewed-second.step"}) {
+        const auto outputPath = std::filesystem::path(destination.path().toStdString()) / name;
+        QVERIFY(std::filesystem::exists(outputPath));
+        const auto validation = loupe::validation::OutputValidator{}.validate(
+            {outputPath, loupe::validation::OutputUnit::Millimeter, 1, {}, {}, 1.0e-5, false, false});
+        QVERIFY(validation.passed);
+    }
 }
 
 QTEST_MAIN(WorkerProcessTest)

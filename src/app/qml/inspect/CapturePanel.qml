@@ -30,8 +30,8 @@ Rectangle {
         Label { text: qsTr("Background"); color: root.subduedForeground }
         RowLayout {
             Layout.fillWidth: true
-            RadioButton { text: qsTr("Transparent"); checked: !root.taskController || root.taskController.transparentBackground; onToggled: if (checked) root.taskController.transparentBackground = true }
-            RadioButton { text: qsTr("Viewport solid"); checked: root.taskController && !root.taskController.transparentBackground; onToggled: if (checked) root.taskController.transparentBackground = false }
+            ThemedRadioButton { theme: root.theme; text: qsTr("Transparent"); checked: !root.taskController || root.taskController.transparentBackground; onToggled: if (checked) root.taskController.transparentBackground = true }
+            ThemedRadioButton { theme: root.theme; text: qsTr("Viewport solid"); checked: root.taskController && !root.taskController.transparentBackground; onToggled: if (checked) root.taskController.transparentBackground = false }
         }
         Label { text: qsTr("Scale"); color: root.subduedForeground }
         RowLayout {
@@ -51,8 +51,9 @@ Rectangle {
         }
         RowLayout {
             Layout.fillWidth: true
-            Label { text: qsTr("Custom"); Layout.fillWidth: true }
-            SpinBox {
+            Label { text: qsTr("Custom"); Layout.fillWidth: true; color: root.foreground }
+            ThemedSpinBox {
+                theme: root.theme
                 from: 100
                 to: 400
                 stepSize: 25
@@ -62,12 +63,14 @@ Rectangle {
                 onValueModified: root.taskController.scale = value / 100
             }
         }
-        Switch {
+        ThemedSwitch {
+            theme: root.theme
             text: qsTr("Include active measurement")
             checked: !root.taskController || root.taskController.includeMeasurements
             onToggled: root.taskController.includeMeasurements = checked
         }
-        Switch {
+        ThemedSwitch {
+            theme: root.theme
             text: qsTr("Include section caps")
             checked: !root.taskController || root.taskController.includeSectionCaps
             onToggled: root.taskController.includeSectionCaps = checked

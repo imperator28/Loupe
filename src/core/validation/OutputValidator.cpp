@@ -70,11 +70,12 @@ void compare(ValidationResult& result, const ExpectedOutput& expected)
 {
     if (result.actualUnit != expected.unit) error(result, "unit_mismatch", "output unit differs from reviewed expectation");
     if (result.actualBodyCount != expected.bodyCount) error(result, "body_count_mismatch", "output body count differs from reviewed expectation");
-    if (!same(result.actualBoundsMm.minimum, expected.boundsMm.minimum, expected.relativeTolerance)
-        || !same(result.actualBoundsMm.maximum, expected.boundsMm.maximum, expected.relativeTolerance)) {
+    if (expected.compareBounds
+        && (!same(result.actualBoundsMm.minimum, expected.boundsMm.minimum, expected.relativeTolerance)
+            || !same(result.actualBoundsMm.maximum, expected.boundsMm.maximum, expected.relativeTolerance))) {
         error(result, "bounds_mismatch", "output bounds differ from reviewed expectation");
     }
-    if (!same(result.actualCentroidMm, expected.centroidMm, expected.relativeTolerance)) {
+    if (expected.compareCentroid && !same(result.actualCentroidMm, expected.centroidMm, expected.relativeTolerance)) {
         error(result, "centroid_mismatch", "output centroid differs from reviewed expectation");
     }
 }

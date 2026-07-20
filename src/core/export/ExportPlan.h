@@ -87,6 +87,8 @@ struct PlanRequest {
     std::vector<CheckedSelection> selections;
     // Canonical paths are required because node IDs are opaque and are never used as hierarchy order.
     std::unordered_map<std::string, std::string> hierarchyPaths;
+    // Optional reviewed leaf names, without an extension, keyed by node ID.
+    std::unordered_map<std::string, std::string> outputLeafNames;
     std::string destination;
     Format format{Format::Step};
     Coordinates coordinates{};

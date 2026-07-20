@@ -15,6 +15,8 @@ private slots:
     void meshEventCarriesPayload();
     void edgeEventCarriesCadPayload();
     void measureAtPointRoundTrips();
+    void exportPlanRoundTrips();
+    void exportEventsDecode();
 };
 
 void ProtocolTest::openFileRoundTrips()
@@ -91,6 +93,34 @@ void ProtocolTest::measureAtPointRoundTrips()
     QCOMPARE(measure.requestId, 19ULL);
     QCOMPARE(measure.nodeId, QStringLiteral("def-cylinder"));
     QCOMPARE(measure.mode, QStringLiteral("radius"));
+}
+
+void ProtocolTest::exportPlanRoundTrips()
+{
+    const loupe::protocol::ExecuteExportPlan command{23, QByteArrayLiteral("{\"schemaVersion\":1}"),
+                                                      QStringLiteral("abc123")};
+
+    const auto decoded = loupe::protocol::decodeCommand(
+        loupe::protocol::encode(loupe::protocol::Command{command}));
+    const auto& exportPlan = std::get<loupe::protocol::ExecuteExportPlan>(decoded);
+    QCOMPARE(exportPlan.requestId, 23ULL);
+    QCOMPARE(exportPlan.planJson, command.planJson);
+    QCOMPARE(exportPlan.fingerprint, QStringLiteral("abc123"));
+}
+
+void ProtocolTest::exportEventsDecode()
+{
+    const auto progress = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportProgress\",\"requestId\":8,\"rowIndex\":0,\"rowCount\":2,\"stage\":\"Writing A.step\",\"fraction\":0.25}\n"));
+    QCOMPARE(std::get<loupe::protocol::ExportProgress>(progress).rowCount, 2);
+
+    const auto row = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportRowResult\",\"requestId\":8,\"rowIndex\":0,\"nodeId\":\"a\",\"path\":\"/tmp/A.step\",\"passed\":true,\"message\":\"ok\"}\n"));
+    QVERIFY(std::get<loupe::protocol::ExportRowResult>(row).passed);
+
+    const auto completed = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportCompleted\",\"requestId\":8,\"succeededCount\":2,\"failedCount\":0}\n"));
+    QCOMPARE(std::get<loupe::protocol::ExportCompleted>(completed).succeededCount, 2);
 }
 
 QTEST_MAIN(ProtocolTest)

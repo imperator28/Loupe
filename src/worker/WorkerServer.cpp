@@ -1,14 +1,20 @@
 #include "worker/WorkerServer.h"
 
 #include "core/import/StepImporter.h"
+#include "core/export/ExportPlan.h"
+#include "core/export/StepExporter.h"
+#include "core/export/StlExporter.h"
 #include "core/inspection/GeometryAnalysis.h"
 #include "core/inspection/TopologyAnalysis.h"
 #include "core/units/UnitPolicy.h"
+#include "core/validation/OutputValidator.h"
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolFrame.h"
 #include "protocol/ProtocolTypes.h"
 
 #include <QFileInfo>
+#include <QCoreApplication>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
@@ -20,9 +26,14 @@
 
 #include <BRep_Tool.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepGProp.hxx>
 #include <BRepLib_ToolTriangulatedShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <GCPnts_TangentialDeflection.hxx>
+#include <GProp_GProps.hxx>
+#include <GeomAbs_CurveType.hxx>
+#include <GeomAbs_SurfaceType.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
@@ -56,6 +67,56 @@ std::optional<loupe::units::UnitOverride> toUnitOverride(const QString& unit, co
                            : unit == QStringLiteral("in") ? loupe::units::LengthUnit::Inch
                                                            : loupe::units::LengthUnit::Unknown;
     return loupe::units::UnitOverride{interpretAs, factor, reason.toStdString()};
+}
+
+struct DecodedExportPlan final {
+    loupe::exporting::PlanRequest request;
+    std::vector<std::string> reviewedNodeOrder;
+};
+
+DecodedExportPlan decodeExportPlan(const QByteArray& bytes)
+{
+    const auto document = QJsonDocument::fromJson(bytes);
+    if (!document.isObject()) throw std::runtime_error("reviewed export plan is not valid JSON");
+    const auto object = document.object();
+    if (object.value(QStringLiteral("schemaVersion")).toInt() != 1) {
+        throw std::runtime_error("reviewed export plan version is not supported");
+    }
+
+    DecodedExportPlan decoded;
+    auto& request = decoded.request;
+    request.destination = object.value(QStringLiteral("destination")).toString().toUtf8().toStdString();
+    const auto format = object.value(QStringLiteral("format")).toString();
+    request.format = format == QStringLiteral("STL") ? loupe::exporting::Format::Stl : loupe::exporting::Format::Step;
+    const auto coordinates = object.value(QStringLiteral("coordinates")).toString();
+    request.coordinates = coordinates == QStringLiteral("Local")
+        ? loupe::exporting::Coordinates::Local : loupe::exporting::Coordinates::Assembly;
+    request.grouping = loupe::exporting::Grouping::SeparateFiles;
+    request.stepOutputUnit = loupe::exporting::StepOutputUnit::Millimeter;
+    request.requestedUnitToMillimeters = 1.0;
+    const auto effectiveUnit = object.value(QStringLiteral("effectiveUnit")).toString();
+    const auto sourceScale = object.value(QStringLiteral("sourceToMillimeters")).toDouble(0.0);
+    request.unitDecision = {effectiveUnit == QStringLiteral("in") ? loupe::units::LengthUnit::Inch
+                                                                   : loupe::units::LengthUnit::Millimeter,
+                            loupe::units::UnitConfidence::Confirmed, sourceScale, "reviewed in Loupe"};
+
+    const auto selections = object.value(QStringLiteral("selections"));
+    if (!selections.isArray()) throw std::runtime_error("reviewed export selections are missing");
+    for (const auto& value : selections.toArray()) {
+        const auto selection = value.toObject();
+        const auto nodeId = selection.value(QStringLiteral("nodeId")).toString().toUtf8().toStdString();
+        const auto hierarchyPath = selection.value(QStringLiteral("hierarchyPath")).toString().toUtf8().toStdString();
+        const auto leafName = selection.value(QStringLiteral("leafName")).toString().toUtf8().toStdString();
+        const auto kind = selection.value(QStringLiteral("kind"));
+        if (nodeId.empty() || hierarchyPath.empty() || leafName.empty() || !kind.isDouble()) {
+            throw std::runtime_error("reviewed export selection is incomplete");
+        }
+        request.selections.push_back({nodeId, static_cast<loupe::exporting::SelectionKind>(kind.toInt(-1))});
+        request.hierarchyPaths.emplace(nodeId, hierarchyPath);
+        request.outputLeafNames.emplace(nodeId, leafName);
+        decoded.reviewedNodeOrder.push_back(nodeId);
+    }
+    return decoded;
 }
 
 QByteArray encodeSnapshot(const loupe::import::ImportResult& imported, const loupe::units::UnitDecision& unitDecision)
@@ -93,11 +154,13 @@ struct MeshSegment final {
     QVector<float> vertices;
     QVector<float> normals;
     QVector<quint32> indices;
+    QVector<protocol::TopologyRange> topology;
 };
 
 struct EdgePayload final {
     QVector<float> vertices;
     QVector<quint32> indices;
+    QVector<protocol::TopologyRange> topology;
 };
 
 struct TessellationProfile final {
@@ -149,8 +212,10 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const double sourceTo
 {
     QHash<QString, int> segmentIndexes;
     QVector<MeshSegment> segments;
-    for (TopExp_Explorer explorer(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
-        const auto face = TopoDS::Face(explorer.Current());
+    TopTools_IndexedMapOfShape faceMap;
+    TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
+    for (int faceIndex = 1; faceIndex <= faceMap.Extent(); ++faceIndex) {
+        const auto face = TopoDS::Face(faceMap(faceIndex));
         TopLoc_Location location;
         const auto triangulation = BRep_Tool::Triangulation(face, location);
         if (triangulation.IsNull()) continue;
@@ -158,12 +223,13 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const double sourceTo
         const auto segmentIndex = segmentIndexes.value(color, -1);
         if (segmentIndex < 0) {
             segmentIndexes.insert(color, segments.size());
-            segments.append({color, {}, {}, {}});
+            segments.append({color, {}, {}, {}, {}});
         }
         auto& segment = segments[segmentIndexes.value(color)];
         const int vertexOffset = segment.vertices.size() / 3;
         const auto transform = location.Transformation();
         BRepLib_ToolTriangulatedShape::ComputeNormals(face, triangulation);
+        const auto firstIndex = static_cast<quint32>(segment.indices.size());
         for (int node = 1; node <= triangulation->NbNodes(); ++node) {
             const auto point = triangulation->Node(node).Transformed(transform);
             segment.vertices.append(static_cast<float>(point.X() * sourceToMillimeters));
@@ -186,6 +252,22 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const double sourceTo
             segment.indices.append(static_cast<quint32>(vertexOffset + second - 1));
             segment.indices.append(static_cast<quint32>(vertexOffset + third - 1));
         }
+        GProp_GProps properties;
+        BRepGProp::SurfaceProperties(face, properties);
+        float radiusMm = 0.0F;
+        try {
+            const BRepAdaptor_Surface surface(face);
+            if (surface.GetType() == GeomAbs_Cylinder) {
+                radiusMm = static_cast<float>(surface.Cylinder().Radius() * sourceToMillimeters);
+            } else if (surface.GetType() == GeomAbs_Sphere) {
+                radiusMm = static_cast<float>(surface.Sphere().Radius() * sourceToMillimeters);
+            }
+        } catch (const Standard_Failure&) {
+        }
+        segment.topology.append({static_cast<quint32>(faceIndex), protocol::TopologyKind::Face,
+                                 firstIndex, static_cast<quint32>(segment.indices.size()) - firstIndex,
+                                 static_cast<float>(properties.Mass() * sourceToMillimeters * sourceToMillimeters),
+                                 radiusMm});
     }
     return segments;
 }
@@ -207,6 +289,7 @@ EdgePayload encodeEdges(const TopoDS_Shape& shape, const double sourceToMillimet
             const GCPnts_TangentialDeflection points(curve, first, last, profile.angularDeflectionRadians, linearDeflection, 2);
             if (points.NbPoints() < 2) continue;
             const auto firstVertex = payload.vertices.size() / 3;
+            const auto firstIndex = static_cast<quint32>(payload.indices.size());
             for (int pointIndex = 1; pointIndex <= points.NbPoints(); ++pointIndex) {
                 const auto point = points.Value(pointIndex);
                 payload.vertices.append(static_cast<float>(point.X() * sourceToMillimeters));
@@ -217,6 +300,13 @@ EdgePayload encodeEdges(const TopoDS_Shape& shape, const double sourceToMillimet
                     payload.indices.append(static_cast<quint32>(firstVertex + pointIndex - 1));
                 }
             }
+            GProp_GProps properties;
+            BRepGProp::LinearProperties(edge, properties);
+            const auto radiusMm = curve.GetType() == GeomAbs_Circle
+                ? static_cast<float>(curve.Circle().Radius() * sourceToMillimeters) : 0.0F;
+            payload.topology.append({static_cast<quint32>(edgeIndex), protocol::TopologyKind::Edge,
+                                     firstIndex, static_cast<quint32>(payload.indices.size()) - firstIndex,
+                                     static_cast<float>(properties.Mass() * sourceToMillimeters), radiusMm});
         } catch (const Standard_Failure&) {
             continue;
         }
@@ -252,7 +342,13 @@ void WorkerServer::acceptConnection()
     socket_ = server_.nextPendingConnection();
     commandFrames_.clear();
     connect(socket_, &QLocalSocket::readyRead, this, &WorkerServer::readCommands);
-    connect(socket_, &QLocalSocket::disconnected, this, [this] { socket_.clear(); });
+    connect(socket_, &QLocalSocket::disconnected, this, [this] {
+        for (const auto& job : std::as_const(activeSessions_)) job->canceled.store(true);
+        for (const auto& job : std::as_const(activeExports_)) job->canceled.store(true);
+        socket_.clear();
+        server_.close();
+        QCoreApplication::quit();
+    });
     send({{QStringLiteral("type"), QStringLiteral("ready")}});
 }
 
@@ -280,6 +376,8 @@ void WorkerServer::readCommands()
                     open(value.requestId, value.path, value.unitOverride);
                 } else if constexpr (std::is_same_v<Value, protocol::Cancel>) {
                     cancel(value.requestId);
+                } else if constexpr (std::is_same_v<Value, protocol::ExecuteExportPlan>) {
+                    executeExportPlan(value.requestId, value.planJson, value.fingerprint);
                 }
             }, command);
         } catch (const protocol::ProtocolError&) {
@@ -317,7 +415,7 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
         fail(requestId, QStringLiteral("read_failed"), QStringLiteral("The requested file does not exist"));
         return;
     }
-    if (!activeSessions_.isEmpty()) {
+    if (!activeSessions_.isEmpty() || !activeExports_.isEmpty()) {
         fail(requestId, QStringLiteral("busy"), QStringLiteral("A request is already active"));
         return;
     }
@@ -413,12 +511,13 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                             else refinedTriangleCount += triangleCount;
                             postGeometry(protocol::MeshPayload{requestId, requestId, nodeId, nodeId,
                                                                QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), segment.color,
-                                                               profile.refinement, segment.vertices, segment.normals, segment.indices});
+                                                               profile.refinement, segment.vertices, segment.normals, segment.indices,
+                                                               segment.topology});
                         }
                         const auto edges = encodeEdges(shape, unitDecision.sourceToMillimeters, profile);
                         if (!edges.indices.isEmpty()) {
                             postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
-                                                               edges.vertices, edges.indices});
+                                                               edges.vertices, edges.indices, edges.topology});
                         }
                         if (profile.refinement == kRefinedProfile.refinement) {
                             const auto analysis = inspection::analyze(shape, unitDecision.sourceToMillimeters);
@@ -477,9 +576,142 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
     });
 }
 
+void WorkerServer::executeExportPlan(const std::uint64_t requestId, const QByteArray& planJson,
+                                     const QString& fingerprint)
+{
+    if (!documentSession_) {
+        fail(requestId, QStringLiteral("document_not_ready"),
+             QStringLiteral("Wait for geometry refinement to finish before exporting"));
+        return;
+    }
+    if (!activeSessions_.isEmpty() || !activeExports_.isEmpty()) {
+        fail(requestId, QStringLiteral("busy"), QStringLiteral("Another worker request is already active"));
+        return;
+    }
+
+    std::optional<loupe::exporting::ExportPlan> reviewedPlan;
+    std::vector<std::string> reviewedNodeOrder;
+    try {
+        auto decoded = decodeExportPlan(planJson);
+        reviewedNodeOrder = std::move(decoded.reviewedNodeOrder);
+        reviewedPlan.emplace(loupe::exporting::buildPlan(decoded.request));
+        if (QString::fromStdString(reviewedPlan->fingerprint()) != fingerprint) {
+            throw std::runtime_error("reviewed export plan changed before execution");
+        }
+        const QFileInfo destination(QString::fromStdString(decoded.request.destination));
+        if (!destination.exists() || !destination.isDir() || !destination.isWritable()) {
+            throw std::runtime_error("export destination is not a writable folder");
+        }
+    } catch (const std::exception& error) {
+        fail(requestId, QStringLiteral("export_gate_failed"), QString::fromUtf8(error.what()));
+        return;
+    }
+
+    const auto document = documentSession_;
+    std::vector<int> reviewedRowIndexes;
+    reviewedRowIndexes.reserve(reviewedPlan->outputs().size());
+    for (const auto& output : reviewedPlan->outputs()) {
+        const auto found = std::ranges::find(reviewedNodeOrder, output.nodeId());
+        if (found == reviewedNodeOrder.end()) {
+            fail(requestId, QStringLiteral("export_gate_failed"),
+                 QStringLiteral("reviewed output order is incomplete"));
+            return;
+        }
+        reviewedRowIndexes.push_back(static_cast<int>(std::distance(reviewedNodeOrder.begin(), found)));
+    }
+    const auto job = std::make_shared<ExportJob>();
+    activeExports_.insert(requestId, job);
+    QPointer<WorkerServer> server(this);
+    auto post = [server](QJsonObject event) {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, event = std::move(event)] {
+            if (server) server->send(event);
+        }, Qt::QueuedConnection);
+    };
+    auto finish = [server, requestId, job] {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, requestId, job] {
+            if (server && server->activeExports_.value(requestId) == job) server->activeExports_.remove(requestId);
+        }, Qt::QueuedConnection);
+    };
+
+    auto* thread = QThread::create([requestId, plan = std::move(*reviewedPlan),
+                                    reviewedRowIndexes = std::move(reviewedRowIndexes), document, job, post, finish] {
+        int succeeded{};
+        int failed{};
+        const auto& outputs = plan.outputs();
+        const int rowCount = static_cast<int>(outputs.size());
+        for (int outputIndex = 0; outputIndex < rowCount; ++outputIndex) {
+            if (job->canceled.load()) {
+                post({{QStringLiteral("type"), QStringLiteral("canceled")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)}});
+                finish();
+                return;
+            }
+            const auto& output = outputs.at(static_cast<std::size_t>(outputIndex));
+            const auto rowIndex = reviewedRowIndexes.at(static_cast<std::size_t>(outputIndex));
+            const auto nodeId = QString::fromStdString(output.nodeId());
+            const auto path = QString::fromStdString(output.finalPath());
+            const auto fraction = static_cast<double>(outputIndex) / static_cast<double>(rowCount);
+            post({{QStringLiteral("type"), QStringLiteral("exportProgress")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("rowCount"), rowCount},
+                  {QStringLiteral("stage"), QStringLiteral("Writing %1").arg(QFileInfo(path).fileName())},
+                  {QStringLiteral("fraction"), fraction}});
+            try {
+                if (output.format() == loupe::exporting::Format::Step) {
+                    static_cast<void>(loupe::exporting::StepExporter{}.write(document->imported, output));
+                } else {
+                    static_cast<void>(loupe::exporting::StlExporter{}.write(document->imported, output));
+                }
+                post({{QStringLiteral("type"), QStringLiteral("exportProgress")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                      {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("rowCount"), rowCount},
+                      {QStringLiteral("stage"), QStringLiteral("Validating %1").arg(QFileInfo(path).fileName())},
+                      {QStringLiteral("fraction"), (static_cast<double>(outputIndex) + 0.75) / static_cast<double>(rowCount)}});
+                const auto unit = output.format() == loupe::exporting::Format::Stl
+                    || output.stepOutputUnit() == loupe::exporting::StepOutputUnit::Millimeter
+                    ? loupe::validation::OutputUnit::Millimeter : loupe::validation::OutputUnit::Inch;
+                const auto validation = loupe::validation::OutputValidator{}.validate(
+                    {std::filesystem::path(output.finalPath()), unit, 1, {}, {}, 1.0e-5, false, false});
+                if (!validation.passed) {
+                    const auto message = validation.errors.empty() ? std::string{"output validation failed"}
+                                                                    : validation.errors.front().message;
+                    std::error_code ignored;
+                    std::filesystem::remove(std::filesystem::path(output.finalPath()), ignored);
+                    throw std::runtime_error(message);
+                }
+                ++succeeded;
+                post({{QStringLiteral("type"), QStringLiteral("exportRowResult")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                      {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("nodeId"), nodeId},
+                      {QStringLiteral("path"), path}, {QStringLiteral("passed"), true},
+                      {QStringLiteral("message"), QStringLiteral("Exported and validated")}});
+            } catch (const std::exception& error) {
+                ++failed;
+                post({{QStringLiteral("type"), QStringLiteral("exportRowResult")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                      {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("nodeId"), nodeId},
+                      {QStringLiteral("path"), path}, {QStringLiteral("passed"), false},
+                      {QStringLiteral("message"), QString::fromUtf8(error.what())}});
+            }
+        }
+        post({{QStringLiteral("type"), QStringLiteral("exportCompleted")},
+              {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+              {QStringLiteral("succeededCount"), succeeded}, {QStringLiteral("failedCount"), failed}});
+        finish();
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
 void WorkerServer::cancel(const std::uint64_t requestId)
 {
     if (const auto job = activeSessions_.value(requestId)) job->canceled.store(true);
+    if (const auto job = activeExports_.value(requestId)) {
+        job->canceled.store(true);
+        return;
+    }
     send({{QStringLiteral("type"), QStringLiteral("canceled")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)}});
 }
 

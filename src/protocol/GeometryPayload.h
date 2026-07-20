@@ -8,6 +8,20 @@
 
 namespace loupe::protocol {
 
+enum class TopologyKind : quint8 {
+    Face = 1,
+    Edge = 2,
+};
+
+struct TopologyRange final {
+    quint32 topologyId{};
+    TopologyKind kind{TopologyKind::Face};
+    quint32 firstIndex{};
+    quint32 indexCount{};
+    float measureMm{};
+    float radiusMm{};
+};
+
 struct MeshPayload final {
     quint64 requestId{};
     quint64 documentGeneration{};
@@ -19,6 +33,7 @@ struct MeshPayload final {
     QVector<float> vertices;
     QVector<float> normals;
     QVector<quint32> indices;
+    QVector<TopologyRange> topology;
 };
 
 struct EdgePayload final {
@@ -29,6 +44,7 @@ struct EdgePayload final {
     quint8 refinement{};
     QVector<float> vertices;
     QVector<quint32> indices;
+    QVector<TopologyRange> topology;
 };
 
 using GeometryPayload = std::variant<MeshPayload, EdgePayload>;

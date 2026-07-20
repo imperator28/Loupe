@@ -21,6 +21,7 @@ public:
 
     [[nodiscard]] bool connectToServer(const QString& serverName, int timeoutMs = 3'000);
     [[nodiscard]] std::uint64_t openFile(const QString& path, const std::optional<QString>& unitOverride = std::nullopt);
+    [[nodiscard]] std::uint64_t executeExportPlan(const QByteArray& planJson, const QString& fingerprint);
     void cancel(std::uint64_t requestId);
 
 signals:
@@ -35,6 +36,10 @@ signals:
                        qint64 xcafTransferMs, qint64 snapshotBuildMs, qint64 treeReadyMs, qint64 firstGeometryMs,
                        qint64 previewReadyMs, qint64 finalReadyMs, qint64 previewTriangleCount,
                        qint64 refinedTriangleCount, int bodyCount);
+    void exportProgress(quint64 requestId, int rowIndex, int rowCount, const QString& stage, double fraction);
+    void exportRowResult(quint64 requestId, int rowIndex, const QString& nodeId, const QString& path,
+                         bool passed, const QString& message);
+    void exportCompleted(quint64 requestId, int succeededCount, int failedCount);
     void requestFailed(quint64 requestId, const QString& code, const QString& message, bool recoverable);
     void requestCanceled(quint64 requestId);
     void protocolError(const QString& message);

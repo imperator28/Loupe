@@ -3,6 +3,9 @@
 #include <QQuick3DGeometry>
 #include <QVector>
 #include <QVector3D>
+#include <QVariantMap>
+
+#include "protocol/GeometryPayload.h"
 
 namespace loupe::app::render {
 
@@ -14,9 +17,14 @@ public:
 
     Q_INVOKABLE bool replaceWorkerEdges(const QByteArray& edgeJson);
     Q_INVOKABLE void clearEdges();
+    Q_INVOKABLE QVariantMap topologyAtPoint(double x, double y, double z, double tolerance) const;
+    Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
+    Q_INVOKABLE bool copyFaceBoundaryFrom(QObject* source, quint32 topologyId);
     Q_INVOKABLE void setSection(bool enabled, int axis, double position, bool flipped);
     Q_INVOKABLE void setSectionPlane(bool enabled, double normalX, double normalY, double normalZ, double offset, bool flipped);
     Q_INVOKABLE void setSectionOptions(bool capEnabled, bool sliceOnly, bool sliceFill = true, bool sliceOutline = true);
+    Q_INVOKABLE void configureSection(bool enabled, double normalX, double normalY, double normalZ,
+                                      double offset, bool flipped, bool sliceOnly, bool preview);
 
     [[nodiscard]] int lineCount() const noexcept { return static_cast<int>(indexData_.size() / 2); }
 
@@ -26,10 +34,12 @@ private:
 
     QVector<float> sourceVertexData_;
     QVector<quint32> sourceIndexData_;
+    QVector<protocol::TopologyRange> sourceTopology_;
     QVector<float> vertexData_;
     QVector<quint32> indexData_;
     bool sectionEnabled_{false};
     bool sectionSliceOnly_{false};
+    bool sectionPreview_{false};
     QVector3D sectionNormal_{0.0F, 0.0F, 1.0F};
     double sectionOffset_{};
     bool sectionFlipped_{false};

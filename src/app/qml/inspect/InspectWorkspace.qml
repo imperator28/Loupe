@@ -12,6 +12,7 @@ Item {
     readonly property color subduedForeground: theme && theme.dark ? "#aeb8c2" : "#53636c"
     property string activeTask: ""
     property bool taskPanelVisible: false
+    property string treeHoveredNodeId: ""
     signal openFileRequested()
 
     function showTask(tool) {
@@ -34,7 +35,11 @@ Item {
 
     Connections {
         target: root.controller
-        function onSnapshotChanged() { root.activeTask = ""; root.taskPanelVisible = false }
+        function onSnapshotChanged() {
+            root.activeTask = ""
+            root.taskPanelVisible = false
+            root.treeHoveredNodeId = ""
+        }
         function onActiveNodeIdChanged() { Qt.callLater(root.revealActiveNode) }
     }
 
@@ -88,6 +93,14 @@ Item {
                             verticalAlignment: Text.AlignVCenter
                         }
                         onClicked: root.controller.setActiveNodeId(stableId)
+                        HoverHandler {
+                            id: treeHover
+                            onHoveredChanged: {
+                                if (hovered) root.treeHoveredNodeId = stableId
+                                else if (root.treeHoveredNodeId === stableId) root.treeHoveredNodeId = ""
+                            }
+                        }
+                        onStableIdChanged: if (treeHover.hovered) root.treeHoveredNodeId = stableId
                         TapHandler {
                             acceptedButtons: Qt.RightButton
                             onTapped: function(eventPoint) {
@@ -122,6 +135,12 @@ Item {
                 onLoaded: {
                     item.controller = root.controller
                     item.theme = root.theme
+                    item.measurementActive = Qt.binding(function() {
+                        return root.activeTask === "measure" && root.taskPanelVisible
+                    })
+                    item.externalHighlightNodeId = Qt.binding(function() {
+                        return root.treeHoveredNodeId
+                    })
                     item.toolRequested.connect(function(tool) {
                         if (tool === "close") {
                             root.taskPanelVisible = false
@@ -256,24 +275,27 @@ Item {
         }
     }
 
-    Menu {
+    ThemedMenu {
         id: treeContextMenu
+        theme: root.theme
         property string targetNodeId: ""
-        MenuItem {
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
             text: qsTr("Fit selection")
             enabled: treeContextMenu.targetNodeId.length > 0
             onTriggered: if (viewportLoader.item) viewportLoader.item.fitSelection()
         }
-        MenuSeparator {}
-        MenuItem {
+        ThemedMenuSeparator { theme: treeContextMenu.theme }
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
             text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
             enabled: treeContextMenu.targetNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
-        MenuItem { text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        MenuItem { text: qsTr("Hide others"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
-        MenuItem { text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
-        MenuItem { text: qsTr("Restore visibility"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide others"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Restore visibility"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
     }
 
     Loader {

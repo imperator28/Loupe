@@ -11,10 +11,10 @@
 
 int main(int argc, char* argv[])
 {
-    QGuiApplication application(argc, argv);
     // The native macOS control style does not reliably honor the dynamic QML
     // palette. Basic keeps every control on the semantic theme roles below.
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+    QGuiApplication application(argc, argv);
     application.setOrganizationName(QStringLiteral("imperator28"));
     application.setApplicationName(QStringLiteral("Loupe"));
     QPalette palette;

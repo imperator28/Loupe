@@ -24,6 +24,8 @@ private slots:
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void sectionCanUseASelectedFacePlane();
+    void sectionOffsetsASelectedFacePlaneAndResetsWhenAxisChanges();
+    void sectionInteractionCanCommitOrCancelPreviewPosition();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
     void captureWritesAndVerifiesPngAtomically();
@@ -55,14 +57,21 @@ void InspectionToolsTest::componentMeasurementsUseNormalizedGeometryMetrics()
     controller.setSelectedTopology(20.0, 5.0, 2);
 
     controller.setMode(loupe::app::tools::MeasurementMode::SurfaceArea);
+    QVERIFY(controller.resultLabel().isEmpty());
+    QVERIFY(controller.recordTopologyPick(QStringLiteral("face"), 1, {}, {0.0F, 0.0F, 1.0F}, 600.0, 0.0,
+                                          QStringLiteral("Housing")));
     QCOMPARE(controller.resultLabel(), QStringLiteral("600 mm²"));
     controller.setMode(loupe::app::tools::MeasurementMode::Volume);
     QCOMPARE(controller.resultLabel(), QStringLiteral("1000 mm³"));
     controller.setMode(loupe::app::tools::MeasurementMode::Bounds);
     QCOMPARE(controller.resultLabel(), QStringLiteral("10 × 20 × 30 mm"));
     controller.setMode(loupe::app::tools::MeasurementMode::EdgeLength);
-    QCOMPARE(controller.resultLabel(), QStringLiteral("Longest edge: 20 mm"));
+    QVERIFY(controller.recordTopologyPick(QStringLiteral("edge"), 2, {}, {}, 20.0, 0.0,
+                                          QStringLiteral("Housing")));
+    QCOMPARE(controller.resultLabel(), QStringLiteral("Edge length: 20 mm"));
     controller.setMode(loupe::app::tools::MeasurementMode::RadiusDiameter);
+    QVERIFY(controller.recordTopologyPick(QStringLiteral("edge"), 3, {}, {}, 31.4, 5.0,
+                                          QStringLiteral("Housing")));
     QCOMPARE(controller.resultLabel(), QStringLiteral("Radius: 5 mm · Diameter: 10 mm"));
 
     controller.setEffectiveUnit(QStringLiteral("in"));
@@ -147,6 +156,42 @@ void InspectionToolsTest::sectionCanUseASelectedFacePlane()
 
     QVERIFY(section.usingSelectedPlane());
     QCOMPARE(section.planeOffset(), 12.5);
+    QCOMPARE(section.effectiveNormal(), QVector3D(0.0F, 1.0F, 0.0F));
+    QCOMPARE(section.effectiveOffset(), 12.5);
+}
+
+void InspectionToolsTest::sectionOffsetsASelectedFacePlaneAndResetsWhenAxisChanges()
+{
+    loupe::app::tools::SectionController section;
+    section.setCandidatePlane({0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 8.0F});
+    section.useSelectedPlane();
+    section.setPosition(2.5);
+
+    QCOMPARE(section.effectiveOffset(), 10.5);
+
+    section.setAxis(loupe::app::tools::SectionAxis::X);
+    QCOMPARE(section.position(), 0.0);
+    QCOMPARE(section.effectiveNormal(), QVector3D(1.0F, 0.0F, 0.0F));
+    QCOMPARE(section.effectiveOffset(), 0.0);
+}
+
+void InspectionToolsTest::sectionInteractionCanCommitOrCancelPreviewPosition()
+{
+    loupe::app::tools::SectionController section;
+    section.setPosition(4.0);
+    section.beginInteraction();
+    QVERIFY(section.interacting());
+    section.previewPosition(9.0);
+    QCOMPARE(section.position(), 9.0);
+    section.cancelInteraction();
+    QVERIFY(!section.interacting());
+    QCOMPARE(section.position(), 4.0);
+
+    section.beginInteraction();
+    section.previewPosition(7.5);
+    section.commitInteraction();
+    QVERIFY(!section.interacting());
+    QCOMPARE(section.position(), 7.5);
 }
 
 void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()

@@ -96,9 +96,10 @@ Rectangle {
         }
         RowLayout {
             Layout.fillWidth: true
-            Label { text: qsTr("Position"); Layout.fillWidth: true }
-            SpinBox {
+            Label { text: qsTr("Position"); Layout.fillWidth: true; color: root.foreground }
+            ThemedSpinBox {
                 id: position
+                theme: root.theme
                 from: -100000
                 to: 100000
                 value: root.taskController ? Math.round(root.taskController.position) : 0
@@ -106,14 +107,16 @@ Rectangle {
                 onValueModified: root.taskController.position = value
             }
         }
-        Switch { text: qsTr("Flip section"); checked: root.taskController && root.taskController.flipped; onToggled: root.taskController.flipped = checked }
-        Switch {
+        ThemedSwitch { theme: root.theme; text: qsTr("Flip section"); checked: root.taskController && root.taskController.flipped; onToggled: root.taskController.flipped = checked }
+        ThemedSwitch {
+            theme: root.theme
             text: qsTr("Cap cut faces")
             checked: root.taskController && root.taskController.capEnabled
             onToggled: if (root.taskController) root.taskController.capEnabled = checked
         }
-        Switch {
+        ThemedSwitch {
             id: sliceOnlySwitch
+            theme: root.theme
             text: qsTr("2D slice only")
             checked: root.sliceOnlyValue
             onToggled: if (root.taskController) {

@@ -56,8 +56,9 @@ Rectangle {
         }
 
         Label { visible: controller && controller.activeNodeId !== ""; text: qsTr("Assignment scope"); color: root.foreground }
-        ComboBox {
+        ThemedComboBox {
             id: assignmentScope
+            theme: root.theme
             visible: controller && controller.activeNodeId !== ""
             Layout.fillWidth: true
             model: [{ text: qsTr("This occurrence"), value: "occurrence" }, { text: qsTr("All instances"), value: "definition" }]
@@ -66,8 +67,9 @@ Rectangle {
         }
 
         Label { visible: controller && controller.activeNodeId !== ""; text: qsTr("Material"); color: root.foreground }
-        ComboBox {
+        ThemedComboBox {
             id: materialSelector
+            theme: root.theme
             visible: controller && controller.activeNodeId !== ""
             Layout.fillWidth: true
             textRole: "text"
@@ -152,6 +154,13 @@ Rectangle {
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Ok | Dialog.Cancel
+        palette.window: root.theme.surfaceRaised
+        palette.windowText: root.foreground
+        palette.base: root.theme.surface
+        palette.text: root.foreground
+        palette.button: root.theme.control
+        palette.buttonText: root.foreground
+        background: Rectangle { color: root.theme.surfaceRaised; border.color: root.theme.border; radius: 4 }
         property color materialColor: "#67d5c0"
         onAccepted: {
             if (!controller) return
@@ -161,12 +170,13 @@ Rectangle {
         contentItem: ColumnLayout {
             width: 280
             spacing: 10
-            Label { text: qsTr("Name") }
-            TextField { id: materialName; Layout.fillWidth: true; placeholderText: qsTr("Material name") }
-            Label { text: qsTr("Density (g/cm³)") }
-            TextField { id: materialDensity; Layout.fillWidth: true; inputMethodHints: Qt.ImhFormattedNumbersOnly; text: "1.0" }
-            Label { text: qsTr("Color") }
-            Button {
+            Label { text: qsTr("Name"); color: root.foreground }
+            ThemedTextField { id: materialName; theme: root.theme; Layout.fillWidth: true; placeholderText: qsTr("Material name") }
+            Label { text: qsTr("Density (g/cm³)"); color: root.foreground }
+            ThemedTextField { id: materialDensity; theme: root.theme; Layout.fillWidth: true; inputMethodHints: Qt.ImhFormattedNumbersOnly; text: "1.0" }
+            Label { text: qsTr("Color"); color: root.foreground }
+            ThemedButton {
+                theme: root.theme
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 32
                 text: ""
@@ -189,6 +199,13 @@ Rectangle {
         modal: true
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Close
+        palette.window: root.theme.surfaceRaised
+        palette.windowText: root.foreground
+        palette.base: root.theme.surface
+        palette.text: root.foreground
+        palette.button: root.theme.control
+        palette.buttonText: root.foreground
+        background: Rectangle { color: root.theme.surfaceRaised; border.color: root.theme.border; radius: 4 }
         property color materialColor: "#67d5c0"
         property var customMaterials: {
             if (!controller) return []
@@ -213,9 +230,10 @@ Rectangle {
         contentItem: ColumnLayout {
             width: 300
             spacing: 10
-            Label { text: qsTr("Custom material") }
-            ComboBox {
+            Label { text: qsTr("Custom material"); color: root.foreground }
+            ThemedComboBox {
                 id: materialPicker
+                theme: root.theme
                 Layout.fillWidth: true
                 model: materialManager.customMaterials
                 textRole: "text"
@@ -229,12 +247,13 @@ Rectangle {
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
-            Label { text: qsTr("Name") }
-            TextField { id: managerName; Layout.fillWidth: true; enabled: materialManager.customMaterials.length > 0 }
-            Label { text: qsTr("Density (g/cm³)") }
-            TextField { id: managerDensity; Layout.fillWidth: true; enabled: materialManager.customMaterials.length > 0; inputMethodHints: Qt.ImhFormattedNumbersOnly }
-            Label { text: qsTr("Color") }
-            Button {
+            Label { text: qsTr("Name"); color: root.foreground }
+            ThemedTextField { id: managerName; theme: root.theme; Layout.fillWidth: true; enabled: materialManager.customMaterials.length > 0 }
+            Label { text: qsTr("Density (g/cm³)"); color: root.foreground }
+            ThemedTextField { id: managerDensity; theme: root.theme; Layout.fillWidth: true; enabled: materialManager.customMaterials.length > 0; inputMethodHints: Qt.ImhFormattedNumbersOnly }
+            Label { text: qsTr("Color"); color: root.foreground }
+            ThemedButton {
+                theme: root.theme
                 enabled: materialManager.customMaterials.length > 0
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 32
@@ -244,7 +263,8 @@ Rectangle {
             }
             RowLayout {
                 Layout.fillWidth: true
-                Button {
+                ThemedButton {
+                    theme: root.theme
                     text: qsTr("Save changes")
                     enabled: materialManager.customMaterials.length > 0
                     onClicked: {
@@ -254,7 +274,8 @@ Rectangle {
                     }
                 }
                 Item { Layout.fillWidth: true }
-                Button {
+                ThemedButton {
+                    theme: root.theme
                     text: qsTr("Delete")
                     enabled: materialManager.customMaterials.length > 0
                     onClicked: deleteMaterialDialog.open()
@@ -277,10 +298,18 @@ Rectangle {
         width: 340
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Yes | Dialog.No
+        palette.window: root.theme.surfaceRaised
+        palette.windowText: root.foreground
+        palette.base: root.theme.surface
+        palette.text: root.foreground
+        palette.button: root.theme.control
+        palette.buttonText: root.foreground
+        background: Rectangle { color: root.theme.surfaceRaised; border.color: root.theme.border; radius: 4 }
         contentItem: Label {
             width: deleteMaterialDialog.availableWidth
             text: qsTr("Components using this material will return to their next available appearance.")
             wrapMode: Text.WordWrap
+            color: root.foreground
         }
         onAccepted: {
             if (!controller || materialPicker.currentIndex < 0) return

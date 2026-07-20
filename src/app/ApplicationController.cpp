@@ -12,6 +12,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -19,6 +21,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 
@@ -26,7 +29,7 @@ namespace {
 
 const auto kImporterVersion = QStringLiteral("step-importer-4");
 const auto kMeshProfile = QStringLiteral("progressive-1");
-const auto kGeometryCacheProfile = QStringLiteral("progressive-1-geometry");
+const auto kGeometryCacheProfile = QStringLiteral("progressive-2-topology-geometry");
 constexpr auto kGeometryCacheMagic = "LGC1";
 constexpr auto kWorkerConnectionAttempts = 4'800;
 
@@ -99,6 +102,11 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     });
     connect(&workerProcess_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
             [this](const int, const QProcess::ExitStatus) {
+                if (!stoppingWorker_ && activeExportRequestId_ != 0) {
+                    activeExportRequestId_ = 0;
+                    exportWorkspaceController_.handleExportFailed(tr("The export worker exited unexpectedly"));
+                    return;
+                }
                 if (stoppingWorker_ || documentState_ != DocumentState::Opening || activeRequestId_ != 0) return;
                 setErrorMessage(tr("The STEP importer exited before it became ready."));
                 documentState_ = DocumentState::WorkerFailed;
@@ -113,6 +121,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         }
         applySnapshotToTree(snapshot);
         snapshotJson_ = QString::fromUtf8(snapshot);
+        exportWorkspaceController_.replaceSnapshot(snapshotJson_);
         if (cacheStore_ && pendingSource_) {
             const auto document = QJsonDocument::fromJson(snapshot).object();
             const cache::UnitDecision unit{document.value(QStringLiteral("effectiveUnit")).toString(), document.value(QStringLiteral("sourceToMillimeters")).toDouble(1.0)};
@@ -125,6 +134,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     });
     connect(&workerClient_, &worker::WorkerClient::meshReady, this, [this](quint64 requestId, const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson) {
         if (requestId != activeRequestId_) return;
+        if (cacheHit_ && cachedGeometryLoaded_) return;
         appendCachedMesh(nodeId, segmentKey, sourceColor, meshJson);
         if (!previewGeometryReceived_) {
             previewGeometryReceived_ = true;
@@ -155,15 +165,24 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     });
     connect(&workerClient_, &worker::WorkerClient::edgeReady, this, [this](quint64 requestId, const QString& nodeId, const QByteArray& edgeJson) {
         if (requestId != activeRequestId_) return;
+        if (cacheHit_ && cachedGeometryLoaded_) return;
         appendCachedEdges(nodeId, edgeJson);
         emit edgeReady(nodeId, edgeJson);
     });
     connect(&workerClient_, &worker::WorkerClient::progress, this, [this](quint64 requestId, const QString& stage, const double fraction) {
         if (requestId != activeRequestId_) return;
         setImportProgress(stage, fraction);
-        if (fraction >= 1.0) saveGeometryCache();
+        if (fraction >= 1.0) {
+            exportWorkspaceController_.setDocumentReady(true);
+            saveGeometryCache();
+        }
     });
     connect(&workerClient_, &worker::WorkerClient::requestCanceled, this, [this](quint64 requestId) {
+        if (requestId == activeExportRequestId_) {
+            activeExportRequestId_ = 0;
+            exportWorkspaceController_.handleExportCanceled();
+            return;
+        }
         if (requestId != activeRequestId_) return;
         activeRequestId_ = 0;
         importInProgress_ = false;
@@ -177,11 +196,53 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         preservePreviewOnCancel_ = false;
     });
     connect(&workerClient_, &worker::WorkerClient::requestFailed, this, [this](quint64 requestId, const QString& code, const QString& message, bool) {
+        if (requestId == activeExportRequestId_) {
+            activeExportRequestId_ = 0;
+            exportWorkspaceController_.handleExportFailed(message.isEmpty() ? code : message);
+            return;
+        }
         if (requestId != activeRequestId_) return;
         const auto detail = message.isEmpty() ? code : message;
         setErrorMessage(tr("The STEP importer could not open this file: %1").arg(detail));
         documentState_ = DocumentState::WorkerFailed;
         emit documentStateChanged();
+    });
+    connect(&exportWorkspaceController_, &exporting::ExportWorkspaceController::executeRequested,
+            this, [this](const QByteArray& planJson, const QString& fingerprint) {
+        activeExportRequestId_ = workerClient_.executeExportPlan(planJson, fingerprint);
+        exportWorkspaceController_.setExportRequestId(activeExportRequestId_);
+    });
+    connect(&exportWorkspaceController_, &exporting::ExportWorkspaceController::cancelRequested,
+            this, [this](const quint64 requestId) { workerClient_.cancel(requestId); });
+    connect(&workerClient_, &worker::WorkerClient::exportProgress, this,
+            [this](const quint64 requestId, const int rowIndex, const int rowCount,
+                   const QString& stage, const double fraction) {
+        if (requestId == activeExportRequestId_) {
+            exportWorkspaceController_.handleExportProgress(rowIndex, rowCount, stage, fraction);
+        }
+    });
+    connect(&workerClient_, &worker::WorkerClient::exportRowResult, this,
+            [this](const quint64 requestId, const int rowIndex, const QString& nodeId,
+                   const QString& path, const bool passed, const QString& message) {
+        if (requestId == activeExportRequestId_) {
+            exportWorkspaceController_.handleExportRowResult(rowIndex, nodeId, path, passed, message);
+        }
+    });
+    connect(&workerClient_, &worker::WorkerClient::exportCompleted, this,
+            [this](const quint64 requestId, const int succeededCount, const int failedCount) {
+        if (requestId != activeExportRequestId_) return;
+        activeExportRequestId_ = 0;
+        exportWorkspaceController_.handleExportCompleted(succeededCount, failedCount);
+    });
+    connect(&workerClient_, &worker::WorkerClient::protocolError, this, [this](const QString& message) {
+        if (activeExportRequestId_ == 0) return;
+        activeExportRequestId_ = 0;
+        exportWorkspaceController_.handleExportFailed(message);
+    });
+    connect(&workerClient_, &worker::WorkerClient::connectionLost, this, [this] {
+        if (activeExportRequestId_ == 0) return;
+        activeExportRequestId_ = 0;
+        exportWorkspaceController_.handleExportFailed(tr("Connection to the export worker was lost"));
     });
     connect(&visibilityModel_, &models::VisibilityModel::presentationChanged, this, [this] {
         emit visibilityChanged();
@@ -202,6 +263,9 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         importElapsedSeconds_ = importElapsed_.elapsed() / 1'000;
         emit importProgressChanged();
     });
+    geometryReplayTimer_.setSingleShot(true);
+    geometryReplayTimer_.setInterval(0);
+    connect(&geometryReplayTimer_, &QTimer::timeout, this, &ApplicationController::replayGeometryChunk);
 }
 
 ApplicationController::~ApplicationController()
@@ -281,7 +345,13 @@ void ApplicationController::openFile(const QUrl& file)
         }
     }
     snapshotJson_.clear();
+    exportWorkspaceController_.reset();
     geometryCacheArchive_.clear();
+    geometryReplayTimer_.stop();
+    geometryReplayQueue_.clear();
+    geometryReplayIndex_ = 0;
+    ++geometryReplayGeneration_;
+    cachedGeometryLoaded_ = false;
     geometryByNode_.clear();
     parentByNode_.clear();
     definitionByNode_.clear();
@@ -295,6 +365,7 @@ void ApplicationController::openFile(const QUrl& file)
     effectiveUnit_ = QStringLiteral("mm");
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
+    activeExportRequestId_ = 0;
     cacheHit_ = false;
     serverName_ = QStringLiteral("/tmp/loupe-%1-%2")
                       .arg(QCoreApplication::applicationPid())
@@ -310,6 +381,7 @@ void ApplicationController::openFile(const QUrl& file)
         if (const auto cached = cacheStore_->readSnapshotForSource(*pendingSource_, kImporterVersion, kMeshProfile)) {
             applySnapshotToTree(*cached);
             snapshotJson_ = QString::fromUtf8(*cached);
+            exportWorkspaceController_.replaceSnapshot(snapshotJson_);
             documentState_ = DocumentState::TreeReady;
             cacheHit_ = true;
             emit snapshotChanged();
@@ -318,13 +390,18 @@ void ApplicationController::openFile(const QUrl& file)
             emit cacheHitChanged();
         }
         if (const auto cachedGeometry = cacheStore_->readGeometryForSource(*pendingSource_, kImporterVersion, kGeometryCacheProfile)) {
-            QTimer::singleShot(0, this, [this, cachedGeometry] { replayCachedGeometry(*cachedGeometry); });
+            geometryCacheArchive_ = *cachedGeometry;
+            cachedGeometryLoaded_ = true;
+            replayCachedGeometry(geometryCacheArchive_);
         }
     }
     emit documentStateChanged();
     auto launchWorker = workerExecutable_;
 #ifdef Q_OS_MACOS
-    if (stagedWorkerPath_.isEmpty()) {
+    const auto applicationDirectory = QDir(QCoreApplication::applicationDirPath()).canonicalPath();
+    const auto workerDirectory = QFileInfo(workerExecutable_).absoluteDir().canonicalPath();
+    const auto workerIsBundled = !applicationDirectory.isEmpty() && workerDirectory == applicationDirectory;
+    if (workerIsBundled && stagedWorkerPath_.isEmpty()) {
         stagedWorkerPath_ = QStringLiteral("/tmp/loupe-worker-%1-%2")
                                 .arg(QCoreApplication::applicationPid())
                                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
@@ -340,7 +417,7 @@ void ApplicationController::openFile(const QUrl& file)
             return;
         }
     }
-    launchWorker = stagedWorkerPath_;
+    if (workerIsBundled) launchWorker = stagedWorkerPath_;
 #endif
     workerProcess_.start(launchWorker, {QStringLiteral("--server-name"), serverName_});
 }
@@ -473,6 +550,11 @@ void ApplicationController::appendCachedMesh(const QString& nodeId, const QStrin
     stream << quint8{1} << nodeId << segmentKey << sourceColor << payload;
 }
 
+void ApplicationController::replayGeometry()
+{
+    replayCachedGeometry(geometryCacheArchive_);
+}
+
 void ApplicationController::appendCachedEdges(const QString& nodeId, const QByteArray& payload)
 {
     if (geometryCacheArchive_.isEmpty()) geometryCacheArchive_.append(kGeometryCacheMagic);
@@ -483,12 +565,36 @@ void ApplicationController::appendCachedEdges(const QString& nodeId, const QByte
 
 void ApplicationController::replayCachedGeometry(const QByteArray& archive)
 {
+    geometryReplayTimer_.stop();
+    geometryReplayQueue_.clear();
+    geometryReplayIndex_ = 0;
+    const auto generation = ++geometryReplayGeneration_;
     if (!archive.startsWith(kGeometryCacheMagic) || archive.size() > 512LL * 1024LL * 1024LL) return;
+
+    auto* watcher = new QFutureWatcher<std::optional<QVector<GeometryReplayEntry>>>(this);
+    connect(watcher, &QFutureWatcher<std::optional<QVector<GeometryReplayEntry>>>::finished, this,
+            [this, watcher, generation] {
+        auto entries = watcher->result();
+        watcher->deleteLater();
+        if (generation != geometryReplayGeneration_ || !entries) return;
+        geometryReplayQueue_ = std::move(*entries);
+        geometryReplayIndex_ = 0;
+        if (!geometryReplayQueue_.isEmpty()) geometryReplayTimer_.start();
+    });
+    watcher->setFuture(QtConcurrent::run([archive] { return decodeGeometryArchive(archive); }));
+}
+
+std::optional<QVector<ApplicationController::GeometryReplayEntry>> ApplicationController::decodeGeometryArchive(
+    const QByteArray& archive)
+{
     QBuffer buffer;
     buffer.setData(archive.sliced(4));
-    if (!buffer.open(QIODevice::ReadOnly)) return;
+    if (!buffer.open(QIODevice::ReadOnly)) return std::nullopt;
     QDataStream stream(&buffer);
     stream.setVersion(QDataStream::Qt_6_0);
+    QVector<GeometryReplayEntry> entries;
+    QHash<QString, qsizetype> meshIndexes;
+    QHash<QString, qsizetype> edgeIndexes;
     while (!stream.atEnd()) {
         quint8 kind{};
         QString nodeId;
@@ -497,19 +603,50 @@ void ApplicationController::replayCachedGeometry(const QByteArray& archive)
             QString segmentKey, sourceColor;
             QByteArray payload;
             stream >> segmentKey >> sourceColor >> payload;
-            if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || segmentKey.isEmpty() || payload.isEmpty()) return;
-            previewGeometryReceived_ = true;
-            emit meshReady(nodeId, segmentKey, sourceColor, payload);
+            if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || segmentKey.isEmpty() || payload.isEmpty()) return std::nullopt;
+            GeometryReplayEntry entry{kind, nodeId, segmentKey, sourceColor, payload};
+            if (const auto existing = meshIndexes.constFind(segmentKey); existing != meshIndexes.cend()) {
+                entries[*existing] = std::move(entry);
+            } else {
+                meshIndexes.insert(segmentKey, entries.size());
+                entries.append(std::move(entry));
+            }
         } else if (kind == 2) {
             QByteArray payload;
             stream >> payload;
-            if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || payload.isEmpty()) return;
-            emit edgeReady(nodeId, payload);
+            if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || payload.isEmpty()) return std::nullopt;
+            GeometryReplayEntry entry{kind, nodeId, {}, {}, payload};
+            if (const auto existing = edgeIndexes.constFind(nodeId); existing != edgeIndexes.cend()) {
+                entries[*existing] = std::move(entry);
+            } else {
+                edgeIndexes.insert(nodeId, entries.size());
+                entries.append(std::move(entry));
+            }
         } else {
-            return;
+            return std::nullopt;
         }
     }
-    if (previewGeometryReceived_) emit importProgressChanged();
+    return entries;
+}
+
+void ApplicationController::replayGeometryChunk()
+{
+    if (geometryReplayIndex_ >= geometryReplayQueue_.size()) {
+        geometryReplayQueue_.clear();
+        geometryReplayIndex_ = 0;
+        if (previewGeometryReceived_) emit importProgressChanged();
+        return;
+    }
+
+    auto entry = std::move(geometryReplayQueue_[geometryReplayIndex_++]);
+    if (entry.kind == 1) {
+        previewGeometryReceived_ = true;
+        if (!entry.sourceColor.isEmpty()) importedColorByNode_.insert(entry.nodeId, entry.sourceColor);
+        emit meshReady(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload);
+    } else {
+        emit edgeReady(entry.nodeId, entry.payload);
+    }
+    geometryReplayTimer_.start();
 }
 
 void ApplicationController::saveGeometryCache()
@@ -858,14 +995,35 @@ bool ApplicationController::setUnitOverride(const QString& unit)
     return true;
 }
 
-void ApplicationController::acceptViewPick(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ)
+void ApplicationController::acceptViewSelection(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ)
 {
     if (nodeId.isEmpty()) return;
     setActiveNodeId(nodeId);
     sectionController_.setCandidatePlane({static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)}, {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
+}
+
+void ApplicationController::acceptViewPick(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ)
+{
+    if (nodeId.isEmpty()) return;
+    sectionController_.setCandidatePlane({static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)},
+                                         {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
     measurementController_.recordPick({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
                                       {static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)},
                                       displayNameByNode_.value(nodeId, tr("Component")), tr("Surface point"));
+}
+
+bool ApplicationController::acceptTopologyPick(const QString& nodeId, const QString& entityKind,
+                                               const quint32 topologyId, const double x, const double y,
+                                               const double z, const double normalX, const double normalY,
+                                               const double normalZ, const double measureMm, const double radiusMm)
+{
+    if (nodeId.isEmpty()) return false;
+    sectionController_.setCandidatePlane({static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)},
+                                         {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
+    return measurementController_.recordTopologyPick(entityKind, topologyId,
+        {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
+        {static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)},
+        measureMm, radiusMm, displayNameByNode_.value(nodeId, tr("Component")));
 }
 
 } // namespace loupe::app

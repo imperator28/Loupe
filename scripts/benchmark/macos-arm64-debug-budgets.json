@@ -1,0 +1,16 @@
+{
+  "cases": {
+    "corpus-a.stp": {
+      "maxFirstGeometryMs": 8000,
+      "maxFinalReadyMs": 12000
+    },
+    "corpus-b.stp": {
+      "maxFirstGeometryMs": 10000,
+      "maxFinalReadyMs": 35000
+    },
+    "corpus-c.stp": {
+      "maxFirstGeometryMs": 25000,
+      "maxFinalReadyMs": 125000
+    }
+  }
+}

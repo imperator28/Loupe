@@ -14,6 +14,7 @@ struct Version { std::uint16_t major{2}; std::uint16_t minor{0}; };
 struct UnitOverride { QString unit; double customFactor{1.0}; QString reason; };
 struct OpenFile { std::uint64_t requestId{}; QString path; std::optional<UnitOverride> unitOverride; };
 struct Cancel { std::uint64_t requestId{}; };
+struct ExecuteExportPlan { std::uint64_t requestId{}; QByteArray planJson; QString fingerprint; };
 struct MeasureAtPoint { std::uint64_t requestId{}; QString nodeId; double x{}; double y{}; double z{}; QString mode; };
 struct SetVisible { QString nodeId; bool visible{}; };
 struct Ready { Version version; };
@@ -48,11 +49,28 @@ struct ImportMetrics {
     qint64 refinedTriangleCount{};
     int bodyCount{};
 };
+struct ExportProgress {
+    std::uint64_t requestId{};
+    int rowIndex{};
+    int rowCount{};
+    QString stage;
+    double fraction{};
+};
+struct ExportRowResult {
+    std::uint64_t requestId{};
+    int rowIndex{};
+    QString nodeId;
+    QString path;
+    bool passed{};
+    QString message;
+};
+struct ExportCompleted { std::uint64_t requestId{}; int succeededCount{}; int failedCount{}; };
 struct Failed { std::uint64_t requestId{}; QString code; QString message; bool recoverable{}; };
 struct Canceled { std::uint64_t requestId{}; };
 
-using Command = std::variant<OpenFile, Cancel, MeasureAtPoint, SetVisible>;
-using Event = std::variant<Ready, Progress, SnapshotReady, ComponentMetadata, MeshReady, EdgeReady, ImportMetrics, Failed, Canceled>;
+using Command = std::variant<OpenFile, Cancel, ExecuteExportPlan, MeasureAtPoint, SetVisible>;
+using Event = std::variant<Ready, Progress, SnapshotReady, ComponentMetadata, MeshReady, EdgeReady, ImportMetrics,
+                           ExportProgress, ExportRowResult, ExportCompleted, Failed, Canceled>;
 
 class ProtocolError final : public std::runtime_error {
 public:

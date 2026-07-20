@@ -19,6 +19,7 @@ void SectionController::setAxis(const SectionAxis axis)
     if (axis_ == axis && !usingSelectedPlane_) return;
     axis_ = axis;
     usingSelectedPlane_ = false;
+    position_ = 0.0;
     emit changed();
 }
 
@@ -91,7 +92,57 @@ void SectionController::useSelectedPlane()
 {
     if (!hasSelectedPlane_ || usingSelectedPlane_) return;
     usingSelectedPlane_ = true;
+    position_ = 0.0;
     emit changed();
+}
+
+void SectionController::beginInteraction()
+{
+    if (interacting_) return;
+    interactionStartPosition_ = position_;
+    interacting_ = true;
+    emit interactionChanged();
+}
+
+void SectionController::previewPosition(const double position)
+{
+    if (!interacting_) beginInteraction();
+    setPosition(position);
+}
+
+void SectionController::commitInteraction()
+{
+    if (!interacting_) return;
+    interacting_ = false;
+    emit interactionChanged();
+    // Force one exact geometry rebuild even though the final offset is unchanged.
+    emit changed();
+}
+
+void SectionController::cancelInteraction()
+{
+    if (!interacting_) return;
+    interacting_ = false;
+    position_ = interactionStartPosition_;
+    emit interactionChanged();
+    emit changed();
+}
+
+QVector3D SectionController::effectiveNormal() const noexcept
+{
+    if (usingSelectedPlane_) return planeNormal_;
+
+    switch (axis_) {
+    case SectionAxis::X: return {1.0F, 0.0F, 0.0F};
+    case SectionAxis::Y: return {0.0F, 1.0F, 0.0F};
+    case SectionAxis::Z: return {0.0F, 0.0F, 1.0F};
+    }
+    return {0.0F, 0.0F, 1.0F};
+}
+
+double SectionController::effectiveOffset() const noexcept
+{
+    return (usingSelectedPlane_ ? planeOffset_ : 0.0) + position_;
 }
 
 } // namespace loupe::app::tools

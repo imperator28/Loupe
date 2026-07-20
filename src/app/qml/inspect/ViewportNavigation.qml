@@ -5,97 +5,202 @@ QtObject {
     id: root
 
     property var cameraRig
-    property var camera
-    property vector3d target: Qt.vector3d(0, 0, 0)
-    property quaternion orientation: Quaternion.fromEulerAngles(-22, 32, 0)
+    property var perspectiveCamera
+    property var orthographicCamera
+    property real viewportWidth: 1
+    property real viewportHeight: 1
+    property string projectionMode: "orthographic"
+    property vector3d activePivot: Qt.vector3d(0, 0, 0)
+    property vector3d pendingPivot: Qt.vector3d(0, 0, 0)
+    property bool hasPendingPivot: false
+    property quaternion orientation: Quaternion.fromEulerAngles(-35.264, 45, 0)
     property real distance: 120
-    readonly property real minimumDistance: 5
+    property vector3d cameraPosition: Qt.vector3d(0, 0, 120)
+    property real orthographicMagnification: 5
+    property real perspectiveFieldOfView: 45
+    property int revision: 0
+    readonly property real minimumDistance: 0.001
     readonly property real maximumDistance: 1000000
+    readonly property real minimumMagnification: 0.00001
+    readonly property real maximumMagnification: 100000
+
+    function vectorLength(value) {
+        return Math.sqrt(value.x * value.x + value.y * value.y + value.z * value.z)
+    }
+
+    function normalized(value, fallback) {
+        const length = vectorLength(value)
+        return length > 0.0000001
+            ? Qt.vector3d(value.x / length, value.y / length, value.z / length)
+            : fallback
+    }
+
+    function add(left, right) {
+        return Qt.vector3d(left.x + right.x, left.y + right.y, left.z + right.z)
+    }
+
+    function subtract(left, right) {
+        return Qt.vector3d(left.x - right.x, left.y - right.y, left.z - right.z)
+    }
+
+    function scaled(value, amount) {
+        return Qt.vector3d(value.x * amount, value.y * amount, value.z * amount)
+    }
+
+    function cameraOffset() {
+        return subtract(cameraPosition, activePivot)
+    }
+
+    function perspectivePixelsPerUnit(distanceValue) {
+        const height = Math.max(1, viewportHeight)
+        const halfAngle = perspectiveFieldOfView * Math.PI / 360.0
+        return height / Math.max(0.000001, 2.0 * distanceValue * Math.tan(halfAngle))
+    }
+
+    function perspectiveDistanceForMagnification(magnification) {
+        const height = Math.max(1, viewportHeight)
+        const halfAngle = perspectiveFieldOfView * Math.PI / 360.0
+        return height / Math.max(0.000001, 2.0 * magnification * Math.tan(halfAngle))
+    }
 
     function apply() {
-        if (!cameraRig || !camera) return
-        cameraRig.position = target
+        if (!cameraRig || !perspectiveCamera || !orthographicCamera) return
+        cameraRig.position = cameraPosition
         cameraRig.rotation = orientation
-        camera.position = Qt.vector3d(0, 0, distance)
+        perspectiveCamera.position = Qt.vector3d(0, 0, 0)
+        perspectiveCamera.fieldOfView = perspectiveFieldOfView
+        orthographicCamera.position = Qt.vector3d(0, 0, 0)
+        orthographicCamera.horizontalMagnification = orthographicMagnification
+        orthographicCamera.verticalMagnification = orthographicMagnification
+        revision += 1
     }
 
     function reset() {
-        target = Qt.vector3d(0, 0, 0)
-        orientation = Quaternion.fromEulerAngles(-22, 32, 0)
+        orientation = Quaternion.fromEulerAngles(-35.264, 45, 0)
+        activePivot = Qt.vector3d(0, 0, 0)
+        pendingPivot = activePivot
+        hasPendingPivot = false
         distance = 120
+        cameraPosition = add(activePivot, orientation.times(Qt.vector3d(0, 0, distance)))
+        orthographicMagnification = 5
+        projectionMode = "orthographic"
         apply()
     }
 
     function fitBounds(minimum, maximum) {
-        target = Qt.vector3d((minimum.x + maximum.x) * 0.5,
-                             (minimum.y + maximum.y) * 0.5,
-                             (minimum.z + maximum.z) * 0.5)
+        activePivot = Qt.vector3d((minimum.x + maximum.x) * 0.5,
+                                  (minimum.y + maximum.y) * 0.5,
+                                  (minimum.z + maximum.z) * 0.5)
         const extent = Math.max(maximum.x - minimum.x, maximum.y - minimum.y, maximum.z - minimum.z)
-        distance = Math.max(minimumDistance, Math.min(maximumDistance, extent * 1.8))
+        const safeExtent = Math.max(0.001, extent)
+        distance = Math.max(minimumDistance, Math.min(maximumDistance, safeExtent * 1.8))
+        cameraPosition = add(activePivot, orientation.times(Qt.vector3d(0, 0, distance)))
+        const availablePixels = Math.max(1, Math.min(viewportWidth, viewportHeight))
+        orthographicMagnification = Math.max(minimumMagnification,
+                                             Math.min(maximumMagnification, availablePixels / (safeExtent * 1.35)))
+        hasPendingPivot = false
         apply()
     }
 
-    function setOrbitPivot(pivot) {
-        if (!cameraRig || !camera || !pivot) return
+    function setPendingOrbitPivot(pivot) {
+        if (!pivot || !isFinite(pivot.x) || !isFinite(pivot.y) || !isFinite(pivot.z)) {
+            hasPendingPivot = false
+            return
+        }
+        pendingPivot = Qt.vector3d(pivot.x, pivot.y, pivot.z)
+        hasPendingPivot = true
+    }
 
-        // Keep the camera in place while changing the point it orbits. This
-        // makes a drag over a distant component feel anchored to that part.
-        const currentOffset = orientation.times(Qt.vector3d(0, 0, distance))
-        const cameraPosition = Qt.vector3d(target.x + currentOffset.x,
-                                           target.y + currentOffset.y,
-                                           target.z + currentOffset.z)
-        const pivotOffset = Qt.vector3d(cameraPosition.x - pivot.x,
-                                        cameraPosition.y - pivot.y,
-                                        cameraPosition.z - pivot.z)
-        const pivotDistance = Math.sqrt(pivotOffset.x * pivotOffset.x
-                                        + pivotOffset.y * pivotOffset.y
-                                        + pivotOffset.z * pivotOffset.z)
-        if (!isFinite(pivotDistance) || pivotDistance < minimumDistance) return
+    function clearPendingOrbitPivot() {
+        hasPendingPivot = false
+    }
 
-        const currentUp = orientation.times(Qt.vector3d(0, 1, 0))
-        target = Qt.vector3d(pivot.x, pivot.y, pivot.z)
-        distance = Math.min(maximumDistance, pivotDistance)
-        orientation = Quaternion.lookAt(cameraPosition, target,
-                                         Qt.vector3d(0, 0, -1), currentUp)
-        apply()
+    function activatePendingOrbitPivot() {
+        if (!hasPendingPivot) return false
+        activePivot = pendingPivot
+        hasPendingPivot = false
+        distance = Math.max(minimumDistance, vectorLength(cameraOffset()))
+        return true
     }
 
     function orbit(deltaX, deltaY) {
-        // Creo-style direct manipulation: the model follows the drag direction.
-        const yawRotation = Quaternion.fromAxisAndAngle(Qt.vector3d(0, 1, 0), -deltaX * 0.35)
-        const right = orientation.times(Qt.vector3d(1, 0, 0))
-        const pitchRotation = Quaternion.fromAxisAndAngle(right, -deltaY * 0.35)
-        orientation = pitchRotation.times(yawRotation).times(orientation).normalized()
+        activatePendingOrbitPivot()
+        if (Math.abs(deltaX) < 0.0001 && Math.abs(deltaY) < 0.0001) return
+
+        const up = orientation.times(Qt.vector3d(0, 1, 0))
+        const yaw = Quaternion.fromAxisAndAngle(up, -deltaX * 0.35)
+        const yawedOrientation = yaw.times(orientation)
+        const right = yawedOrientation.times(Qt.vector3d(1, 0, 0))
+        const pitch = Quaternion.fromAxisAndAngle(right, -deltaY * 0.35)
+        const rotation = pitch.times(yaw)
+        cameraPosition = add(activePivot, rotation.times(cameraOffset()))
+        orientation = rotation.times(orientation).normalized()
+        distance = Math.max(minimumDistance, vectorLength(cameraOffset()))
         apply()
     }
 
     function pan(deltaX, deltaY) {
         const right = orientation.times(Qt.vector3d(1, 0, 0))
         const up = orientation.times(Qt.vector3d(0, 1, 0))
-        const scale = Math.max(0.001, distance * 0.0015)
-        target = Qt.vector3d(target.x - right.x * deltaX * scale + up.x * deltaY * scale,
-                             target.y - right.y * deltaX * scale + up.y * deltaY * scale,
-                             target.z - right.z * deltaX * scale + up.z * deltaY * scale)
+        const worldPerPixel = projectionMode === "orthographic"
+            ? 1.0 / Math.max(minimumMagnification, orthographicMagnification)
+            : 2.0 * Math.max(minimumDistance, distance)
+                * Math.tan(perspectiveFieldOfView * Math.PI / 360.0) / Math.max(1, viewportHeight)
+        const translation = add(scaled(right, -deltaX * worldPerPixel), scaled(up, deltaY * worldPerPixel))
+        cameraPosition = add(cameraPosition, translation)
+        activePivot = add(activePivot, translation)
+        if (hasPendingPivot) pendingPivot = add(pendingPivot, translation)
         apply()
     }
 
     function alignToNormal(normal) {
-        const magnitude = Math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z)
-        if (magnitude < 0.000001) return
-        const direction = Qt.vector3d(normal.x / magnitude, normal.y / magnitude, normal.z / magnitude)
-        orientation = Quaternion.lookAt(direction, Qt.vector3d(0, 0, 0))
+        const direction = normalized(normal, Qt.vector3d(0, 0, 1))
+        cameraPosition = add(activePivot, scaled(direction, distance))
+        const up = Math.abs(direction.y) > 0.95 ? Qt.vector3d(0, 0, -1) : Qt.vector3d(0, 1, 0)
+        orientation = Quaternion.lookAt(cameraPosition, activePivot, Qt.vector3d(0, 0, -1), up)
+        hasPendingPivot = false
+        apply()
+    }
+
+    function setProjection(mode) {
+        const normalizedMode = mode === "perspective" ? "perspective" : "orthographic"
+        if (normalizedMode === projectionMode) return
+        if (normalizedMode === "orthographic") {
+            orthographicMagnification = Math.max(minimumMagnification,
+                                                 Math.min(maximumMagnification, perspectivePixelsPerUnit(distance)))
+        } else {
+            distance = Math.max(minimumDistance,
+                                Math.min(maximumDistance, perspectiveDistanceForMagnification(orthographicMagnification)))
+            const direction = normalized(cameraOffset(), orientation.times(Qt.vector3d(0, 0, 1)))
+            cameraPosition = add(activePivot, scaled(direction, distance))
+        }
+        projectionMode = normalizedMode
         apply()
     }
 
     function zoom(delta) {
         const factor = Math.pow(0.998, delta)
-        distance = Math.max(minimumDistance, Math.min(maximumDistance, distance * factor))
+        if (projectionMode === "orthographic") {
+            orthographicMagnification = Math.max(minimumMagnification,
+                                                 Math.min(maximumMagnification, orthographicMagnification / factor))
+        } else {
+            const offset = cameraOffset()
+            distance = Math.max(minimumDistance, Math.min(maximumDistance, vectorLength(offset) * factor))
+            cameraPosition = add(activePivot, scaled(normalized(offset, orientation.times(Qt.vector3d(0, 0, 1))), distance))
+        }
         apply()
     }
 
     function zoomByFactor(factor) {
         if (!isFinite(factor) || factor <= 0) return
-        distance = Math.max(minimumDistance, Math.min(maximumDistance, distance / factor))
+        if (projectionMode === "orthographic") {
+            orthographicMagnification = Math.max(minimumMagnification,
+                                                 Math.min(maximumMagnification, orthographicMagnification * factor))
+        } else {
+            const offset = cameraOffset()
+            distance = Math.max(minimumDistance, Math.min(maximumDistance, vectorLength(offset) / factor))
+            cameraPosition = add(activePivot, scaled(normalized(offset, orientation.times(Qt.vector3d(0, 0, 1))), distance))
+        }
         apply()
     }
 }
