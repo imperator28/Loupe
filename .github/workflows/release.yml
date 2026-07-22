@@ -90,9 +90,14 @@ jobs:
         timeout-minutes: 330
         shell: bash
         run: |
+          # Host triplet must match the target so Qt host tools do not build
+          # a second dependency world; clean options bound peak runner disk.
+          # See native-verify.yml for the full rationale.
           cmake --preset "${{ matrix.configure_preset }}" \
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg_triplet }}" \
-            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets"
+            -DVCPKG_HOST_TRIPLET="${{ matrix.vcpkg_triplet }}" \
+            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
+            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build"
 
       - name: Save vcpkg binary cache
         if: always()

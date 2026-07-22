@@ -25,7 +25,12 @@ Three decisions keep that cost out of the day-to-day loop:
    pipeline never links the debug half, which measured ~9.3 GB of a ~9.6 GB
    installed tree. CI passes `-DVCPKG_TARGET_TRIPLET=<t>-release
    -DVCPKG_OVERLAY_TRIPLETS=triplets`; local developer builds keep the
-   default dual-variant triplets.
+   default dual-variant triplets. `VCPKG_HOST_TRIPLET` is pinned to the same
+   release-only triplet — Qt ports pull host tools (moc, rcc, qmlcachegen)
+   through the host triplet, which otherwise silently builds a second,
+   debug+release dependency world. `--clean-buildtrees-after-build
+   --clean-packages-after-build` bounds peak runner disk, which killed the
+   first macOS bootstrap attempt.
 2. **Incremental, always-saved binary caching**: vcpkg archives each built
    port individually. The workflows save the cache with `if: always()` and a
    unique per-run key, so even a run that times out mid-Qt banks its progress

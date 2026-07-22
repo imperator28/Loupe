@@ -106,9 +106,18 @@ jobs:
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             test "$(uname -m)" = arm64
           fi
+          # VCPKG_HOST_TRIPLET must match: Qt ports pull their host tools
+          # (moc, rcc, qmlcachegen) through the *host* triplet, which would
+          # otherwise silently build a second, debug+release dependency world
+          # alongside the release-only target one. The clean options bound
+          # peak runner disk by deleting each port's buildtree once its
+          # binary archive exists — the macOS runner died of disk exhaustion
+          # without them.
           cmake --preset "${{ matrix.configure_preset }}" \
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg_triplet }}" \
-            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets"
+            -DVCPKG_HOST_TRIPLET="${{ matrix.vcpkg_triplet }}" \
+            -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
+            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build"
 
       # Unique key per run plus if: always() means every run — including one
       # whose configure timed out halfway through Qt — saves its progress for
