@@ -33,6 +33,11 @@ jobs:
         with:
           arch: x64
 
+      - name: Install macOS vcpkg prerequisites
+        if: runner.os == 'macOS'
+        shell: bash
+        run: brew install autoconf autoconf-archive automake libtool
+
       - name: Install vcpkg (macOS)
         if: runner.os == 'macOS'
         shell: bash
