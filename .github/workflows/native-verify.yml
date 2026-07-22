@@ -2,7 +2,15 @@ name: Native verification
 
 on:
   push:
+    # Documentation-only pushes must not preempt an in-flight (potentially
+    # hours-long, cold-cache) dependency bootstrap via the concurrency group.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
 
 concurrency:
