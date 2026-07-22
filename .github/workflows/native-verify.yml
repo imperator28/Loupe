@@ -5,11 +5,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: native-verify-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # A cold vcpkg bootstrap builds Qt 6 and OpenCASCADE from source, which
+    # takes hours, not minutes. The previous 45-minute limit killed every run
+    # mid-Configure before the dependency build could ever finish once.
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
@@ -17,9 +24,11 @@ jobs:
           - name: macOS Apple Silicon release
             os: macos-14
             configure_preset: macos-arm64-release
+            vcpkg_cache_path: ~/.cache/vcpkg/archives
           - name: Windows 11 x64 release
             os: windows-2025
             configure_preset: windows-release
+            vcpkg_cache_path: ~\AppData\Local\vcpkg\archives
     env:
       LOUPE_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_COMMIT: db4723bd0a99eab031f1a3dee4336dca43049c87
@@ -65,13 +74,38 @@ jobs:
         run: |
           "VCPKG_ROOT=$env:LOUPE_VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # vcpkg writes one binary archive per built port, so restoring even a
+      # partial cache lets an interrupted dependency build resume where it
+      # stopped instead of starting over.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ matrix.vcpkg_cache_path }}
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-
+            vcpkg-${{ runner.os }}-
+
       - name: Configure
+        # Leave the job enough headroom after a cancelled configure for the
+        # cache-save step below to bank whatever ports finished building.
+        timeout-minutes: 330
         shell: bash
         run: |
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             test "$(uname -m)" = arm64
           fi
           cmake --preset "${{ matrix.configure_preset }}"
+
+      # Unique key per run plus if: always() means every run — including one
+      # whose configure timed out halfway through Qt — saves its progress for
+      # the next attempt to resume from.
+      - name: Save vcpkg binary cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ matrix.vcpkg_cache_path }}
+          key: vcpkg-${{ runner.os }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build
         shell: bash
@@ -80,3 +114,27 @@ jobs:
       - name: Test
         shell: bash
         run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure
+
+      - name: Package release app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ditto -c -k --keepParent \
+            "build/${{ matrix.configure_preset }}/src/app/Loupe.app" \
+            loupe-macos-arm64.zip
+
+      - name: Upload release app (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loupe-macos-arm64
+          path: loupe-macos-arm64.zip
+          if-no-files-found: error
+
+      - name: Upload release app (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loupe-windows-x64
+          path: build/${{ matrix.configure_preset }}/src/app/
+          if-no-files-found: error
