@@ -39,6 +39,42 @@ Three decisions keep that cost out of the day-to-day loop:
 Expected timings: cold dependency bootstrap ~1–2 h per platform (once per
 baseline/manifest change); warm verify or release run ~10–20 min.
 
+## Compiling locally
+
+macOS (Apple Silicon):
+
+```bash
+export VCPKG_ROOT=~/vcpkg
+cmake --preset macos-arm64-release
+cmake --build --preset macos-arm64-release --parallel
+ctest --preset macos-arm64-release
+ditto -c -k --keepParent build/macos-arm64-release/src/app/Loupe.app dist/loupe-macos-arm64.zip
+```
+
+Windows 11 (x64, from a VS developer prompt):
+
+```powershell
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"   # checked out at the workflow's VCPKG_COMMIT
+cmake --preset windows-release
+cmake --build --preset windows-release --parallel
+ctest --preset windows-release
+Compress-Archive build/windows-release/src/app/* dist/loupe-windows-x64.zip
+```
+
+Local builds intentionally use the default dual-variant triplets so debug
+builds stay possible; only CI passes the release-only overlay triplets. If a
+local configure must rebuild Qt ports at a new baseline and fails with
+"Can't determine Xcode version", install full Xcode and run
+`sudo xcode-select -s /Applications/Xcode.app` — Command Line Tools are not
+sufficient for Qt 6.11 port builds. As a stopgap, an already-installed tree
+can be reused:
+
+```bash
+cmake --preset macos-arm64-release \
+  -DVCPKG_MANIFEST_INSTALL=OFF \
+  -DVCPKG_INSTALLED_DIR=$PWD/build/macos-arm64-debug/vcpkg_installed
+```
+
 ## Known gates before public distribution
 
 - **Unsigned binaries**: macOS Gatekeeper and Windows SmartScreen will warn.

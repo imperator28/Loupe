@@ -27,3 +27,6 @@ prototype/playwright-report/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local release packaging output
+dist/
