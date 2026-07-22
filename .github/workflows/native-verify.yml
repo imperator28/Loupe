@@ -21,7 +21,7 @@ jobs:
             os: windows-2025
             configure_preset: windows-release
     env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      LOUPE_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_COMMIT: db4723bd0a99eab031f1a3dee4336dca43049c87
       VCPKG_DISABLE_METRICS: '1'
     steps:
@@ -37,17 +37,28 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout --detach "$VCPKG_COMMIT"
-          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          git clone https://github.com/microsoft/vcpkg.git "$LOUPE_VCPKG_ROOT"
+          git -C "$LOUPE_VCPKG_ROOT" checkout --detach "$VCPKG_COMMIT"
+          "$LOUPE_VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
 
       - name: Install vcpkg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT"
-          git -C "$env:VCPKG_ROOT" checkout --detach "$env:VCPKG_COMMIT"
-          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          git clone https://github.com/microsoft/vcpkg.git "$env:LOUPE_VCPKG_ROOT"
+          git -C "$env:LOUPE_VCPKG_ROOT" checkout --detach "$env:VCPKG_COMMIT"
+          & "$env:LOUPE_VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Set vcpkg root (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "VCPKG_ROOT=$LOUPE_VCPKG_ROOT" >> "$GITHUB_ENV"
+
+      - name: Set vcpkg root (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "VCPKG_ROOT=$env:LOUPE_VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure
         shell: bash
