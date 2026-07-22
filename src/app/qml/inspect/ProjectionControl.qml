@@ -1,40 +1,24 @@
 import QtQuick
 import QtQuick.Controls
 
-Row {
+// A single dropdown for camera projection, peer to the display-mode dropdown
+// in StepViewport so the two read as one category ("View" controls) rather
+// than a button/menu pair with no shared visual language.
+ThemedComboBox {
     id: root
 
-    property QtObject theme
     property string projectionMode: "orthographic"
     signal projectionRequested(string mode)
-    spacing: 2
 
-    ButtonGroup {
-        id: projectionGroup
-        exclusive: true
-    }
+    implicitWidth: 132
+    model: [qsTr("Orthographic"), qsTr("Perspective")]
+    currentIndex: root.projectionMode === "perspective" ? 1 : 0
+    Accessible.name: qsTr("Projection")
+    onActivated: index => root.projectionRequested(index === 1 ? "perspective" : "orthographic")
 
-    ThemedButton {
-        ButtonGroup.group: projectionGroup
+    ThemedToolTip {
         theme: root.theme
-        text: qsTr("Ortho")
-        checkable: true
-        checked: root.projectionMode === "orthographic"
-        Accessible.name: qsTr("Orthographic projection")
-        ToolTip.visible: hovered
-        ToolTip.text: qsTr("Orthographic projection")
-        onClicked: root.projectionRequested("orthographic")
-    }
-
-    ThemedButton {
-        ButtonGroup.group: projectionGroup
-        theme: root.theme
-        text: qsTr("Perspective")
-        checkable: true
-        checked: root.projectionMode === "perspective"
-        Accessible.name: qsTr("Perspective projection")
-        ToolTip.visible: hovered
-        ToolTip.text: qsTr("Perspective projection")
-        onClicked: root.projectionRequested("perspective")
+        text: qsTr("Projection")
+        visible: root.hovered
     }
 }

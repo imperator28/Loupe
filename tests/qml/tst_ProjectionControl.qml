@@ -10,10 +10,24 @@ Item {
     QtObject {
         id: mockTheme
         property bool dark: false
+        property color foreground: "#172127"
+        property color muted: "#53636c"
         property color control: "#dde5e9"
+        property color surfaceRaised: "#ffffff"
+        property color surface3: "#ffffff"
         property color surfaceSubtle: "#e8edf0"
         property color border: "#b9c5cb"
-        property color selection: "#a8ddd7"
+        property color borderStrong: "#7a829e"
+        property color accent: "#4f46e5"
+        property color accentForeground: "#ffffff"
+        property color selection: "#dee1fb"
+        property int radius1: 4
+        property int radius2: 6
+        property int radius3: 8
+        property int fontCaption: 11
+        property int durInstant: 0
+        property int durFast: 0
+        property int focusRingWidth: 2
     }
 
     Component {
@@ -29,18 +43,26 @@ Item {
             const control = createTemporaryObject(controlComponent, root)
             verify(!!control)
             compare(control.projectionMode, "orthographic")
+            compare(control.currentIndex, 0)
             verify(control.implicitWidth > 0)
         }
 
-        function test_projectionButtonsRemainExclusive() {
+        function test_currentIndexTracksProjectionMode() {
+            const control = createTemporaryObject(controlComponent, root, { projectionMode: "perspective" })
+            verify(!!control)
+            compare(control.currentIndex, 1)
+        }
+
+        function test_selectingPerspectiveRequestsPerspectiveProjection() {
             const control = createTemporaryObject(controlComponent, root)
             verify(!!control)
-            const buttons = control.children.filter(function(child) { return child.checkable === true })
-            compare(buttons.length, 2)
+            let requestedMode = ""
+            control.projectionRequested.connect(function(mode) { requestedMode = mode })
 
-            mouseClick(buttons[1])
-            compare(buttons[0].checked, false)
-            compare(buttons[1].checked, true)
+            control.currentIndex = 1
+            control.activated(1)
+
+            compare(requestedMode, "perspective")
         }
     }
 }

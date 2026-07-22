@@ -1,4 +1,14 @@
 find_package(Catch2 3 CONFIG REQUIRED)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+add_test(
+    NAME qml-theme-contrast
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/check_theme_contrast.py"
+)
+add_test(
+    NAME qml-style-gates
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/scripts/check_qml_style_gates.py"
+)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(_loupe_qt_runtime_root "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/Qt6")
     set(_loupe_qt_runtime_bin "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
@@ -184,7 +194,15 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.h"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/WindowChrome.h"
 )
+if(APPLE)
+    target_sources(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src/app/platform/WindowChrome.mm")
+    find_library(loupe_appkit_framework AppKit REQUIRED)
+    target_link_libraries(loupe-qml-smoke-tests PRIVATE ${loupe_appkit_framework})
+else()
+    target_sources(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src/app/platform/WindowChrome.cpp")
+endif()
 target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Quick3D Qt6::Network Qt6::Sql Qt6::Test)
 if(NOT QT6_IS_SHARED_LIBS_BUILD)
     target_link_libraries(loupe-qml-smoke-tests PRIVATE
@@ -205,6 +223,8 @@ endif()
 target_include_directories(loupe-qml-smoke-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_compile_definitions(loupe-qml-smoke-tests PRIVATE
     LOUPE_MAIN_QML_PATH="${PROJECT_SOURCE_DIR}/src/app/qml/Main.qml"
+    LOUPE_QML_DIR="${PROJECT_SOURCE_DIR}/src/app/qml"
+    LOUPE_EXPORT_QML_DIR="${PROJECT_SOURCE_DIR}/src/app/qml/export"
     LOUPE_INSPECT_QML_DIR="${PROJECT_SOURCE_DIR}/src/app/qml/inspect"
 )
 loupe_enable_warnings(loupe-qml-smoke-tests)

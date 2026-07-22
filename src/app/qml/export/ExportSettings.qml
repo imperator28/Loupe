@@ -9,7 +9,7 @@ ColumnLayout {
 
     property QtObject draft
     property QtObject theme
-    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
+    readonly property color foreground: theme ? theme.foreground : "transparent"
 
     spacing: 7
 
@@ -86,20 +86,25 @@ ColumnLayout {
 
     Inspect.ThemedButton {
         theme: root.theme
+        primary: true
         Layout.fillWidth: true
         text: root.draft && root.draft.exporting
               ? qsTr("Exporting %1%").arg(Math.round(root.draft.exportProgress * 100))
               : root.draft ? qsTr("Export %1 files").arg(root.draft.checkedCount) : qsTr("Export files")
         enabled: root.draft && root.draft.canExport
         onClicked: root.draft.exportReviewedPlan()
-        ToolTip.visible: hovered
-        ToolTip.text: !root.draft ? ""
-                      : !root.draft.documentReady ? qsTr("Wait for geometry refinement to finish")
-                      : root.draft.canExport ? qsTr("Write and validate the reviewed bucket")
-                      : qsTr("Choose a destination and resolve bucket errors")
+        Inspect.ThemedToolTip {
+            theme: root.theme
+            visible: parent.hovered
+            text: !root.draft ? ""
+                  : !root.draft.documentReady ? qsTr("Wait for geometry refinement to finish")
+                  : root.draft.canExport ? qsTr("Write and validate the reviewed bucket")
+                  : qsTr("Choose a destination and resolve bucket errors")
+        }
     }
 
-    ProgressBar {
+    Inspect.ThemedProgressBar {
+        theme: root.theme
         Layout.fillWidth: true
         visible: root.draft && root.draft.exporting
         from: 0

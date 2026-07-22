@@ -5,8 +5,10 @@ import Loupe.App
 Node {
     id: root
 
-    property color fillColor: "#67d5c0"
-    property color boundaryColor: "#dffbf4"
+    // Overridden per-instance by the caller (accent for hover, amber for
+    // accepted picks); inert defaults for standalone use only.
+    property color fillColor: "transparent"
+    property color boundaryColor: "transparent"
     property real fillAlpha: 0.42
     property real boundaryWidth: 3
     property bool active: false

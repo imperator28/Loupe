@@ -12,9 +12,13 @@ Item {
         id: testTheme
         property bool dark: true
         property color viewport: dark ? "#101418" : "#f7f9fa"
-        property color edge: dark ? "#b8c7d1" : "#3a525d"
+        property color edge: dark ? "#eef2ff" : "#111318"
         property color selectedBody: dark ? "#ffd166" : "#a86100"
         property color selectedEdge: dark ? "#fff0a6" : "#7d4a00"
+        property color selectionEmissive: dark ? "#3a2c00" : "#2e1700"
+        property color viewportMarkerBorder: dark ? "#fff4cf" : "#ffffff"
+        property color viewportSectionBorder: dark ? "#f5f3ff" : "#ffffff"
+        property color accentForeground: dark ? "#12142b" : "#ffffff"
         property color accent: dark ? "#67d5c0" : "#087b74"
     }
 
@@ -33,7 +37,7 @@ Item {
 
             testTheme.dark = true
             compare(visual.canvasBackground, "#101418")
-            compare(visual.edgeColor, "#b8c7d1")
+            compare(visual.edgeColor, "#eef2ff")
             compare(visual.selectionColor, "#ffd166")
             compare(visual.backgroundMode, SceneEnvironment.Color)
         }
@@ -44,7 +48,7 @@ Item {
 
             testTheme.dark = false
             compare(visual.canvasBackground, "#f7f9fa")
-            compare(visual.edgeColor, "#3a525d")
+            compare(visual.edgeColor, "#111318")
             compare(visual.selectionColor, "#a86100")
             compare(visual.backgroundMode, SceneEnvironment.Color)
         }
@@ -57,7 +61,7 @@ Item {
             visual.transparentCapture = true
             compare(visual.backgroundMode, SceneEnvironment.Transparent)
             compare(visual.canvasBackground, "#00000000")
-            compare(visual.edgeColor, "#3a525d")
+            compare(visual.edgeColor, "#111318")
             compare(visual.selectionColor, "#a86100")
         }
     }

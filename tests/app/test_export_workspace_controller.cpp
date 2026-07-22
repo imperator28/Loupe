@@ -16,6 +16,7 @@ private slots:
     void nodeIdReorderUsesCurrentBucketIndex();
     void sceneNodeFocusResolvesVisibleAncestorWithoutChecking();
     void hidesRedundantRawBodyRows();
+    void reportsVisibleHierarchyMetadataForPicker();
     void createsDeterministicReviewedPlan();
     void reportsUnsupportedLocalOccurrencePlan();
     void selectedFolderUrlUpdatesDestination();
@@ -181,6 +182,25 @@ void ExportWorkspaceControllerTest::hidesRedundantRawBodyRows()
     for (const auto& value : components) {
         QVERIFY(value.toMap().value(QStringLiteral("name")).toString() != QStringLiteral("SOLID"));
     }
+}
+
+void ExportWorkspaceControllerTest::reportsVisibleHierarchyMetadataForPicker()
+{
+    loupe::app::exporting::ExportWorkspaceController controller;
+    controller.replaceSnapshot(snapshotWithRawBodies());
+
+    QVariantMap cover;
+    QVariantMap namedBody;
+    for (const auto& value : controller.components()) {
+        const auto component = value.toMap();
+        if (component.value(QStringLiteral("nodeId")).toString() == QStringLiteral("cover")) cover = component;
+        if (component.value(QStringLiteral("nodeId")).toString() == QStringLiteral("namedBody")) namedBody = component;
+    }
+
+    QCOMPARE(cover.value(QStringLiteral("parentId")).toString(), QStringLiteral("root"));
+    QVERIFY(cover.value(QStringLiteral("hasChildren")).toBool());
+    QCOMPARE(namedBody.value(QStringLiteral("parentId")).toString(), QStringLiteral("cover"));
+    QVERIFY(!namedBody.value(QStringLiteral("hasChildren")).toBool());
 }
 
 void ExportWorkspaceControllerTest::createsDeterministicReviewedPlan()

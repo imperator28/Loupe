@@ -1,11 +1,11 @@
 import QtQuick
 import QtQuick.Controls
+import "../inspect" as Inspect
 
-Rectangle {
+Inspect.ElevatedPanel {
     id: root
 
     property QtObject controller
-    property QtObject theme
     property string title
     property string emptyText
     property string displayOnlyNodeId
@@ -15,14 +15,15 @@ Rectangle {
     property bool loadEnabled: true
     readonly property bool viewportReady: viewportLoader.status === Loader.Ready
 
-    color: theme ? theme.viewport : "#f7f9fa"
-    border.color: theme ? theme.border : "#b9c5cb"
-    radius: 6
+    wellSurface: true
 
     Loader {
         id: viewportLoader
         anchors.fill: parent
-        anchors.margins: 1
+        // Inset by the panel's own corner radius so the viewport's square
+        // corners never poke past the rounded card boundary and paint over
+        // the curve (a 1 px inset was not enough clearance for that).
+        anchors.margins: root.theme && root.theme.radius3 !== undefined ? root.theme.radius3 : 8
         active: root.loadEnabled && root.controller
         asynchronous: true
         source: "../inspect/StepViewport.qml"
@@ -39,31 +40,22 @@ Rectangle {
         }
     }
 
-    Rectangle {
+    Label {
+        id: previewTitle
         anchors.left: parent.left
         anchors.top: parent.top
-        anchors.margins: 10
-        color: root.theme ? root.theme.surfaceRaised : "#ffffff"
-        border.color: root.theme ? root.theme.border : "#b9c5cb"
-        radius: 4
-        implicitWidth: previewTitle.implicitWidth + 16
-        implicitHeight: previewTitle.implicitHeight + 10
+        anchors.margins: root.theme ? root.theme.spacing3 : 12
+        text: root.title
+        color: root.theme ? root.theme.foreground : "transparent"
+        font.bold: true
         z: 3
-
-        Label {
-            id: previewTitle
-            anchors.centerIn: parent
-            text: root.title
-            color: root.theme ? root.theme.onSurface : "#172127"
-            font.bold: true
-        }
     }
 
     Label {
         anchors.centerIn: parent
         visible: root.displayOnlyNodeId.length === 0 && root.emptyText.length > 0
         text: root.emptyText
-        color: root.theme ? root.theme.muted : "#53636c"
+        color: root.theme ? root.theme.muted : "transparent"
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         width: Math.min(parent.width - 32, 260)

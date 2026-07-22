@@ -5,6 +5,7 @@
 #include <QProcess>
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <QVector3D>
 
@@ -45,6 +46,8 @@ class ApplicationController : public QObject {
     Q_PROPERTY(Workspace workspace READ workspace WRITE setWorkspace NOTIFY workspaceChanged)
     Q_PROPERTY(InspectorMode inspectorMode READ inspectorMode NOTIFY inspectorModeChanged)
     Q_PROPERTY(QString activeNodeId READ activeNodeId WRITE setActiveNodeId NOTIFY activeNodeIdChanged)
+    Q_PROPERTY(QStringList selectedNodeIds READ selectedNodeIds NOTIFY selectionChanged)
+    Q_PROPERTY(int selectedNodeCount READ selectedNodeCount NOTIFY selectionChanged)
     Q_PROPERTY(DocumentState documentState READ documentState NOTIFY documentStateChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QString snapshotJson READ snapshotJson NOTIFY snapshotChanged)
@@ -53,6 +56,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(double activeSurfaceAreaMm2 READ activeSurfaceAreaMm2 NOTIFY componentPropertiesChanged)
     Q_PROPERTY(double activeVolumeMm3 READ activeVolumeMm3 NOTIFY componentPropertiesChanged)
     Q_PROPERTY(double estimatedMassKg READ estimatedMassKg NOTIFY componentPropertiesChanged)
+    Q_PROPERTY(QString estimatedMassLabel READ estimatedMassLabel NOTIFY componentPropertiesChanged)
     Q_PROPERTY(QString activeMaterialId READ activeMaterialId NOTIFY componentPropertiesChanged)
     Q_PROPERTY(QString activeAppearanceColor READ activeAppearanceColor NOTIFY componentPropertiesChanged)
     Q_PROPERTY(QString activeResolvedAppearanceColor READ activeResolvedAppearanceColor NOTIFY componentPropertiesChanged)
@@ -81,15 +85,19 @@ public:
     [[nodiscard]] Workspace workspace() const noexcept { return workspace_; }
     [[nodiscard]] InspectorMode inspectorMode() const noexcept;
     [[nodiscard]] const QString& activeNodeId() const noexcept { return activeNodeId_; }
+    [[nodiscard]] const QStringList& selectedNodeIds() const noexcept { return selectedNodeIds_; }
+    [[nodiscard]] int selectedNodeCount() const noexcept { return static_cast<int>(selectedNodeIds_.size()); }
     [[nodiscard]] DocumentState documentState() const noexcept { return documentState_; }
     [[nodiscard]] const QString& errorMessage() const noexcept { return errorMessage_; }
     [[nodiscard]] const QString& snapshotJson() const noexcept { return snapshotJson_; }
     [[nodiscard]] models::AssemblyTreeModel* assemblyTreeModel() noexcept { return &assemblyTreeModel_; }
     [[nodiscard]] QObject* assemblyTreeModelObject() noexcept { return &assemblyTreeModel_; }
     [[nodiscard]] QObject* materialLibraryObject() noexcept { return &materialLibrary_; }
-    [[nodiscard]] double activeSurfaceAreaMm2() const noexcept;
-    [[nodiscard]] double activeVolumeMm3() const noexcept;
-    [[nodiscard]] double estimatedMassKg() const noexcept;
+    [[nodiscard]] double activeSurfaceAreaMm2() const;
+    [[nodiscard]] double activeVolumeMm3() const;
+    [[nodiscard]] double estimatedMassKg() const;
+    [[nodiscard]] QString estimatedMassLabel() const;
+    [[nodiscard]] static QString formatMassKg(double massKg);
     [[nodiscard]] QString activeMaterialId() const;
     [[nodiscard]] QString activeAppearanceColor() const;
     [[nodiscard]] QString activeResolvedAppearanceColor() const;
@@ -111,6 +119,8 @@ public:
 
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
+    Q_INVOKABLE void selectNode(const QString& nodeId, bool additive);
+    Q_INVOKABLE bool isNodeSelected(const QString& nodeId) const;
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();
     Q_INVOKABLE void fitView();
@@ -129,7 +139,8 @@ public:
     Q_INVOKABLE bool clearActiveAppearanceColor(const QString& scope);
     Q_INVOKABLE QString resolvedAppearanceColor(const QString& nodeId, const QString& sourceColor) const;
     Q_INVOKABLE bool setUnitOverride(const QString& unit);
-    Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
+    Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
+                                         bool additive = false);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
     Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
                                         double x, double y, double z, double normalX, double normalY, double normalZ,
@@ -139,6 +150,7 @@ signals:
     void workspaceChanged();
     void inspectorModeChanged();
     void activeNodeIdChanged();
+    void selectionChanged();
     void documentStateChanged();
     void errorMessageChanged();
     void snapshotChanged();
@@ -158,7 +170,9 @@ private:
     void setErrorMessage(const QString& errorMessage);
     void applySnapshotToTree(const QByteArray& snapshot);
     void applyActiveGeometryToMeasurement();
+    void setSelection(const QStringList& nodeIds, const QString& activeNodeId);
     [[nodiscard]] QStringList geometryNodesForAction(const QString& nodeId) const;
+    [[nodiscard]] QStringList geometryNodesForSelection() const;
     [[nodiscard]] QStringList geometryNodesForScope(const QString& scope) const;
     [[nodiscard]] QStringList appearanceTargetsForScope(const QString& scope) const;
     void loadAppearanceOverrides();
@@ -184,6 +198,7 @@ private:
 
     Workspace workspace_{Workspace::Inspect};
     QString activeNodeId_;
+    QStringList selectedNodeIds_;
     QString workerExecutable_;
     QString stagedWorkerPath_;
     QString serverName_;

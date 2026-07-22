@@ -12,6 +12,7 @@
 #include <TDF_Label.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopoDS_Shape.hxx>
+#include <gp_Trsf.hxx>
 
 namespace loupe::import {
 
@@ -20,6 +21,7 @@ struct NativeDocument {
     std::vector<TDF_Label> labels;
     std::vector<TDF_Label> definitionLabels;
     std::vector<TopoDS_Shape> shapes;
+    std::vector<gp_Trsf> shapePlacements;
     std::vector<std::string> shapeNodeIds;
     std::vector<std::string> definitionIds;
 };

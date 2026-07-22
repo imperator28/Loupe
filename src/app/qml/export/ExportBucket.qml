@@ -3,21 +3,16 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "../inspect" as Inspect
 
-Rectangle {
+Inspect.ElevatedPanel {
     id: root
 
     property QtObject draft
-    property QtObject theme
-    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
-
-    color: theme ? theme.surfaceRaised : "#ffffff"
-    border.color: theme ? theme.border : "#b9c5cb"
-    radius: 6
+    readonly property color foreground: theme ? theme.foreground : "transparent"
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 8
+        anchors.margins: root.theme.spacing3
+        spacing: root.theme.spacing2
 
         RowLayout {
             Layout.fillWidth: true
@@ -26,11 +21,11 @@ Rectangle {
                 text: qsTr("Export bucket")
                 color: root.foreground
                 font.bold: true
-                font.pixelSize: 15
+                font.pixelSize: root.theme.fontTitle
             }
             Label {
                 text: root.draft ? root.draft.checkedCount : 0
-                color: root.theme ? root.theme.muted : "#53636c"
+                color: root.theme ? root.theme.muted : "transparent"
             }
         }
 
@@ -84,10 +79,10 @@ Rectangle {
                 property bool filenameEdited: false
                 width: ListView.view.width
                 height: 84
-                color: root.theme ? root.theme.surfaceSubtle : "#e8edf0"
+                color: root.theme ? root.theme.surfaceSubtle : "transparent"
                 border.color: modelData.error.length > 0
                               ? root.theme.error : root.theme.border
-                radius: 4
+                radius: root.theme.radius1
 
                 Rectangle {
                     visible: bucketList.draggedNodeId.length > 0
@@ -98,7 +93,7 @@ Rectangle {
                     width: bucketRow.width - 4
                     height: 3
                     radius: 1
-                    color: root.theme ? root.theme.accent : "#008f86"
+                    color: root.theme ? root.theme.accent : "transparent"
                     z: 4
                 }
 
@@ -118,7 +113,7 @@ Rectangle {
                         Label {
                             anchors.centerIn: parent
                             text: "\u22ee\u22ee"
-                            color: root.theme ? root.theme.muted : "#53636c"
+                            color: root.theme ? root.theme.muted : "transparent"
                             font.pixelSize: 18
                         }
 
@@ -154,20 +149,26 @@ Rectangle {
                             text: "\u2191"
                             enabled: bucketRow.index > 0
                                      && (!root.draft || !root.draft.exporting)
-                            ToolTip.visible: hovered
-                            ToolTip.text: qsTr("Move earlier")
                             onClicked: root.draft.moveBucketItemById(bucketRow.modelData.nodeId,
                                                                     bucketRow.index - 1)
+                            Inspect.ThemedToolTip {
+                                theme: root.theme
+                                text: qsTr("Move earlier")
+                                visible: parent.hovered
+                            }
                         }
                         Inspect.ThemedToolButton {
                             theme: root.theme
                             text: "\u2193"
                             enabled: bucketRow.index + 1 < bucketList.count
                                      && (!root.draft || !root.draft.exporting)
-                            ToolTip.visible: hovered
-                            ToolTip.text: qsTr("Move later")
                             onClicked: root.draft.moveBucketItemById(bucketRow.modelData.nodeId,
                                                                     bucketRow.index + 1)
+                            Inspect.ThemedToolTip {
+                                theme: root.theme
+                                text: qsTr("Move later")
+                                visible: parent.hovered
+                            }
                         }
                     }
 
@@ -187,8 +188,11 @@ Rectangle {
                             HoverHandler {
                                 id: sourceNameHover
                             }
-                            ToolTip.visible: sourceNameHover.hovered
-                            ToolTip.text: qsTr("Original component: %1").arg(bucketRow.modelData.name)
+                            Inspect.ThemedToolTip {
+                                theme: root.theme
+                                text: qsTr("Original component: %1").arg(bucketRow.modelData.name)
+                                visible: sourceNameHover.hovered
+                            }
                         }
                         Inspect.ThemedTextField {
                             id: filenameEditor
@@ -224,9 +228,12 @@ Rectangle {
                         theme: root.theme
                         text: "\u00d7"
                         enabled: !root.draft || !root.draft.exporting
-                        ToolTip.visible: hovered
-                        ToolTip.text: qsTr("Remove from export bucket")
                         onClicked: root.draft.setChecked(bucketRow.modelData.nodeId, false)
+                        Inspect.ThemedToolTip {
+                            theme: root.theme
+                            text: qsTr("Remove from export bucket")
+                            visible: parent.hovered
+                        }
                     }
                 }
 
@@ -241,7 +248,7 @@ Rectangle {
             Layout.fillHeight: true
             visible: root.draft && root.draft.checkedCount === 0
             text: qsTr("Check components to add standalone files")
-            color: root.theme ? root.theme.muted : "#53636c"
+            color: root.theme ? root.theme.muted : "transparent"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             wrapMode: Text.Wrap

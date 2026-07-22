@@ -37,7 +37,8 @@ public:
     Q_INVOKABLE void setSectionOptions(bool capEnabled, bool sliceOnly, bool sliceFill = true, bool sliceOutline = true);
     Q_INVOKABLE void configureSection(bool enabled, double normalX, double normalY, double normalZ,
                                       double offset, bool flipped, bool capEnabled, bool sliceOnly,
-                                      bool sliceFill, bool sliceOutline, bool preview);
+                                      bool sliceFill, bool sliceOutline, bool preview,
+                                      double outlineWidth = 0.0);
     [[nodiscard]] int vertexCount() const noexcept { return static_cast<int>(vertexData_.size() / 3); }
     [[nodiscard]] int triangleCount() const noexcept { return static_cast<int>(indexData_.size() / 3); }
     [[nodiscard]] int sectionCapTriangleCount() const noexcept { return sectionCapTriangleCount_; }
@@ -75,9 +76,11 @@ private:
     quint64 sectionBuildGeneration_{};
     int pendingSectionBuilds_{};
     int sectionCapTriangleCount_{};
+    int sectionFillIndexCount_{};
     QVector3D sectionNormal_{0.0F, 0.0F, 1.0F};
     double sectionOffset_{};
     bool sectionFlipped_{false};
+    double sectionOutlineWidth_{};
 };
 
 } // namespace loupe::app::render

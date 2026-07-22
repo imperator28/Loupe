@@ -20,12 +20,14 @@ struct SectionBuildRequest {
     bool sliceOnly{false};
     bool sliceFill{true};
     bool sliceOutline{true};
+    float outlineWidth{};
 };
 
 struct SectionBuildResult {
     QVector<float> vertices;
     QVector<quint32> indices;
     int capTriangleCount{};
+    int fillIndexCount{};
 };
 
 [[nodiscard]] SectionBuildResult buildSectionOverlay(const SectionBuildRequest& request);

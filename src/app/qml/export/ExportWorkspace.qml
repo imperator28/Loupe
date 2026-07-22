@@ -52,8 +52,8 @@ Item {
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: 10
-        spacing: 10
+        anchors.margins: root.theme.spacing3
+        spacing: root.theme.spacing3
 
         ExportComponentPicker {
             id: componentPicker
@@ -84,7 +84,7 @@ Item {
         ColumnLayout {
             Layout.preferredWidth: 360
             Layout.fillHeight: true
-            spacing: 10
+            spacing: root.theme.spacing3
 
             ExportPreview {
                 id: standalonePreview

@@ -6,13 +6,13 @@ Rectangle {
     id: root
     property QtObject taskController
     property QtObject theme
-    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
-    readonly property color subduedForeground: theme && theme.dark ? "#aeb8c2" : "#53636c"
+    readonly property color foreground: theme ? theme.foreground : "transparent"
+    readonly property color subduedForeground: theme ? theme.muted : "transparent"
     signal closeRequested()
     signal captureRequested()
     implicitWidth: 320
     implicitHeight: content.implicitHeight + 32
-    radius: 10
+    radius: root.theme.radius4
     color: root.theme.surfaceRaised
     border.color: root.theme.border
 
@@ -36,14 +36,16 @@ Rectangle {
         Label { text: qsTr("Scale"); color: root.subduedForeground }
         RowLayout {
             Layout.fillWidth: true
+            spacing: root.theme ? root.theme.spacing2 : 8
             Repeater {
-                model: [1, 2, 3, 4]
+                model: [2, 3, 5]
                 delegate: ThemedButton {
                     required property int modelData
                     theme: root.theme
                     text: qsTr("%1×").arg(modelData)
-                    checkable: true
-                    checked: root.taskController && root.taskController.scale === modelData
+                    selectedAppearance: root.taskController
+                                        && Math.abs(root.taskController.scale - modelData) < 0.001
+                    enabled: root.taskController && modelData <= root.taskController.maximumScale
                     Layout.fillWidth: true
                     onClicked: root.taskController.scale = modelData
                 }
@@ -54,9 +56,10 @@ Rectangle {
             Label { text: qsTr("Custom"); Layout.fillWidth: true; color: root.foreground }
             ThemedSpinBox {
                 theme: root.theme
-                from: 100
-                to: 400
-                stepSize: 25
+                editable: true
+                from: root.taskController ? Math.round(root.taskController.minimumScale * 100) : 1
+                to: root.taskController ? Math.floor(root.taskController.maximumScale * 100) : 1600
+                stepSize: 1
                 value: root.taskController ? Math.round(root.taskController.scale * 100) : 100
                 textFromValue: function(value) { return qsTr("%1×").arg((value / 100).toFixed(2)) }
                 valueFromText: function(text) { return Number(text.replace("×", "")) * 100 }
@@ -82,9 +85,36 @@ Rectangle {
             wrapMode: Text.WordWrap
             color: root.subduedForeground
         }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: root.theme ? root.theme.spacing2 : 8
+            visible: root.taskController && root.taskController.inProgress
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    Layout.fillWidth: true
+                    text: root.taskController ? root.taskController.statusMessage : qsTr("Capturing PNG…")
+                    elide: Text.ElideRight
+                    color: root.foreground
+                    font.bold: true
+                }
+                Label {
+                    text: root.taskController ? qsTr("%1%").arg(Math.round(root.taskController.progress * 100)) : ""
+                    color: root.subduedForeground
+                }
+            }
+            ThemedProgressBar {
+                objectName: "captureProgressBar"
+                theme: root.theme
+                Layout.fillWidth: true
+                value: root.taskController ? root.taskController.progress : 0
+            }
+        }
         Label {
             Layout.fillWidth: true
-            visible: root.taskController && root.taskController.statusMessage.length > 0
+            visible: root.taskController && !root.taskController.inProgress
+                     && root.taskController.statusMessage.length > 0
             text: root.taskController ? root.taskController.statusMessage : ""
             wrapMode: Text.WordWrap
             color: root.taskController && root.taskController.lastSaveSucceeded ? root.theme.accent : root.theme.error
@@ -93,7 +123,8 @@ Rectangle {
             theme: root.theme
             text: qsTr("Save PNG…")
             Layout.fillWidth: true
-            enabled: root.taskController && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0
+            enabled: root.taskController && !root.taskController.inProgress
+                     && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0
             onClicked: root.captureRequested()
         }
     }

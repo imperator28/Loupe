@@ -117,6 +117,7 @@ private:
         int depth{};
         bool exportable{};
         bool visibleInPicker{true};
+        bool hasVisibleChildren{};
     };
 
     [[nodiscard]] QString hierarchyPathFor(const QString& nodeId, QSet<QString>& resolving) const;

@@ -5,8 +5,15 @@ RadioButton {
     id: control
 
     property QtObject theme
-    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
-    readonly property color mutedForeground: theme ? theme.muted : "#53636c"
+    readonly property color foreground: theme ? theme.foreground : "transparent"
+    readonly property color mutedForeground: theme ? theme.muted : "transparent"
+    readonly property color accentFill: theme ? theme.accent : "transparent"
+    readonly property color accentForegroundColor: theme && theme.accentForeground !== undefined ? theme.accentForeground : foreground
+    readonly property color wellFill: theme && theme.dark ? theme.surface : theme ? theme.surfaceRaised : "transparent"
+    readonly property color outline: theme && theme.borderPanel !== undefined ? theme.borderPanel
+                                                                               : theme ? theme.border : "transparent"
+    readonly property int fadeDuration: theme && theme.durInstant !== undefined ? theme.durInstant : 0
+    readonly property int ringWidth: theme && theme.focusRingWidth !== undefined ? theme.focusRingWidth : 2
     palette.text: foreground
     palette.buttonText: foreground
     palette.windowText: foreground
@@ -14,24 +21,42 @@ RadioButton {
     spacing: 8
     implicitHeight: Math.max(26, contentItem.implicitHeight)
 
-    indicator: Rectangle {
-        implicitWidth: 18
-        implicitHeight: 18
+    indicator: Item {
+        implicitWidth: 16
+        implicitHeight: 16
         x: control.leftPadding
         y: (control.height - height) / 2
-        radius: 9
-        color: control.theme ? control.theme.surface : "#f5f7f8"
-        border.color: control.checked && control.theme ? control.theme.accent
-                                                       : control.theme ? control.theme.border : "#b9c5cb"
-        border.width: control.checked ? 2 : 1
 
         Rectangle {
-            anchors.centerIn: parent
-            width: 8
-            height: 8
-            radius: 4
-            visible: control.checked
-            color: control.theme ? control.theme.accent : "#087b74"
+            anchors.fill: parent
+            radius: width / 2
+            color: control.checked ? control.accentFill : control.wellFill
+            border.color: control.checked ? "transparent" : control.outline
+            border.width: 1
+            opacity: control.enabled ? 1 : 0.45
+
+            Behavior on color {
+                ColorAnimation { duration: control.fadeDuration }
+            }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 6
+                height: 6
+                radius: 3
+                visible: control.checked
+                color: control.accentForegroundColor
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -(control.ringWidth + 1)
+            radius: width / 2
+            color: "transparent"
+            border.color: control.accentFill
+            border.width: control.ringWidth
+            visible: control.visualFocus
         }
     }
 

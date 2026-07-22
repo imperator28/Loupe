@@ -1,5 +1,9 @@
 #include "app/tools/SectionController.h"
 
+#include <QColor>
+
+#include <algorithm>
+
 namespace loupe::app::tools {
 
 SectionController::SectionController(QObject* parent)
@@ -76,6 +80,23 @@ void SectionController::setSliceDisplay(const QString& sliceDisplay)
                                                                         : QStringLiteral("filled-outline");
     if (sliceDisplay_ == normalized) return;
     sliceDisplay_ = normalized;
+    emit changed();
+}
+
+void SectionController::setSliceBorderColor(const QString& color)
+{
+    const auto normalized = color.trimmed();
+    if (!normalized.isEmpty() && !QColor::isValidColorName(normalized)) return;
+    if (sliceBorderColor_ == normalized) return;
+    sliceBorderColor_ = normalized;
+    emit changed();
+}
+
+void SectionController::setSliceBorderWidth(const double width)
+{
+    const auto normalized = std::clamp(width, 0.5, 8.0);
+    if (qFuzzyCompare(sliceBorderWidth_ + 1.0, normalized + 1.0)) return;
+    sliceBorderWidth_ = normalized;
     emit changed();
 }
 

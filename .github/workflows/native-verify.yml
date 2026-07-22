@@ -1,0 +1,66 @@
+name: Native verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon release
+            os: macos-14
+            configure_preset: macos-arm64-release
+          - name: Windows 11 x64 release
+            os: windows-2025
+            configure_preset: windows-release
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_COMMIT: db4723bd0a99eab031f1a3dee4336dca43049c87
+      VCPKG_DISABLE_METRICS: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable the MSVC toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install vcpkg (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout --detach "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Install vcpkg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$env:VCPKG_ROOT"
+          git -C "$env:VCPKG_ROOT" checkout --detach "$env:VCPKG_COMMIT"
+          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            test "$(uname -m)" = arm64
+          fi
+          cmake --preset "${{ matrix.configure_preset }}"
+
+      - name: Build
+        shell: bash
+        run: cmake --build --preset "${{ matrix.configure_preset }}" --parallel
+
+      - name: Test
+        shell: bash
+        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure

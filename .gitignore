@@ -4,6 +4,12 @@
 
 # Private/internal CAD corpus
 corpus/private/
+corpus/*.step
+corpus/*.stp
+
+# Local STEP fixtures generated while running controller and import tests
+controller-*.step
+repeated-box.step
 
 # Native build products
 build/

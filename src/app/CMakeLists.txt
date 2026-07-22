@@ -47,12 +47,14 @@ qt_add_executable(loupe-app
 
 set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")
 set(loupe_app_icon_svg "${loupe_branding_dir}/loupe-app-icon.svg")
+set(loupe_app_icon_png "${loupe_branding_dir}/loupe-app-icon.png")
 
 qt_add_resources(loupe-app "loupe-branding"
     PREFIX "/branding"
     BASE "${loupe_branding_dir}"
     FILES
         "${loupe_app_icon_svg}"
+        "${loupe_app_icon_png}"
 )
 
 if(APPLE)
@@ -68,6 +70,18 @@ if(APPLE)
         MACOSX_BUNDLE_ICON_FILE Loupe.icns
         OUTPUT_NAME Loupe
     )
+    target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.mm)
+    find_library(loupe_appkit_framework AppKit REQUIRED)
+    target_link_libraries(loupe-app PRIVATE ${loupe_appkit_framework})
+else()
+    target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.cpp)
+    if(WIN32)
+        set(loupe_app_icon_windows_rc "${loupe_branding_dir}/Loupe.rc")
+        set_property(SOURCE "${loupe_app_icon_windows_rc}" APPEND PROPERTY
+            OBJECT_DEPENDS "${loupe_branding_dir}/Loupe.ico"
+        )
+        target_sources(loupe-app PRIVATE "${loupe_app_icon_windows_rc}")
+    endif()
 endif()
 
 qt_add_qml_module(loupe-app
@@ -91,17 +105,27 @@ qt_add_qml_module(loupe-app
         qml/inspect/SectionOffsetSlider.qml
         qml/inspect/MeasurementFaceHighlight.qml
         qml/inspect/ViewportVisualTheme.qml
+        qml/inspect/AboutLoupeDialog.qml
+        qml/inspect/InteractionGuide.qml
         qml/inspect/ThemedButton.qml
         qml/inspect/ThemedMenu.qml
         qml/inspect/ThemedMenuItem.qml
         qml/inspect/ThemedMenuSeparator.qml
         qml/inspect/ThemedToolButton.qml
         qml/inspect/ThemedTabButton.qml
+        qml/inspect/ThemedCheckBox.qml
+        qml/inspect/ThemedColorButton.qml
         qml/inspect/ThemedComboBox.qml
+        qml/inspect/ThemedProgressBar.qml
+        qml/inspect/ThemedSegmentedControl.qml
         qml/inspect/ThemedSpinBox.qml
         qml/inspect/ThemedSwitch.qml
         qml/inspect/ThemedRadioButton.qml
         qml/inspect/ThemedTextField.qml
+        qml/inspect/ThemedToolTip.qml
+        qml/inspect/ToolIcon.qml
+        qml/inspect/ViewCube.qml
+        qml/inspect/ElevatedPanel.qml
         qml/inspect/StepViewport.qml
         qml/inspect/InspectionDock.qml
         qml/inspect/ContextPanel.qml

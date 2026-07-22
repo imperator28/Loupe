@@ -6,12 +6,12 @@ Rectangle {
     id: root
     property QtObject taskController
     property QtObject theme
-    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
-    readonly property color subduedForeground: theme && theme.dark ? "#aeb8c2" : "#53636c"
+    readonly property color foreground: theme ? theme.foreground : "transparent"
+    readonly property color subduedForeground: theme ? theme.muted : "transparent"
     signal closeRequested()
     implicitWidth: 336
     implicitHeight: content.implicitHeight + 32
-    radius: 10
+    radius: root.theme.radius4
     color: root.theme.surfaceRaised
     border.color: root.theme.border
 

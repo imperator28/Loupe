@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick3D
 import Loupe.App
 
@@ -63,6 +64,18 @@ Item {
         const y = sceneMaximum.y - sceneMinimum.y
         const z = sceneMaximum.z - sceneMinimum.z
         return Math.max(0.001, Math.sqrt(x * x + y * y + z * z))
+    }
+    // CAD edge polylines sit directly on their shaded faces. Nudge them less
+    // than a pixel toward the active camera to remove depth-fighting speckles,
+    // while retaining the normal depth test that hides occluded edges.
+    readonly property vector3d edgeOverlayOffset: {
+        const x = navigation.cameraPosition.x - navigation.activePivot.x
+        const y = navigation.cameraPosition.y - navigation.activePivot.y
+        const z = navigation.cameraPosition.z - navigation.activePivot.z
+        const length = Math.sqrt(x * x + y * y + z * z)
+        if (length < 0.000001) return Qt.vector3d(0, 0, 0)
+        const amount = Math.max(sceneDiagonal * 0.0000025, sectionWorldPerPixel * 0.35)
+        return Qt.vector3d(x / length * amount, y / length * amount, z / length * amount)
     }
     readonly property vector3d sectionAnchor: {
         if (!controller) return sceneCenter
@@ -130,8 +143,12 @@ Item {
     }
 
     onControllerChanged: {
-        if (controller && view.width > 0 && view.height > 0)
-            controller.capture.setViewportSize(view.width, view.height)
+        updateCaptureViewportSize()
+    }
+
+    Connections {
+        target: root.controller
+        function onSelectionChanged() { root.applyRenderMode() }
     }
 
     function fitCamera() {
@@ -144,6 +161,17 @@ Item {
             return
         }
         navigation.fitBounds(sceneMinimum, sceneMaximum)
+    }
+
+    function captureDevicePixelRatio() {
+        return Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+    }
+
+    function updateCaptureViewportSize() {
+        if (!controller || view.width <= 0 || view.height <= 0) return
+        const pixelRatio = captureDevicePixelRatio()
+        controller.capture.setViewportSize(Math.round(view.width * pixelRatio),
+                                           Math.round(view.height * pixelRatio))
     }
 
     function nodeMatchesSelection(nodeId, selectionId) {
@@ -179,16 +207,32 @@ Item {
     }
 
     function fitSelection() {
-        if (!controller || !controller.activeNodeId || !boundsByNode[controller.activeNodeId]) {
+        if (!controller || controller.selectedNodeCount === 0) {
             fitCamera()
             return
         }
-        const bounds = boundsByNode[controller.activeNodeId]
-        navigation.fitBounds(bounds.minimum, bounds.maximum)
+        let minimum = Qt.vector3d(0, 0, 0)
+        let maximum = Qt.vector3d(0, 0, 0)
+        let found = false
+        for (let nodeId in boundsByNode) {
+            if (!controller.isNodeSelected(nodeId)) continue
+            const bounds = boundsByNode[nodeId]
+            if (!found) {
+                minimum = bounds.minimum
+                maximum = bounds.maximum
+                found = true
+            } else {
+                minimum = Qt.vector3d(Math.min(minimum.x, bounds.minimum.x), Math.min(minimum.y, bounds.minimum.y), Math.min(minimum.z, bounds.minimum.z))
+                maximum = Qt.vector3d(Math.max(maximum.x, bounds.maximum.x), Math.max(maximum.y, bounds.maximum.y), Math.max(maximum.z, bounds.maximum.z))
+            }
+        }
+        if (found) navigation.fitBounds(minimum, maximum)
+        else fitCamera()
     }
 
     function alignToSection(oppositeSide) {
         if (!controller) return
+        if (oppositeSide) controller.section.flipped = !controller.section.flipped
         const normal = effectiveSectionNormal
         navigation.alignToNormal(oppositeSide ? Qt.vector3d(-normal.x, -normal.y, -normal.z) : normal)
         Qt.callLater(fitVisibleGeometry)
@@ -314,7 +358,7 @@ Item {
                     && (!controller || controller.isNodeVisible(modelByNode[id].nodeId))
         for (let id in edgeModelByNode) {
             const edgeModel = edgeModelByNode[id]
-            const selected = controller && controller.activeNodeId === edgeModel.nodeId
+            const selected = controller && controller.isNodeSelected(edgeModel.nodeId)
             const sectionPreview = section && section.enabled && section.interacting
             edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
                     && nodeVisibleInPreview(edgeModel.nodeId)
@@ -388,8 +432,12 @@ Item {
             flipped: section.flipped,
             capEnabled: section.capEnabled,
             sliceOnly: section.sliceOnly,
-            sliceFill: section.sliceDisplay !== "outline",
+            // Retain a fill subset in outline-only mode so the border keeps a
+            // stable second material slot without rebuilding the section twice.
+            sliceFill: section.sliceOnly || section.sliceDisplay !== "outline",
             sliceOutline: section.sliceDisplay !== "filled",
+            outlineWidth: Math.max(sceneDiagonal * 0.00001,
+                                   sectionWorldPerPixel * section.sliceBorderWidth),
             preview: false
         } : null
         sectionApplyQueue = queue
@@ -421,7 +469,8 @@ Item {
         sectionApplyIndex += 1
         geometry.configureSection(request.enabled, request.normal.x, request.normal.y, request.normal.z,
                                   request.offset, request.flipped, request.capEnabled, request.sliceOnly,
-                                  request.sliceFill, request.sliceOutline, request.preview)
+                                  request.sliceFill, request.sliceOutline, request.preview,
+                                  request.outlineWidth)
         updateSectionBusyCount()
     }
 
@@ -469,7 +518,7 @@ Item {
             geometry.destroy()
             return
         }
-        const importedColor = sourceColor || "#67d5c0"
+        const importedColor = sourceColor || root.theme.neutralBody
         const model = modelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId, "importColor": importedColor,
                                                     "sourceColor": controller ? controller.resolvedAppearanceColor(nodeId, importedColor) : importedColor })
         const xrayModel = componentXrayModel.createObject(componentXrayRoot, {
@@ -505,17 +554,17 @@ Item {
         applySection()
     }
 
-    function pickAt(x, y) {
+    function pickAt(x, y, additive) {
         const hit = view.pick(x, y)
         if (!hit.objectHit || !hit.objectHit.nodeId) {
-            root.controller.setActiveNodeId("")
+            root.controller.selectNode("", false)
             return false
         }
         if (root.measurementActive) {
             acceptMeasurementHit(hit)
         } else {
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
+                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive)
         }
         return true
     }
@@ -622,21 +671,52 @@ Item {
     function captureToFile(fileUrl) {
         if (!root.controller || !fileUrl) return
         const capture = root.controller.capture
-        root.captureInProgress = capture.includeMeasurements && root.controller.measurement.resultLabel.length > 0
+        if (capture.inProgress) return
+        capture.beginCapture()
+        root.captureInProgress = true
         root.captureUiHidden = true
         viewportVisualTheme.transparentCapture = capture.transparentBackground
         if (!capture.includeSectionCaps)
             for (let id in sectionOverlayGeometryByNode)
                 sectionOverlayGeometryByNode[id].setSectionOptions(false, false, true, true)
 
+        const targetPixels = Qt.size(capture.resolvedWidth, capture.resolvedHeight)
+        const pixelRatio = captureDevicePixelRatio()
+        const grabSize = Qt.size(Math.max(1, Math.round(targetPixels.width / pixelRatio)),
+                                 Math.max(1, Math.round(targetPixels.height / pixelRatio)))
+        capture.setCaptureProgress(0.22, qsTr("Preparing %1 × %2 capture…").arg(targetPixels.width).arg(targetPixels.height))
+        view.explicitTextureWidth = targetPixels.width
+        view.explicitTextureHeight = targetPixels.height
+        orthographicCamera.horizontalMagnification = navigation.orthographicMagnification * capture.scale
+        orthographicCamera.verticalMagnification = navigation.orthographicMagnification * capture.scale
+
         Qt.callLater(function() {
-            root.grabToImage(function(result) {
-                capture.saveImage(result.image, fileUrl)
-                viewportVisualTheme.transparentCapture = false
-                root.captureInProgress = false
-                root.captureUiHidden = false
-                root.applySection()
-            }, Qt.size(capture.resolvedWidth, capture.resolvedHeight))
+            Qt.callLater(function() {
+                capture.setCaptureProgress(0.48, qsTr("Rendering at %1×…").arg(capture.scale.toFixed(2)))
+                const started = view.grabToImage(function(result) {
+                    capture.setCaptureProgress(0.82, qsTr("Encoding PNG…"))
+                    capture.saveImage(result.image, fileUrl)
+                    view.explicitTextureWidth = 0
+                    view.explicitTextureHeight = 0
+                    orthographicCamera.horizontalMagnification = navigation.orthographicMagnification
+                    orthographicCamera.verticalMagnification = navigation.orthographicMagnification
+                    viewportVisualTheme.transparentCapture = false
+                    root.captureInProgress = false
+                    root.captureUiHidden = false
+                    root.applySection()
+                }, grabSize)
+                if (!started) {
+                    capture.failCapture(qsTr("Capture failed: the render could not start."))
+                    view.explicitTextureWidth = 0
+                    view.explicitTextureHeight = 0
+                    orthographicCamera.horizontalMagnification = navigation.orthographicMagnification
+                    orthographicCamera.verticalMagnification = navigation.orthographicMagnification
+                    viewportVisualTheme.transparentCapture = false
+                    root.captureInProgress = false
+                    root.captureUiHidden = false
+                    root.applySection()
+                }
+            })
         })
     }
 
@@ -649,10 +729,11 @@ Item {
         Model {
             id: modelItem
             property string nodeId: ""
-            property color importColor: "#67d5c0"
-            property color sourceColor: "#67d5c0"
+            property color importColor: root.theme.neutralBody
+            property color sourceColor: root.theme.neutralBody
             property bool selected: root.showComponentSelection && root.controller
-                                    && ((root.selectionEnabled && root.controller.activeNodeId === nodeId)
+                                    && ((root.selectionEnabled && root.controller.selectedNodeCount >= 0
+                                         && root.controller.isNodeSelected(nodeId))
                                         || root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId))
             property bool hovered: !selected && root.hoveredNodeId === nodeId
             property bool inspectionHovered: hovered && !root.measurementActive && root.componentHoverEnabled
@@ -694,15 +775,20 @@ Item {
             id: edgeModelItem
             property string nodeId: ""
             property bool selected: root.showComponentSelection && root.controller
-                                    && ((root.selectionEnabled && root.controller.activeNodeId === nodeId)
+                                    && ((root.selectionEnabled && root.controller.selectedNodeCount >= 0
+                                         && root.controller.isNodeSelected(nodeId))
                                         || root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId))
             pickable: false
+            position: root.edgeOverlayOffset
             materials: [standardEdgeMaterial]
             PrincipledMaterial {
                 id: standardEdgeMaterial
                 lighting: PrincipledMaterial.NoLighting
                 baseColor: edgeModelItem.selected ? viewportVisualTheme.selectionEdgeColor
                                                    : viewportVisualTheme.edgeColor
+                // The camera-facing model offset removes coplanar depth
+                // fighting. Depth testing still keeps hidden edges hidden.
+                lineWidth: edgeModelItem.selected ? 2.5 : 1.5
                 roughness: 1.0
                 cullMode: Material.NoCulling
             }
@@ -713,13 +799,26 @@ Item {
         Model {
             id: overlayModelItem
             property string nodeId: ""
-            property color sourceColor: "#67d5c0"
+            property color sourceColor: root.theme.neutralBody
             pickable: false
-            materials: PrincipledMaterial {
+            materials: [sectionFillMaterial, sectionOutlineMaterial]
+            PrincipledMaterial {
+                id: sectionFillMaterial
                 lighting: PrincipledMaterial.NoLighting
                 baseColor: overlayModelItem.sourceColor
                 emissiveFactor: Qt.vector3d(0.08, 0.08, 0.08)
+                opacity: root.controller && root.controller.section.sliceOnly
+                         && root.controller.section.sliceDisplay === "outline" ? 0 : 1
+                alphaMode: opacity < 1 ? PrincipledMaterial.Blend : PrincipledMaterial.Opaque
                 roughness: 0.6
+                cullMode: Material.NoCulling
+            }
+            PrincipledMaterial {
+                id: sectionOutlineMaterial
+                lighting: PrincipledMaterial.NoLighting
+                baseColor: root.controller && root.controller.section.sliceBorderColor.length > 0
+                           ? root.controller.section.sliceBorderColor : viewportVisualTheme.edgeColor
+                roughness: 1.0
                 cullMode: Material.NoCulling
             }
         }
@@ -737,6 +836,7 @@ Item {
     View3D {
         id: view
         anchors.fill: parent
+        renderMode: View3D.Offscreen
         environment: SceneEnvironment {
             id: sceneEnvironment
             backgroundMode: viewportVisualTheme.backgroundMode
@@ -798,18 +898,19 @@ Item {
                 position: root.sectionAnchor
                 normal: root.removedSectionNormal
                 arrowLength: root.sectionArrowLength
-                color: root.theme.accent
+                color: root.theme.accentVivid
                 outlineColor: viewportVisualTheme.sectionBorder
             }
         }
-        onWidthChanged: if (root.controller) root.controller.capture.setViewportSize(width, height)
-        onHeightChanged: if (root.controller) root.controller.capture.setViewportSize(width, height)
-        Component.onCompleted: if (root.controller) root.controller.capture.setViewportSize(width, height)
+        onWidthChanged: root.updateCaptureViewportSize()
+        onHeightChanged: root.updateCaptureViewportSize()
+        Component.onCompleted: root.updateCaptureViewportSize()
     }
 
     View3D {
         id: componentXrayView
         anchors.fill: parent
+        renderMode: View3D.Offscreen
         visible: root.externalHighlightNodeId.length > 0
         environment: SceneEnvironment {
             backgroundMode: SceneEnvironment.Transparent
@@ -844,6 +945,7 @@ Item {
         id: measurementXrayView
         objectName: "measurementXrayView"
         anchors.fill: parent
+        renderMode: View3D.Offscreen
         visible: !root.presentationOnly && ((root.hoverTopology && root.hoverTopology.entityKind === "face")
                  || root.hasAcceptedFaceHighlight
                  )
@@ -910,7 +1012,7 @@ Item {
         anchors.topMargin: 16
         width: 224
         height: 42
-        radius: 4
+        radius: root.theme.radius1
         color: root.theme.surfaceRaised
         border.color: root.theme.border
         z: 7
@@ -984,9 +1086,14 @@ Item {
             pressY = mouse.y
         }
         onReleased: function(mouse) {
-            if (!dragging && pressButton === Qt.LeftButton && root.selectionEnabled) root.pickAt(mouse.x, mouse.y)
+            if (!dragging && pressButton === Qt.LeftButton && root.selectionEnabled) {
+                const additive = (mouse.modifiers & Qt.ShiftModifier)
+                        || (mouse.modifiers & Qt.ControlModifier)
+                        || (mouse.modifiers & Qt.MetaModifier)
+                root.pickAt(mouse.x, mouse.y, additive)
+            }
             if (!dragging && pressButton === Qt.RightButton && root.contextActionsEnabled) {
-                if (root.pickAt(mouse.x, mouse.y)) {
+                if (root.pickAt(mouse.x, mouse.y, false)) {
                     if (root.presentationOnly) exportComponentContextMenu.popup(mouse.x, mouse.y)
                     else componentContextMenu.popup(mouse.x, mouse.y)
                 }
@@ -1191,25 +1298,22 @@ Item {
         ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
     }
 
-    ThemedButton {
-        id: displayButton
+    ThemedComboBox {
+        id: displayModeControl
         theme: root.theme
         visible: !root.presentationOnly && !root.captureUiHidden
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 12
-        text: renderMode === 0 ? qsTr("Solid") : renderMode === 1 ? qsTr("Solid + Edges") : qsTr("Edges Only")
+        implicitWidth: 132
+        model: [qsTr("Solid"), qsTr("Solid + Edges"), qsTr("Edges Only")]
+        currentIndex: root.renderMode
         Accessible.name: qsTr("Display style")
-        ToolTip.visible: hovered
-        ToolTip.text: qsTr("Display style")
-        onClicked: displayMenu.open()
-        ThemedMenu {
-            id: displayMenu
+        onActivated: index => root.renderMode = index
+        ThemedToolTip {
             theme: root.theme
-            y: parent.height
-            ThemedMenuItem { theme: displayMenu.theme; text: qsTr("Solid"); checkable: true; checked: root.renderMode === 0; onTriggered: root.renderMode = 0 }
-            ThemedMenuItem { theme: displayMenu.theme; text: qsTr("Solid + Edges"); checkable: true; checked: root.renderMode === 1; onTriggered: root.renderMode = 1 }
-            ThemedMenuItem { theme: displayMenu.theme; text: qsTr("Edges Only"); checkable: true; checked: root.renderMode === 2; onTriggered: root.renderMode = 2 }
+            text: qsTr("Display style")
+            visible: parent.hovered
         }
     }
 
@@ -1219,67 +1323,21 @@ Item {
         projectionMode: navigation.projectionMode
         visible: !root.presentationOnly && !root.captureUiHidden
         anchors.top: parent.top
-        anchors.right: displayButton.left
+        anchors.right: displayModeControl.left
         anchors.topMargin: 12
         anchors.rightMargin: 8
         onProjectionRequested: function(mode) { navigation.setProjection(mode) }
     }
 
-    Item {
+    ViewCube {
         id: viewCube
+        theme: root.theme
         visible: !root.presentationOnly && !root.captureUiHidden
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.topMargin: displayButton.height + 18
-        anchors.rightMargin: 12
-        width: 94
-        height: 94
-
-        Rectangle {
-            x: 10
-            y: 30
-            width: 50
-            height: 50
-            radius: 4
-            color: root.theme.surfaceRaised
-            border.color: root.theme.border
-        }
-        ThemedButton {
-            theme: root.theme
-            x: 10
-            y: 4
-            width: 50
-            height: 24
-            text: qsTr("T")
-            Accessible.name: qsTr("Top view")
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("Top view")
-            onClicked: root.setStandardView(Qt.vector3d(0, 1, 0))
-        }
-        ThemedButton {
-            theme: root.theme
-            x: 10
-            y: 30
-            width: 50
-            height: 50
-            text: qsTr("F")
-            Accessible.name: qsTr("Front view")
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("Front view")
-            onClicked: root.setStandardView(Qt.vector3d(0, 0, 1))
-        }
-        ThemedButton {
-            theme: root.theme
-            x: 62
-            y: 30
-            width: 30
-            height: 50
-            text: qsTr("R")
-            Accessible.name: qsTr("Right view")
-            ToolTip.visible: hovered
-            ToolTip.text: qsTr("Right view")
-            onClicked: root.setStandardView(Qt.vector3d(1, 0, 0))
-        }
+        anchors.topMargin: displayModeControl.height + 22
+        anchors.rightMargin: 14
+        onViewRequested: function(normal) { root.setStandardView(normal) }
     }
 
     Shortcut { sequence: "F"; enabled: !root.presentationOnly; onActivated: root.fitCamera() }
@@ -1294,7 +1352,8 @@ Item {
     Shortcut { sequences: ["1"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 0 }
     Shortcut { sequences: ["2"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 1 }
     Shortcut { sequences: ["3"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 2 }
-    Shortcut { sequences: [StandardKey.Open]; enabled: !root.presentationOnly; onActivated: root.openFileRequested() }
+    // Ctrl/Cmd+O is owned by the File > Open STEP… menu item (Main.qml) so
+    // there is exactly one shortcut registration for it at window scope.
     Shortcut {
         sequence: "Esc"
         enabled: !root.presentationOnly && sectionArrowInput.dragging
@@ -1309,31 +1368,12 @@ Item {
         }
     }
 
-    Rectangle {
-        visible: root.captureInProgress
-        anchors.left: parent.left
-        anchors.bottom: parent.bottom
-        anchors.margins: 16
-        radius: 4
-        color: "#0e171dcc"
-        border.color: "#67d5c0"
-        implicitWidth: measurementOverlay.implicitWidth + 18
-        implicitHeight: measurementOverlay.implicitHeight + 12
-        Label {
-            id: measurementOverlay
-            anchors.centerIn: parent
-            text: root.controller ? root.controller.measurement.resultLabel : ""
-            color: "#dffbf4"
-            font.bold: true
-        }
-    }
-
     Connections {
         target: root.controller
         function onSnapshotChanged() { root.clearMeshes() }
         function onMeshReady(nodeId, segmentKey, sourceColor, meshJson) { root.appendMesh(nodeId, segmentKey, sourceColor, meshJson) }
         function onEdgeReady(nodeId, edgeJson) { root.appendEdges(nodeId, edgeJson) }
-        function onFitRequested() { root.fitCamera() }
+        function onFitRequested() { root.fitSelection() }
         function onVisibilityChanged() { root.applyPresentation() }
         function onComponentPropertiesChanged() { root.applyAppearance() }
         function onActiveNodeIdChanged() { root.applyRenderMode() }
@@ -1351,5 +1391,9 @@ Item {
     Connections {
         target: root.controller ? root.controller.measurement : null
         function onModeChanged() { root.clearMeasurementHighlights() }
+        function onResultChanged() {
+            if (root.controller && root.controller.measurement.pickedEntities.length === 0)
+                root.clearMeasurementHighlights()
+        }
     }
 }

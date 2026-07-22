@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include "app/render/SceneModel.h"
 #include "app/render/CadEdgeGeometry.h"
+#include "app/render/SectionMeshBuilder.h"
 #include "protocol/GeometryPayload.h"
 
 class SceneModelTest final : public QObject
@@ -23,6 +24,7 @@ private slots:
     void meshGeometrySliceSuppressesGeometryAwayFromPlane();
     void meshGeometryPreviewOmitsCapUntilCommit();
     void meshGeometryBuildsSectionOverlayWithoutBodyFaces();
+    void sectionOverlayBuildsFilledContoursWithRoundedJoins();
     void topologyRangesResolveAndCopyCompleteEntities();
     void faceBoundaryExcludesInternalTessellationEdges();
 };
@@ -194,12 +196,38 @@ void SceneModelTest::meshGeometryBuildsSectionOverlayWithoutBodyFaces()
     loupe::app::render::MeshGeometry overlay;
     QVERIFY(overlay.copySectionOverlayFrom(&source));
     QCOMPARE(overlay.triangleCount(), 0);
-    overlay.configureSection(true, 0.0, 0.0, 1.0, 0.0, false, true, false, true, true, false);
+    overlay.configureSection(true, 0.0, 0.0, 1.0, 0.0, false, true, true,
+                             true, true, false, 0.1);
     QVERIFY(overlay.sectionBusy());
     QTRY_VERIFY_WITH_TIMEOUT(overlay.sectionCapTriangleCount() >= 2, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(!overlay.sectionBusy(), 3000);
     QCOMPARE(overlay.triangleCount(), overlay.sectionCapTriangleCount());
+    QCOMPARE(overlay.subsetCount(), 2);
+    QCOMPARE(overlay.subsetName(0), QStringLiteral("section-fill"));
+    QCOMPARE(overlay.subsetName(1), QStringLiteral("section-outline"));
     QCOMPARE(source.triangleCount(), 12);
+}
+
+void SceneModelTest::sectionOverlayBuildsFilledContoursWithRoundedJoins()
+{
+    auto source = QSharedPointer<loupe::app::render::SectionSourceData>::create();
+    source->vertices = {-1.0F, -1.0F, -1.0F, 1.0F, -1.0F, -1.0F, 1.0F, 1.0F, -1.0F, -1.0F, 1.0F, -1.0F,
+                        -1.0F, -1.0F, 1.0F, 1.0F, -1.0F, 1.0F, 1.0F, 1.0F, 1.0F, -1.0F, 1.0F, 1.0F};
+    source->indices = {0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4,
+                       1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7};
+
+    loupe::app::render::SectionBuildRequest request;
+    request.source = source;
+    request.sliceOnly = true;
+    request.sliceFill = true;
+    request.sliceOutline = true;
+    request.outlineWidth = 0.1F;
+    const auto result = loupe::app::render::buildSectionOverlay(request);
+
+    QVERIFY(result.fillIndexCount >= 12);
+    const auto outlineIndexCount = result.indices.size() - result.fillIndexCount;
+    QVERIFY(outlineIndexCount >= 240);
+    QCOMPARE(result.capTriangleCount, result.indices.size() / 3);
 }
 
 void SceneModelTest::topologyRangesResolveAndCopyCompleteEntities()

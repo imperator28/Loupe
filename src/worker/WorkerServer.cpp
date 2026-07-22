@@ -206,7 +206,7 @@ void prepareTessellation(const TopoDS_Shape& shape, const double sourceToMillime
     BRepMesh_IncrementalMesh mesher(shape, linearDeflection, false, profile.angularDeflectionRadians, true);
 }
 
-QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const double sourceToMillimeters,
+QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters,
                                 const occ::handle<XCAFDoc_ColorTool>& colors,
                                 const TDF_Label& occurrence, const TDF_Label& definition)
 {
@@ -227,7 +227,7 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const double sourceTo
         }
         auto& segment = segments[segmentIndexes.value(color)];
         const int vertexOffset = segment.vertices.size() / 3;
-        const auto transform = location.Transformation();
+        const auto transform = placement.Multiplied(location.Transformation());
         BRepLib_ToolTriangulatedShape::ComputeNormals(face, triangulation);
         const auto firstIndex = static_cast<quint32>(segment.indices.size());
         for (int node = 1; node <= triangulation->NbNodes(); ++node) {
@@ -272,7 +272,7 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const double sourceTo
     return segments;
 }
 
-EdgePayload encodeEdges(const TopoDS_Shape& shape, const double sourceToMillimeters, const TessellationProfile& profile)
+EdgePayload encodeEdges(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters, const TessellationProfile& profile)
 {
     EdgePayload payload;
     TopTools_IndexedMapOfShape edgeMap;
@@ -291,7 +291,7 @@ EdgePayload encodeEdges(const TopoDS_Shape& shape, const double sourceToMillimet
             const auto firstVertex = payload.vertices.size() / 3;
             const auto firstIndex = static_cast<quint32>(payload.indices.size());
             for (int pointIndex = 1; pointIndex <= points.NbPoints(); ++pointIndex) {
-                const auto point = points.Value(pointIndex);
+                const auto point = points.Value(pointIndex).Transformed(placement);
                 payload.vertices.append(static_cast<float>(point.X() * sourceToMillimeters));
                 payload.vertices.append(static_cast<float>(point.Y() * sourceToMillimeters));
                 payload.vertices.append(static_cast<float>(point.Z() * sourceToMillimeters));
@@ -483,7 +483,7 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 post({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                       {QStringLiteral("snapshotBase64"), QString::fromLatin1(snapshot.toBase64())}});
                 treeReadyMs = elapsed.elapsed();
-                const auto shapeCount = std::min({sessionImport.native->shapes.size(), sessionImport.native->shapeNodeIds.size(),
+                const auto shapeCount = std::min({sessionImport.native->shapes.size(), sessionImport.native->shapePlacements.size(), sessionImport.native->shapeNodeIds.size(),
                                                   sessionImport.native->definitionLabels.size(), sessionImport.native->definitionIds.size()});
                 const auto colors = XCAFDoc_DocumentTool::ColorTool(sessionImport.native->document->Main());
                 const auto sendProfile = [&](const TessellationProfile& profile, const double start, const double end) {
@@ -498,7 +498,7 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                             prepareTessellation(definitionShape, unitDecision.sourceToMillimeters, profile);
                             preparedDefinitions.insert(definitionId);
                         }
-                        const auto segments = encodeMesh(shape, unitDecision.sourceToMillimeters, colors,
+                        const auto segments = encodeMesh(shape, sessionImport.native->shapePlacements[index], unitDecision.sourceToMillimeters, colors,
                                                          sessionImport.native->labels[index], sessionImport.native->definitionLabels[index]);
                         if (job->canceled.load()) return false;
                         for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
@@ -514,7 +514,7 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                                                                profile.refinement, segment.vertices, segment.normals, segment.indices,
                                                                segment.topology});
                         }
-                        const auto edges = encodeEdges(shape, unitDecision.sourceToMillimeters, profile);
+                        const auto edges = encodeEdges(shape, sessionImport.native->shapePlacements[index], unitDecision.sourceToMillimeters, profile);
                         if (!edges.indices.isEmpty()) {
                             postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
                                                                edges.vertices, edges.indices, edges.topology});

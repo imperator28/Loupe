@@ -32,6 +32,7 @@ TEST_CASE("STEP importer preserves definition and repeated occurrences", "[step]
     REQUIRE(occurrenceDefinitions.size() == 2);
     REQUIRE(occurrenceDefinitions[0] == occurrenceDefinitions[1]);
     REQUIRE(result.native->shapes.size() == 2);
+    REQUIRE(result.native->shapePlacements.size() == result.native->shapes.size());
     REQUIRE(result.native->definitionIds.size() == result.native->shapes.size());
     REQUIRE(result.native->definitionIds[0] == result.native->definitionIds[1]);
 
@@ -43,6 +44,7 @@ TEST_CASE("STEP importer preserves definition and repeated occurrences", "[step]
     REQUIRE(secondOccurrence->placement.columnMajor[0] == Catch::Approx(1.0));
     REQUIRE(secondOccurrence->placement.columnMajor[5] == Catch::Approx(1.0));
     REQUIRE(secondOccurrence->placement.columnMajor[10] == Catch::Approx(1.0));
+    REQUIRE(result.native->shapePlacements[1].TranslationPart().X() == Catch::Approx(25.0));
 }
 
 TEST_CASE("STEP importer classifies flat and single-part files", "[step][classification]")

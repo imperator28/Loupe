@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/models/ThemePreference.h"
@@ -18,7 +19,7 @@ int main(int argc, char* argv[])
     QGuiApplication application(argc, argv);
     application.setOrganizationName(QStringLiteral("imperator28"));
     application.setApplicationName(QStringLiteral("Loupe"));
-    application.setWindowIcon(QIcon(QStringLiteral(":/branding/loupe-app-icon.svg")));
+    application.setWindowIcon(QIcon(QStringLiteral(":/branding/loupe-app-icon.png")));
     QPalette palette;
     palette.setColor(QPalette::Window, QColor("#182027"));
     palette.setColor(QPalette::WindowText, QColor("#e6edf3"));
@@ -35,6 +36,7 @@ int main(int argc, char* argv[])
     qmlRegisterUncreatableMetaObject(loupe::app::staticMetaObject, "Loupe.App", 1, 0, "AppState", "Application state only");
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");
     qmlRegisterType<loupe::app::models::ThemePreference>("Loupe.App", 1, 0, "ThemePreference");
+    qmlRegisterType<loupe::app::platform::WindowChrome>("Loupe.App", 1, 0, "WindowChrome");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
 

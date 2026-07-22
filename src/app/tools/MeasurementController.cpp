@@ -149,7 +149,6 @@ bool MeasurementController::recordTopologyPick(const QString& entityKind, const 
 
 void MeasurementController::clearPicks()
 {
-    if (pickedPointsMm_.isEmpty()) return;
     pickedPointsMm_.clear();
     pickedNormals_.clear();
     pickedDescriptions_.clear();

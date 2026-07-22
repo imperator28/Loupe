@@ -6,8 +6,10 @@ Node {
 
     property vector3d normal: Qt.vector3d(0, 0, 1)
     property real arrowLength: 1
-    property color color: "#00a89b"
-    property color outlineColor: "#ffffff"
+    // Overridden by the caller with theme.accentVivid / a themed contrast
+    // color; these are inert defaults for standalone use only.
+    property color color: "transparent"
+    property color outlineColor: "transparent"
 
     function removedSideNormal(value, flipped) {
         const direction = flipped ? 1 : -1

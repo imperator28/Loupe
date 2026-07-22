@@ -5,28 +5,26 @@
 
 ## Objective
 
-Give the repository a clear GitHub entry point and give the desktop application a recognizable, original icon based on a physical loupe. The result must accurately present the current functional review build without implying that Loupe is a signed or production-ready release.
+Give the repository a clear GitHub entry point and give the desktop application a recognizable brand icon. The result must accurately present the current functional review build without implying that Loupe is a signed or production-ready release.
 
-## App icon: Precision Glass
+## App icon: Layered Glass
 
-The icon uses a macOS-style rounded-square container and a simplified loupe silhouette.
+The current icon uses the user-supplied layered-glass artwork inside a macOS-style rounded-square container. This supersedes the original magnifying-glass concept.
 
 ### Geometry
 
-- Source format: hand-authored SVG with a `1024 x 1024` view box.
-- Container: rounded square with generous optical margin and approximately 22 percent corner radius.
-- Loupe: large circular lens in the upper-left/center area with a short handle angled down-right at approximately 45 degrees.
-- The ring and handle form one visually continuous object.
-- Shapes remain broad and uncomplicated so the loupe is identifiable at 16 px.
-- No text, photographic detail, mesh texture, drop shadow, or thin decorative linework.
+- Source format: adapted from the supplied self-contained SVG with a `500 x 500` view box.
+- The supplied embedded image and vector gradient overlays remain unchanged inside the icon boundary.
+- Container: 444-unit rounded square with a 28-unit transparent optical margin and 105-unit corner radius.
+- Three translucent elliptical glass layers remain centered and vertically stacked.
+- No text or additional decorative elements are introduced.
 
 ### Color
 
-- Background: deep teal-to-cyan diagonal gradient.
-- Loupe ring and handle: warm off-white for strong contrast.
-- Lens: pale translucent aqua over the background, with one broad flat highlight shape.
-- A dark teal connector detail may separate the ring from handle without compromising the silhouette.
-- The design must also remain recognizable when converted to grayscale.
+- Background: black-to-indigo gradient from upper left to lower right.
+- Glass layers: translucent gray-to-lilac gradients with light defining outlines.
+- The supplied colors and layer opacity are preserved.
+- The design remains recognizable when converted to grayscale.
 
 ### Assets and integration
 
@@ -57,8 +55,8 @@ The README will not include false CI badges, invented performance numbers, place
 
 ## Acceptance
 
-- The SVG is valid XML and contains only vector geometry/gradients.
-- The loupe remains legible at macOS Dock and Finder sizes.
+- The adapted SVG is valid XML, self-contained, and uses a true rounded clipping path.
+- The layered-glass mark remains legible at macOS Dock and Finder sizes.
 - The app bundle and window use the new icon.
 - Debug build and all configured tests pass.
 - The README commands match checked-in CMake presets and scripts.

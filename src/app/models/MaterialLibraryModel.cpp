@@ -10,9 +10,20 @@ namespace loupe::app::models {
 MaterialLibraryModel::MaterialLibraryModel(QObject* parent)
     : QObject(parent)
     , entries_{{{"aluminum-6061", "Aluminum 6061", 2.70}, QStringLiteral("#B8C2CC"), false},
+               {{"aluminum-casting", "Aluminum casting", 2.68}, QStringLiteral("#9EABB7"), false},
                {{"steel-carbon", "Carbon steel", 7.85}, QStringLiteral("#6F7E8B"), false},
                {{"stainless-304", "Stainless steel 304", 8.00}, QStringLiteral("#C7D0D8"), false},
-               {{"abs", "ABS", 1.04}, QStringLiteral("#D1A45B"), false}}
+               {{"zinc-alloy", "Zinc alloy", 6.60}, QStringLiteral("#8A929A"), false},
+               {{"copper", "Copper", 8.96}, QStringLiteral("#C9825D"), false},
+               {{"abs", "ABS", 1.04}, QStringLiteral("#D1A45B"), false},
+               {{"pp", "Polypropylene (PP)", 0.90}, QStringLiteral("#B8B8AD"), false},
+               {{"hdpe", "HDPE", 0.95}, QStringLiteral("#D9E3E4"), false},
+               {{"pc", "Polycarbonate (PC)", 1.20}, QStringLiteral("#8596A6"), false},
+               {{"pa", "Polyamide (PA / nylon)", 1.14}, QStringLiteral("#D3C6A9"), false},
+               {{"pmma", "PMMA (acrylic)", 1.18}, QStringLiteral("#BFD8E6"), false},
+               {{"fr4", "PCBA (FR-4)", 1.85}, QStringLiteral("#3A7A58"), false},
+               {{"rubber-hnbr", "Rubber (HNBR)", 1.20}, QStringLiteral("#36393E"), false},
+               {{"silicone", "Silicone rubber", 1.10}, QStringLiteral("#D6D8DC"), false}}
 {
     try {
         store_ = std::make_unique<cache::MaterialStore>();

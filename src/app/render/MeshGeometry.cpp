@@ -272,7 +272,7 @@ void MeshGeometry::setSectionPlane(const bool enabled, const double normalX, con
 void MeshGeometry::configureSection(const bool enabled, const double normalX, const double normalY,
                                     const double normalZ, const double offset, const bool flipped,
                                     const bool capEnabled, const bool sliceOnly, const bool sliceFill,
-                                    const bool sliceOutline, const bool preview)
+                                    const bool sliceOutline, const bool preview, const double outlineWidth)
 {
     const QVector3D normal{static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)};
     if (normal.isNull()) return;
@@ -281,7 +281,8 @@ void MeshGeometry::configureSection(const bool enabled, const double normalX, co
         && qFuzzyCompare(sectionOffset_ + 1.0, offset + 1.0) && sectionFlipped_ == flipped
         && sectionCapEnabled_ == capEnabled && sectionSliceOnly_ == sliceOnly
         && sectionSliceFill_ == sliceFill && sectionSliceOutline_ == sliceOutline
-        && sectionPreview_ == preview) return;
+        && sectionPreview_ == preview
+        && qFuzzyCompare(sectionOutlineWidth_ + 1.0, outlineWidth + 1.0)) return;
     sectionEnabled_ = enabled;
     sectionNormal_ = normalized;
     sectionOffset_ = offset;
@@ -291,6 +292,7 @@ void MeshGeometry::configureSection(const bool enabled, const double normalX, co
     sectionSliceFill_ = sliceFill;
     sectionSliceOutline_ = sliceOutline;
     sectionPreview_ = preview;
+    sectionOutlineWidth_ = std::max(0.0, outlineWidth);
     if (sectionOverlayOnly_) {
         if (sectionEnabled_ && !sectionPreview_)
             startSectionOverlayBuild();
@@ -333,6 +335,7 @@ void MeshGeometry::rebuildDisplayMesh()
     normalData_.clear();
     indexData_.clear();
     sectionCapTriangleCount_ = 0;
+    sectionFillIndexCount_ = 0;
     if (!sectionEnabled_ && sectionOverlayOnly_) {
         upload();
         return;
@@ -406,15 +409,20 @@ void MeshGeometry::rebuildDisplayMesh()
             sourceMaximum.setY(std::max(sourceMaximum.y(), point.y()));
             sourceMaximum.setZ(std::max(sourceMaximum.z(), point.z()));
         }
-        const auto halfWidth = std::max(0.01F, (sourceMaximum - sourceMinimum).length() * 0.00035F);
+        const auto sourceDiagonal = (sourceMaximum - sourceMinimum).length();
+        const auto halfWidth = sectionOutlineWidth_ > 0.0
+                ? static_cast<float>(sectionOutlineWidth_ * 0.5)
+                : std::max(0.01F, sourceDiagonal * 0.00035F);
+        const auto removedNormal = sectionNormal_ * (sectionFlipped_ ? 1.0F : -1.0F);
+        const auto depthLift = removedNormal * std::max(sourceDiagonal * 0.000002F, halfWidth * 0.025F);
         for (const auto& segment : sliceSegments) {
             const auto direction = (segment.end - segment.start).normalized();
             const auto offset = QVector3D::crossProduct(sectionNormal_, direction).normalized() * halfWidth;
             if (offset.isNull()) continue;
-            const auto firstLeft = segment.start - offset;
-            const auto firstRight = segment.start + offset;
-            const auto secondLeft = segment.end - offset;
-            const auto secondRight = segment.end + offset;
+            const auto firstLeft = segment.start - offset + depthLift;
+            const auto firstRight = segment.start + offset + depthLift;
+            const auto secondLeft = segment.end - offset + depthLift;
+            const auto secondRight = segment.end + offset + depthLift;
             appendVertex(firstLeft); appendVertex(secondLeft); appendVertex(secondRight);
             appendVertex(firstLeft); appendVertex(secondRight); appendVertex(firstRight);
             appendVertex(secondRight); appendVertex(secondLeft); appendVertex(firstLeft);
@@ -427,6 +435,7 @@ void MeshGeometry::rebuildDisplayMesh()
         vertexData_.clear();
         normalData_.clear();
         indexData_.clear();
+        sectionFillIndexCount_ = 0;
         if (sectionSliceOutline_) appendSliceOutline(sliceSegments);
         sectionCapTriangleCount_ = static_cast<int>(indexData_.size() / 3);
         rebuildDisplayNormals();
@@ -505,6 +514,7 @@ void MeshGeometry::rebuildDisplayMesh()
         sectionCapTriangleCount_ = static_cast<int>(capVertices.size() / 9);
         for (qsizetype index = 0; index + 2 < capVertices.size(); index += 3) appendVertex({capVertices.at(index), capVertices.at(index + 1), capVertices.at(index + 2)});
     }
+    sectionFillIndexCount_ = static_cast<int>(indexData_.size());
     if (sectionSliceOnly_ && sectionSliceOutline_) appendSliceOutline(sliceSegments);
     if (sectionSliceOnly_) sectionCapTriangleCount_ = static_cast<int>(indexData_.size() / 3);
     rebuildDisplayNormals();
@@ -527,7 +537,7 @@ void MeshGeometry::startSectionOverlayBuild()
     const auto generation = ++sectionBuildGeneration_;
     SectionBuildRequest request{sectionSource_, sectionNormal_, sectionOffset_,
                                 sectionFlipped_, sectionCapEnabled_, sectionSliceOnly_, sectionSliceFill_,
-                                sectionSliceOutline_};
+                                sectionSliceOutline_, static_cast<float>(sectionOutlineWidth_)};
     const auto wasBusy = sectionBusy();
     ++pendingSectionBuilds_;
     if (!wasBusy) emit sectionBusyChanged();
@@ -539,6 +549,7 @@ void MeshGeometry::startSectionOverlayBuild()
             vertexData_ = result.vertices;
             indexData_ = result.indices;
             sectionCapTriangleCount_ = result.capTriangleCount;
+            sectionFillIndexCount_ = result.fillIndexCount;
             rebuildDisplayNormals();
             upload();
         }
@@ -567,6 +578,13 @@ void MeshGeometry::upload()
             interleaved.append(0.0F); interleaved.append(0.0F); interleaved.append(1.0F);
         }
     }
+    clear();
+    setPrimitiveType(PrimitiveType::Triangles);
+    setStride(static_cast<int>(6 * sizeof(float)));
+    addAttribute(Attribute::PositionSemantic, 0, Attribute::F32Type);
+    addAttribute(Attribute::NormalSemantic, static_cast<int>(3 * sizeof(float)), Attribute::F32Type);
+    addAttribute(Attribute::IndexSemantic, 0, Attribute::U32Type);
+
     QByteArray vertices(reinterpret_cast<const char*>(interleaved.constData()), static_cast<int>(interleaved.size() * static_cast<qsizetype>(sizeof(float))));
     QByteArray indices(reinterpret_cast<const char*>(indexData_.constData()), static_cast<int>(indexData_.size() * sizeof(quint32)));
     setVertexData(vertices);
@@ -585,6 +603,13 @@ void MeshGeometry::upload()
     }
     if (!vertexData_.isEmpty()) {
         setBounds(minimum, maximum);
+        if (sectionOverlayOnly_ && sectionSliceOnly_) {
+            const auto fillCount = std::clamp(sectionFillIndexCount_, 0, static_cast<int>(indexData_.size()));
+            const auto outlineCount = static_cast<int>(indexData_.size()) - fillCount;
+            addSubset(0, fillCount, minimum, maximum, QStringLiteral("section-fill"));
+            if (outlineCount > 0)
+                addSubset(fillCount, outlineCount, minimum, maximum, QStringLiteral("section-outline"));
+        }
     }
     update();
 }

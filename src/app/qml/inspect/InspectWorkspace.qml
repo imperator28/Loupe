@@ -8,8 +8,8 @@ Item {
     id: root
     property QtObject controller
     property QtObject theme
-    readonly property color foreground: theme && theme.dark ? "#e6edf3" : "#172127"
-    readonly property color subduedForeground: theme && theme.dark ? "#aeb8c2" : "#53636c"
+    readonly property color foreground: theme ? theme.foreground : "transparent"
+    readonly property color subduedForeground: theme ? theme.muted : "transparent"
     property string activeTask: ""
     property bool taskPanelVisible: false
     property string treeHoveredNodeId: ""
@@ -45,19 +45,19 @@ Item {
 
     RowLayout {
         anchors.fill: parent
-        spacing: 10
+        anchors.margins: root.theme.spacing3
+        spacing: root.theme.spacing3
 
-        Rectangle {
+        ElevatedPanel {
             id: treePanel
-            color: root.theme.surfaceRaised
-            radius: 8
+            theme: root.theme
             Layout.preferredWidth: 248
             Layout.fillHeight: true
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 14
-                spacing: 8
+                anchors.margins: root.theme.spacing3
+                spacing: root.theme.spacing2
                 Label {
                     text: qsTr("Assembly tree")
                     color: root.foreground
@@ -75,24 +75,78 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     delegate: TreeViewDelegate {
+                        id: treeDelegate
                         required property string name
                         required property string stableId
                         required property int definitionQuantity
-                        highlighted: root.controller && root.controller.activeNodeId === stableId
+                        highlighted: root.controller && root.controller.selectedNodeIds.indexOf(stableId) >= 0
+                        implicitHeight: root.theme.rowCompact
+                        // Keep the label centered against the complete selection
+                        // row. TreeViewDelegate otherwise offsets its content box
+                        // for indentation, which makes selected labels look shifted.
+                        leftPadding: 0
+                        rightPadding: 0
+                        topPadding: 0
+                        bottomPadding: 0
                         palette.buttonText: root.theme.onSurface
                         palette.text: root.theme.onSurface
                         palette.windowText: root.theme.onSurface
                         palette.highlightedText: root.theme.onSurface
                         palette.base: root.theme.surfaceRaised
                         palette.alternateBase: root.theme.surfaceSubtle
-                        palette.highlight: root.theme.selection
-                        contentItem: Label {
-                            text: definitionQuantity > 0 ? qsTr("%1  %2x").arg(name).arg(definitionQuantity) : name
-                            color: root.foreground
-                            elide: Text.ElideRight
+                        palette.highlight: "transparent"
+                        // Qt's default indicator is a 40 px ColorImage sized for a
+                        // standard Button row; our compact 28 px rows clip/misalign
+                        // it (also why it reads as nearly invisible in dark mode).
+                        // A small themed glyph sized to the row fixes both.
+                        indicator: Text {
+                            visible: treeDelegate.hasChildren
+                            x: treeDelegate.leftMargin + treeDelegate.depth * treeDelegate.indentation
+                            y: (treeDelegate.height - height) / 2
+                            width: 16
+                            height: 16
+                            horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
+                            text: treeDelegate.expanded ? "▾" : "▸"
+                            color: root.foreground
+                            font.pixelSize: 11
                         }
-                        onClicked: root.controller.setActiveNodeId(stableId)
+                        background: Rectangle {
+                            radius: root.theme.radius1
+                            color: treeDelegate.highlighted ? root.theme.accentTint
+                                   : treeHover.hovered ? root.theme.accentTint
+                                                       : "transparent"
+                            opacity: treeDelegate.highlighted ? 1 : (treeHover.hovered ? 0.6 : 1)
+
+                            Rectangle {
+                                visible: treeDelegate.highlighted
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                width: 2
+                                color: root.theme.accent
+                            }
+
+                            Behavior on color {
+                                ColorAnimation { duration: root.theme.durInstant }
+                            }
+                        }
+                        contentItem: Item {
+                            implicitWidth: treeLabel.implicitWidth
+                            implicitHeight: root.theme.rowCompact
+
+                            Label {
+                                id: treeLabel
+                                anchors.fill: parent
+                                leftPadding: root.theme.spacing6
+                                rightPadding: root.theme.spacing6
+                                text: definitionQuantity > 0 ? qsTr("%1  %2x").arg(name).arg(definitionQuantity) : name
+                                color: root.foreground
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
                         HoverHandler {
                             id: treeHover
                             onHoveredChanged: {
@@ -102,11 +156,19 @@ Item {
                         }
                         onStableIdChanged: if (treeHover.hovered) root.treeHoveredNodeId = stableId
                         TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            onTapped: function(eventPoint) {
-                                root.controller.setActiveNodeId(stableId)
-                                treeContextMenu.targetNodeId = stableId
-                                treeContextMenu.popup(eventPoint.position.x, eventPoint.position.y)
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onTapped: function(eventPoint, button) {
+                                if (button === Qt.RightButton) {
+                                    if (root.controller.selectedNodeIds.indexOf(stableId) < 0)
+                                        root.controller.setActiveNodeId(stableId)
+                                    treeContextMenu.targetNodeId = stableId
+                                    treeContextMenu.popup(eventPoint.position.x, eventPoint.position.y)
+                                    return
+                                }
+                                const modifiers = eventPoint.modifiers
+                                root.controller.selectNode(stableId, (modifiers & Qt.ShiftModifier)
+                                                           || (modifiers & Qt.ControlModifier)
+                                                           || (modifiers & Qt.MetaModifier))
                             }
                         }
                     }
@@ -120,15 +182,18 @@ Item {
             }
         }
 
-        Rectangle {
+        ElevatedPanel {
             id: viewport
-            color: root.theme.viewport
-            radius: 8
+            theme: root.theme
+            wellSurface: true
             Layout.fillWidth: true
             Layout.fillHeight: true
             Loader {
                 id: viewportLoader
                 anchors.fill: parent
+                // Inset by the panel's own corner radius so the viewport's
+                // square corners don't paint over the rounded card boundary.
+                anchors.margins: root.theme.radius3
                 active: root.controller && (root.controller.documentState === AppState.Opening
                                             || root.controller.documentState === AppState.TreeReady)
                 source: "StepViewport.qml"
@@ -179,7 +244,8 @@ Item {
                     wrapMode: Text.Wrap
                 }
 
-                ProgressBar {
+                ThemedProgressBar {
+                    theme: root.theme
                     width: parent.width
                     visible: root.controller && root.controller.importInProgress
                     from: 0
@@ -196,7 +262,8 @@ Item {
                     horizontalAlignment: Text.AlignHCenter
                 }
 
-                Button {
+                ThemedButton {
+                    theme: root.theme
                     anchors.horizontalCenter: parent.horizontalCenter
                     visible: root.controller && root.controller.importInProgress
                     text: root.controller && root.controller.previewReady
@@ -210,7 +277,7 @@ Item {
                 anchors.topMargin: 16
                 width: Math.min(parent.width - 32, 480)
                 implicitHeight: refinementProgress.implicitHeight + 18
-                radius: 6
+                radius: root.theme.radius2
                 color: root.theme.surfaceRaised
                 border.color: root.theme.border
                 visible: root.controller && root.controller.documentState === AppState.TreeReady
@@ -221,14 +288,15 @@ Item {
                     id: refinementProgress
                     anchors.fill: parent
                     anchors.margins: 9
-                    spacing: 6
+                    spacing: root.theme.spacing2
                     Label {
                         width: parent.width
                         text: root.controller ? root.controller.importStage : ""
                         color: root.foreground
                         font.bold: true
                     }
-                    ProgressBar {
+                    ThemedProgressBar {
+                        theme: root.theme
                         width: parent.width
                         from: 0
                         to: 1
@@ -244,7 +312,8 @@ Item {
                                                                             : qsTr("estimating remaining time")) : ""
                             color: root.subduedForeground
                         }
-                        Button {
+                        ThemedButton {
+                            theme: root.theme
                             text: qsTr("Cancel refinement")
                             onClicked: root.controller.cancelImport()
                         }
@@ -305,6 +374,14 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 96
         active: root.activeTask !== "" && root.taskPanelVisible
+        // Subtle rise + fade as the tool panel appears, so it reads as
+        // surfacing from the toolbar rather than snapping into place.
+        opacity: active ? 1 : 0
+        transform: Translate {
+            y: taskPanelLoader.active ? 0 : 8
+            Behavior on y { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
+        }
+        Behavior on opacity { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
         source: root.activeTask === "measure" ? "MeasurementPanel.qml"
               : root.activeTask === "section" ? "SectionPanel.qml"
               : "CapturePanel.qml"
@@ -331,8 +408,20 @@ Item {
                 item.oppositeViewRequested.connect(function() {
                     if (viewportLoader.item) viewportLoader.item.alignToSection(true)
                 })
+                item.borderColorRequested.connect(function(currentColor) {
+                    sectionBorderColorDialog.selectedColor = currentColor
+                    sectionBorderColorDialog.open()
+                })
             }
         }
+    }
+
+    ColorDialog {
+        id: sectionBorderColorDialog
+        title: qsTr("Section border color")
+        selectedColor: root.theme.edge
+        onAccepted: if (root.controller)
+            root.controller.section.sliceBorderColor = selectedColor.toString()
     }
 
     FileDialog {

@@ -172,18 +172,20 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     }
 
     TDF_Label definition = referred;
+    const auto location = composedLocation(label, parentLocation);
     addDefinition(definition, hash, result, definitions);
     const auto definitionId = definitions.at(labelEntry(definition));
     const auto id = domain::stableId(hash, entry, component ? "occurrence" : "body");
     result.snapshot.nodes.push_back({id, component ? NodeKind::Occurrence : NodeKind::Body,
                                      displayName(label, definition, component ? "occurrence" : "body"), entry, parentId, definitionId,
-                                     transformFor(composedLocation(label, parentLocation))});
+                                     transformFor(location)});
     if (!parentId) result.snapshot.rootIds.push_back(id);
     if (component) ++result.occurrenceCount;
     auto native = std::const_pointer_cast<NativeDocument>(result.native);
     native->labels.push_back(label);
     native->definitionLabels.push_back(definition);
-    native->shapes.push_back(XCAFDoc_ShapeTool::GetShape(label));
+    native->shapes.push_back(XCAFDoc_ShapeTool::GetShape(definition));
+    native->shapePlacements.push_back(location);
     native->shapeNodeIds.push_back(id);
     native->definitionIds.push_back(definitionId);
 }
@@ -232,7 +234,9 @@ ImportResult StepImporter::read(const std::filesystem::path& file) const
     }
     Bnd_Box bounds;
     const auto mutableNative = std::const_pointer_cast<NativeDocument>(result.native);
-    for (const auto& shape : mutableNative->shapes) BRepBndLib::Add(shape, bounds);
+    for (std::size_t index = 0; index < mutableNative->shapes.size() && index < mutableNative->shapePlacements.size(); ++index) {
+        BRepBndLib::Add(mutableNative->shapes[index].Located(TopLoc_Location(mutableNative->shapePlacements[index])), bounds);
+    }
     if (!bounds.IsVoid()) {
         double minX, minY, minZ, maxX, maxY, maxZ;
         bounds.Get(minX, minY, minZ, maxX, maxY, maxZ);

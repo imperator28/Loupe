@@ -31,70 +31,165 @@ ApplicationWindow {
     palette.toolTipText: appTheme.onSurface
     property ApplicationController controller: ApplicationController {}
     property ThemePreference themePreference: ThemePreference {}
-    readonly property color themeForeground: appTheme.dark ? "#e6edf3" : "#172127"
-    readonly property color themeMuted: appTheme.dark ? "#aeb8c2" : "#53636c"
+    property WindowChrome windowChrome: WindowChrome {}
+    readonly property color themeForeground: appTheme.foreground
+    readonly property color themeMuted: appTheme.muted
+
+    function isSupportedStepUrl(fileUrl) {
+        const value = String(fileUrl).toLowerCase().split(/[?#]/)[0]
+        return value.startsWith("file:") && (value.endsWith(".step") || value.endsWith(".stp"))
+    }
+
+    function canOpenDroppedUrls(urls) {
+        return urls && urls.length === 1 && isSupportedStepUrl(urls[0])
+    }
+
+    function openDroppedUrls(urls) {
+        if (!canOpenDroppedUrls(urls)) return false
+        controller.setWorkspace(AppState.Inspect)
+        controller.openFile(urls[0])
+        return true
+    }
 
     SystemPalette {
         id: systemPalette
         colorGroup: SystemPalette.Active
     }
 
-    QtObject {
+    Theme {
         id: appTheme
-        property string mode: "System"
-        readonly property bool dark: mode === "Dark" || (mode === "System"
-            && systemPalette.window.r + systemPalette.window.g + systemPalette.window.b < 1.5)
-
-        readonly property color surface: dark ? "#101418" : "#f5f7f8"
-        readonly property color viewport: dark ? "#101418" : "#f7f9fa"
-        readonly property color surfaceRaised: dark ? "#182027" : "#ffffff"
-        readonly property color surfaceSubtle: dark ? "#202a33" : "#e8edf0"
-        readonly property color control: dark ? "#26323c" : "#dde5e9"
-        readonly property color border: dark ? "#34414b" : "#b9c5cb"
-        readonly property color onSurface: dark ? "#e6edf3" : "#172127"
-        readonly property color foreground: onSurface
-        readonly property color muted: dark ? "#aeb8c2" : "#53636c"
-        readonly property color accent: dark ? "#67d5c0" : "#087b74"
-        readonly property color selection: dark ? "#315b64" : "#a8ddd7"
-        readonly property color selectedBody: dark ? "#ffd166" : "#a86100"
-        readonly property color selectedEdge: dark ? "#fff0a6" : "#7d4a00"
-        readonly property color edge: dark ? "#b8c7d1" : "#3a525d"
-        readonly property color error: dark ? "#ffb4ab" : "#b42318"
+        systemDark: systemPalette.window.r + systemPalette.window.g + systemPalette.window.b < 1.5
+        // The OS does not re-skin native chrome (e.g. the macOS title bar)
+        // when only the in-app theme changes, so that has to be driven
+        // explicitly whenever the effective dark/light state changes.
+        onDarkChanged: root.windowChrome.applyAppearance(root, dark)
     }
 
-    Component.onCompleted: appTheme.mode = themePreference.mode
+    Component.onCompleted: {
+        appTheme.mode = themePreference.mode
+        windowChrome.applyAppearance(root, appTheme.dark)
+    }
     Connections {
         target: root.themePreference
         function onModeChanged() { appTheme.mode = root.themePreference.mode }
     }
 
+    menuBar: MenuBar {
+        Menu {
+            title: qsTr("File")
+            MenuItem {
+                action: Action {
+                    text: qsTr("Open STEP…")
+                    shortcut: StandardKey.Open
+                    onTriggered: openStepDialog.open()
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                action: Action {
+                    text: qsTr("Quit Loupe")
+                    shortcut: StandardKey.Quit
+                    onTriggered: Qt.quit()
+                }
+            }
+        }
+        Menu {
+            title: qsTr("View")
+            MenuItem {
+                text: qsTr("Inspect")
+                checkable: true
+                checked: root.controller.workspace === AppState.Inspect
+                onTriggered: root.controller.setWorkspace(AppState.Inspect)
+            }
+            MenuItem {
+                text: qsTr("Export")
+                checkable: true
+                checked: root.controller.workspace === AppState.Export
+                onTriggered: root.controller.setWorkspace(AppState.Export)
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: qsTr("Interaction…")
+                onTriggered: interactionGuide.open()
+            }
+            MenuSeparator {}
+            Menu {
+                title: qsTr("Appearance")
+                MenuItem {
+                    text: qsTr("System")
+                    checkable: true
+                    checked: root.themePreference.mode === "System"
+                    onTriggered: { appTheme.mode = "System"; root.themePreference.mode = "System" }
+                }
+                MenuItem {
+                    text: qsTr("Light")
+                    checkable: true
+                    checked: root.themePreference.mode === "Light"
+                    onTriggered: { appTheme.mode = "Light"; root.themePreference.mode = "Light" }
+                }
+                MenuItem {
+                    text: qsTr("Dark")
+                    checkable: true
+                    checked: root.themePreference.mode === "Dark"
+                    onTriggered: { appTheme.mode = "Dark"; root.themePreference.mode = "Dark" }
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: qsTr("Reduce Motion")
+                checkable: true
+                checked: appTheme.reducedMotion
+                onTriggered: appTheme.reducedMotion = checked
+            }
+            MenuSeparator {}
+            MenuItem {
+                text: qsTr("Review Source Units…")
+                onTriggered: unitReview.open()
+            }
+        }
+        Menu {
+            title: qsTr("Help")
+            MenuItem {
+                text: qsTr("About Loupe")
+                onTriggered: aboutLoupe.open()
+            }
+        }
+    }
+
     header: ToolBar {
+        implicitHeight: appTheme.toolbarHeight
         palette.buttonText: appTheme.onSurface
         palette.text: appTheme.onSurface
-        background: Rectangle { color: appTheme.surfaceRaised }
+        background: Rectangle {
+            color: appTheme.surfaceRaised
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: appTheme.border
+            }
+        }
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
-            spacing: 12
+            anchors.leftMargin: appTheme.spacing4
+            anchors.rightMargin: appTheme.spacing4
+            spacing: appTheme.spacing3
 
-            Label {
-                text: qsTr("Loupe")
-                font.bold: true
-                color: appTheme.dark ? "#e6edf3" : "#172127"
-            }
             Inspect.ThemedButton {
                 text: qsTr("Open STEP…")
                 theme: appTheme
                 Accessible.name: qsTr("Open a STEP file")
                 onClicked: openStepDialog.open()
             }
-            TabBar {
+            Inspect.ThemedSegmentedControl {
                 id: workspaceSwitcher
+                theme: appTheme
+                model: [qsTr("Inspect"), qsTr("Export")]
                 currentIndex: root.controller.workspace === AppState.Inspect ? 0 : 1
-                onCurrentIndexChanged: root.controller.setWorkspace(currentIndex === 0 ? AppState.Inspect : AppState.Export)
-                Inspect.ThemedTabButton { text: qsTr("Inspect"); theme: appTheme }
-                Inspect.ThemedTabButton { text: qsTr("Export"); theme: appTheme }
+                implicitWidth: 176
+                Accessible.name: qsTr("Workspace")
+                onActivated: index => root.controller.setWorkspace(index === 0 ? AppState.Inspect : AppState.Export)
             }
             Item { Layout.fillWidth: true }
             Inspect.ThemedButton {
@@ -103,64 +198,13 @@ ApplicationWindow {
                 Accessible.name: qsTr("Review source units")
                 onClicked: unitReview.open()
             }
-            ComboBox {
+            Inspect.ThemedComboBox {
                 id: themeChooser
+                theme: appTheme
                 model: [qsTr("System"), qsTr("Light"), qsTr("Dark")]
                 currentIndex: root.themePreference.mode === "Light" ? 1 : root.themePreference.mode === "Dark" ? 2 : 0
                 Accessible.name: qsTr("Color theme")
                 implicitWidth: 116
-                implicitHeight: 30
-                leftPadding: 10
-                rightPadding: 28
-                contentItem: Label {
-                    text: themeChooser.displayText
-                    color: root.themeForeground
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                }
-                background: Rectangle {
-                    radius: 4
-                    color: appTheme.control
-                    border.color: appTheme.border
-                }
-                indicator: Text {
-                    text: "⌄"
-                    color: root.themeForeground
-                    anchors.right: parent.right
-                    anchors.rightMargin: 9
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                delegate: ItemDelegate {
-                    width: themeChooser.width
-                    height: 30
-                    highlighted: themeChooser.highlightedIndex === index
-                    contentItem: Label {
-                        text: modelData
-                        color: root.themeForeground
-                        verticalAlignment: Text.AlignVCenter
-                        leftPadding: 10
-                    }
-                    background: Rectangle {
-                        color: parent.highlighted ? appTheme.selection : appTheme.surfaceRaised
-                    }
-                }
-                popup: Popup {
-                    y: themeChooser.height + 4
-                    width: themeChooser.width
-                    implicitHeight: contentItem.implicitHeight + 8
-                    padding: 4
-                    contentItem: ListView {
-                        clip: true
-                        implicitHeight: contentHeight
-                        model: themeChooser.popup.visible ? themeChooser.delegateModel : null
-                        currentIndex: themeChooser.highlightedIndex
-                    }
-                    background: Rectangle {
-                        radius: 4
-                        color: appTheme.surfaceRaised
-                        border.color: appTheme.border
-                    }
-                }
                 onActivated: {
                     const mode = currentIndex === 1 ? "Light" : currentIndex === 2 ? "Dark" : "System"
                     appTheme.mode = mode
@@ -185,14 +229,97 @@ ApplicationWindow {
         }
     }
 
+    DropArea {
+        id: fileDropArea
+        objectName: "stepFileDropArea"
+        anchors.fill: parent
+        z: 200
+        property bool supported: false
+
+        onEntered: function(drag) {
+            supported = root.canOpenDroppedUrls(drag.urls)
+            drag.accepted = supported
+        }
+        onExited: supported = false
+        onDropped: function(drop) {
+            const opened = root.openDroppedUrls(drop.urls)
+            supported = false
+            if (opened) drop.acceptProposedAction()
+        }
+    }
+
+    Item {
+        id: fileDropOverlay
+        objectName: "stepFileDropOverlay"
+        anchors.fill: parent
+        z: 199
+        visible: fileDropArea.containsDrag
+        enabled: false
+        readonly property real cornerRadius: appTheme.windowRadius
+        readonly property color borderColor: fileDropArea.supported ? appTheme.accent : appTheme.error
+
+        // Keep the top edge straight under the toolbar, but begin the rounded
+        // surface above the content area so its lower corners follow native
+        // macOS/Windows window framing instead of ending as a square border.
+        Rectangle {
+            id: dropOverlaySurface
+            objectName: "stepFileDropOverlaySurface"
+            x: 0
+            y: -fileDropOverlay.cornerRadius
+            width: parent.width
+            height: parent.height + fileDropOverlay.cornerRadius
+            radius: fileDropOverlay.cornerRadius
+            color: Qt.rgba(appTheme.surface.r, appTheme.surface.g, appTheme.surface.b, 0.9)
+            border.width: 3
+            border.color: fileDropOverlay.borderColor
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 3
+            color: fileDropOverlay.borderColor
+        }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: appTheme.spacing2
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: fileDropArea.supported ? qsTr("Drop STEP to open") : qsTr("Choose one .step or .stp file")
+                color: fileDropArea.supported ? appTheme.accent : appTheme.error
+                font.bold: true
+                font.pixelSize: appTheme.fontTitle
+            }
+            Label {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: fileDropArea.supported ? qsTr("Loupe will open it in the Inspect workspace")
+                                             : qsTr("This drop cannot be opened")
+                color: appTheme.muted
+                font.pixelSize: appTheme.fontBody
+            }
+        }
+    }
+
     Popup {
         id: unitReview
         modal: true
         anchors.centerIn: Overlay.overlay
-        padding: 20
+        width: Math.min(560, Overlay.overlay.width - appTheme.spacing6 * 2)
+        padding: appTheme.spacing6
+        background: Inspect.ElevatedPanel { theme: appTheme; cornerRadius: appTheme.radius4 }
+        enter: Transition {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: appTheme.durStandard }
+            NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: appTheme.durStandard
+                easing.type: Easing.BezierSpline; easing.bezierCurve: appTheme.easeEnter }
+        }
+        exit: Transition {
+            NumberAnimation { property: "opacity"; from: 1; to: 0; duration: Math.round(appTheme.durStandard * 0.7) }
+        }
         contentItem: ColumnLayout {
-            width: 300
-            spacing: 12
+            width: unitReview.availableWidth
+            spacing: appTheme.spacing3
 
             Label {
                 text: qsTr("Source unit review")
@@ -212,8 +339,9 @@ ApplicationWindow {
             }
             RowLayout {
                 Layout.fillWidth: true
-            Inspect.ThemedButton {
+                Inspect.ThemedButton {
                     theme: appTheme
+                    primary: true
                     Layout.fillWidth: true
                     text: qsTr("Interpret as mm")
                     enabled: root.controller.documentState === AppState.TreeReady
@@ -232,6 +360,16 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    Inspect.AboutLoupeDialog {
+        id: aboutLoupe
+        theme: appTheme
+    }
+
+    Inspect.InteractionGuide {
+        id: interactionGuide
+        theme: appTheme
     }
 
     OpenStepDialog {

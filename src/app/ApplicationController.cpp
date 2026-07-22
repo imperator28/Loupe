@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
 #include <QProcessEnvironment>
 #include <QTimer>
 #include <QUrl>
@@ -29,7 +30,9 @@ namespace {
 
 const auto kImporterVersion = QStringLiteral("step-importer-4");
 const auto kMeshProfile = QStringLiteral("progressive-1");
-const auto kGeometryCacheProfile = QStringLiteral("progressive-2-topology-geometry");
+// Mesh payloads now contain the composed occurrence transform.  Keep older
+// local-coordinate payloads out of the replay cache.
+const auto kGeometryCacheProfile = QStringLiteral("progressive-3-placed-geometry");
 constexpr auto kGeometryCacheMagic = "LGC1";
 constexpr auto kWorkerConnectionAttempts = 4'800;
 
@@ -86,7 +89,6 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     workerEnvironment.remove(QStringLiteral("XPC_SERVICE_NAME"));
     workerEnvironment.remove(QStringLiteral("XPC_FLAGS"));
     workerProcess_.setProcessEnvironment(workerEnvironment);
-    workerProcess_.setWorkingDirectory(QFileInfo(workerExecutable_).absolutePath());
     workerProcess_.setProcessChannelMode(QProcess::ForwardedChannels);
     connect(&workerProcess_, &QProcess::started, this, [this] {
         setImportProgress(tr("Starting STEP importer"), 0.005);
@@ -142,7 +144,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         }
         if (!sourceColor.isEmpty() && importedColorByNode_.value(nodeId) != sourceColor) {
             importedColorByNode_.insert(nodeId, sourceColor);
-            if (nodeId == activeNodeId_) emit componentPropertiesChanged();
+            if (isNodeSelected(nodeId)) emit componentPropertiesChanged();
         }
         emit meshReady(nodeId, segmentKey, sourceColor, meshJson);
     });
@@ -158,7 +160,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             modelExtentMm_ = modelExtent;
             emit modelExtentChanged();
         }
-        if (nodeId == activeNodeId_) {
+        if (isNodeSelected(nodeId)) {
             applyActiveGeometryToMeasurement();
             emit componentPropertiesChanged();
         }
@@ -296,12 +298,46 @@ void ApplicationController::setWorkspace(const Workspace workspace)
 
 void ApplicationController::setActiveNodeId(const QString& activeNodeId)
 {
-    if (activeNodeId_ == activeNodeId) {
+    setSelection(activeNodeId.isEmpty() ? QStringList{} : QStringList{activeNodeId}, activeNodeId);
+}
+
+void ApplicationController::selectNode(const QString& nodeId, const bool additive)
+{
+    if (nodeId.isEmpty()) {
+        if (!additive) setSelection({}, {});
         return;
     }
+    if (!additive) {
+        setSelection({nodeId}, nodeId);
+        return;
+    }
+
+    auto selected = selectedNodeIds_;
+    if (selected.contains(nodeId)) {
+        selected.removeAll(nodeId);
+        setSelection(selected, selected.isEmpty() ? QString{} : selected.back());
+    } else {
+        selected.append(nodeId);
+        setSelection(selected, nodeId);
+    }
+}
+
+void ApplicationController::setSelection(const QStringList& nodeIds, const QString& activeNodeId)
+{
+    QStringList normalized;
+    for (const auto& nodeId : nodeIds) {
+        if (!nodeId.isEmpty() && !normalized.contains(nodeId)) normalized.append(nodeId);
+    }
+    const auto nextActiveNodeId = normalized.contains(activeNodeId)
+        ? activeNodeId : normalized.isEmpty() ? QString{} : normalized.back();
+    if (selectedNodeIds_ == normalized && activeNodeId_ == nextActiveNodeId) return;
+
     const auto previousMode = inspectorMode();
-    activeNodeId_ = activeNodeId;
-    emit activeNodeIdChanged();
+    const auto activeChanged = activeNodeId_ != nextActiveNodeId;
+    selectedNodeIds_ = normalized;
+    activeNodeId_ = nextActiveNodeId;
+    if (activeChanged) emit activeNodeIdChanged();
+    emit selectionChanged();
     if (previousMode != inspectorMode()) {
         emit inspectorModeChanged();
     }
@@ -318,6 +354,14 @@ void ApplicationController::openFile(const QUrl& file)
         emit documentStateChanged();
         return;
     }
+    const QFileInfo sourceFile(file.toLocalFile());
+    const auto suffix = sourceFile.suffix().toLower();
+    if (suffix != QStringLiteral("step") && suffix != QStringLiteral("stp")) {
+        setErrorMessage(tr("Loupe can open STEP files with a .step or .stp extension."));
+        documentState_ = DocumentState::Invalid;
+        emit documentStateChanged();
+        return;
+    }
     viewerPresentation_ = ViewerPresentation::Full;
     sectionController_.setEnabled(false);
     measurementController_.clearPicks();
@@ -330,7 +374,7 @@ void ApplicationController::openFile(const QUrl& file)
     setErrorMessage({});
     setActiveNodeId({});
     assemblyTreeModel_.replaceSnapshot({});
-    pendingPath_ = QFileInfo(file.toLocalFile()).absoluteFilePath();
+    pendingPath_ = sourceFile.absoluteFilePath();
     pendingSource_ = cache::SourceFingerprint::fromFile(pendingPath_);
     if (!pendingSource_) {
         setErrorMessage(tr("Loupe could not read the selected file."));
@@ -436,8 +480,12 @@ void ApplicationController::fitView()
 
 void ApplicationController::isolateActiveNode()
 {
-    if (activeNodeId_.isEmpty()) return;
-    visibilityModel_.isolate(geometryNodesForAction(activeNodeId_));
+    const auto selected = geometryNodesForSelection();
+    // Selection can arrive just before geometry (for example while an import
+    // is streaming). Keep the requested isolate presentation state so it is
+    // applied consistently once the visibility model has nodes.
+    if (!selected.isEmpty()) visibilityModel_.isolate(selected);
+    else if (selectedNodeIds_.isEmpty()) return;
     viewerPresentation_ = ViewerPresentation::Isolate;
     emit viewerPresentationChanged();
 }
@@ -453,14 +501,16 @@ void ApplicationController::toggleIsolateActiveNode()
 
 void ApplicationController::hideActiveNode()
 {
-    if (activeNodeId_.isEmpty()) return;
-    visibilityModel_.hide(geometryNodesForAction(activeNodeId_));
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty()) return;
+    visibilityModel_.hide(selected);
 }
 
 void ApplicationController::hideOtherNodes()
 {
-    if (activeNodeId_.isEmpty()) return;
-    visibilityModel_.isolate(geometryNodesForAction(activeNodeId_));
+    const auto selected = geometryNodesForSelection();
+    if (!selected.isEmpty()) visibilityModel_.isolate(selected);
+    else if (selectedNodeIds_.isEmpty()) return;
     viewerPresentation_ = ViewerPresentation::Isolate;
     emit viewerPresentationChanged();
 }
@@ -791,6 +841,27 @@ QStringList ApplicationController::geometryNodesForAction(const QString& nodeId)
     return result;
 }
 
+QStringList ApplicationController::geometryNodesForSelection() const
+{
+    QStringList result;
+    for (const auto& nodeId : selectedNodeIds_) result.append(geometryNodesForAction(nodeId));
+    result.removeDuplicates();
+    return result;
+}
+
+bool ApplicationController::isNodeSelected(const QString& nodeId) const
+{
+    if (nodeId.isEmpty()) return false;
+    for (const auto& selectedNodeId : selectedNodeIds_) {
+        auto current = nodeId;
+        while (!current.isEmpty()) {
+            if (current == selectedNodeId) return true;
+            current = parentByNode_.value(current);
+        }
+    }
+    return false;
+}
+
 QStringList ApplicationController::geometryNodesForScope(const QString& scope) const
 {
     const auto selected = geometryNodesForAction(activeNodeId_);
@@ -878,14 +949,18 @@ void ApplicationController::applyActiveGeometryToMeasurement()
     measurementController_.setSelectedTopology(geometry.longestEdgeMm, geometry.circularRadiusMm, geometry.planarFaceCount);
 }
 
-double ApplicationController::activeSurfaceAreaMm2() const noexcept
+double ApplicationController::activeSurfaceAreaMm2() const
 {
-    return geometryByNode_.value(activeNodeId_).surfaceAreaMm2;
+    double total{};
+    for (const auto& nodeId : geometryNodesForSelection()) total += geometryByNode_.value(nodeId).surfaceAreaMm2;
+    return total;
 }
 
-double ApplicationController::activeVolumeMm3() const noexcept
+double ApplicationController::activeVolumeMm3() const
 {
-    return geometryByNode_.value(activeNodeId_).volumeMm3;
+    double total{};
+    for (const auto& nodeId : geometryNodesForSelection()) total += geometryByNode_.value(nodeId).volumeMm3;
+    return total;
 }
 
 QString ApplicationController::activeMaterialId() const
@@ -893,11 +968,29 @@ QString ApplicationController::activeMaterialId() const
     return materialByNode_.value(activeNodeId_);
 }
 
-double ApplicationController::estimatedMassKg() const noexcept
+double ApplicationController::estimatedMassKg() const
 {
-    const auto material = materialLibrary_.find(activeMaterialId());
-    if (!material) return 0.0;
-    return inspection::estimateMassKg(activeVolumeMm3(), *material).value_or(0.0);
+    double total{};
+    for (const auto& nodeId : geometryNodesForSelection()) {
+        const auto material = materialLibrary_.find(materialByNode_.value(nodeId));
+        if (material) total += inspection::estimateMassKg(geometryByNode_.value(nodeId).volumeMm3, *material).value_or(0.0);
+    }
+    return total;
+}
+
+QString ApplicationController::estimatedMassLabel() const
+{
+    return formatMassKg(estimatedMassKg());
+}
+
+QString ApplicationController::formatMassKg(double massKg)
+{
+    const auto locale = QLocale{};
+    const auto normalizedMassKg = std::max(0.0, massKg);
+    if (normalizedMassKg < 1.0) {
+        return tr("%1 g").arg(locale.toString(normalizedMassKg * 1000.0, 'f', 2));
+    }
+    return tr("%1 kg").arg(locale.toString(normalizedMassKg, 'f', 2));
 }
 
 bool ApplicationController::assignActiveMaterial(const QString& materialId)
@@ -995,10 +1088,11 @@ bool ApplicationController::setUnitOverride(const QString& unit)
     return true;
 }
 
-void ApplicationController::acceptViewSelection(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ)
+void ApplicationController::acceptViewSelection(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ,
+                                                const bool additive)
 {
     if (nodeId.isEmpty()) return;
-    setActiveNodeId(nodeId);
+    selectNode(nodeId, additive);
     sectionController_.setCandidatePlane({static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)}, {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)});
 }
 

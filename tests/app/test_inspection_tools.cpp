@@ -1,4 +1,5 @@
 #include <QtTest/QTest>
+#include <QtTest/QSignalSpy>
 #include <QtCore/qmath.h>
 #include <QFileInfo>
 #include <QFile>
@@ -28,6 +29,7 @@ private slots:
     void sectionInteractionCanCommitOrCancelPreviewPosition();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
+    void captureReportsProgressUntilThePngIsSaved();
     void captureWritesAndVerifiesPngAtomically();
 };
 
@@ -82,14 +84,21 @@ void InspectionToolsTest::componentMeasurementsUseNormalizedGeometryMetrics()
 void InspectionToolsTest::viewportPicksProducePointToPointMeasurement()
 {
     loupe::app::tools::MeasurementController controller;
+    QSignalSpy resultChanged(&controller, &loupe::app::tools::MeasurementController::resultChanged);
     controller.recordPoint({0.0F, 0.0F, 0.0F});
     controller.recordPoint({25.4F, 0.0F, 0.0F});
 
     QCOMPARE(controller.resultLabel(), QStringLiteral("25.4 mm"));
     controller.setEffectiveUnit(QStringLiteral("in"));
     QCOMPARE(controller.resultLabel(), QStringLiteral("1 in"));
+    const auto signalsBeforeClear = resultChanged.count();
     controller.clearPicks();
     QVERIFY(controller.resultLabel().isEmpty());
+    QCOMPARE(resultChanged.count(), signalsBeforeClear + 1);
+
+    const auto signalsBeforeEmptyClear = resultChanged.count();
+    controller.clearPicks();
+    QCOMPARE(resultChanged.count(), signalsBeforeEmptyClear + 1);
 }
 
 void InspectionToolsTest::viewportPicksIdentifyTheSelectedSurface()
@@ -138,6 +147,8 @@ void InspectionToolsTest::sectionSupportsFlipPositionCapAndSliceOnly()
     section.setCapEnabled(false);
     section.setSliceOnly(true);
     section.setSliceDisplay(QStringLiteral("filled"));
+    section.setSliceBorderColor(QStringLiteral("#234567"));
+    section.setSliceBorderWidth(3.25);
 
     QCOMPARE(section.axis(), loupe::app::tools::SectionAxis::Y);
     QCOMPARE(section.position(), 12.5);
@@ -145,6 +156,15 @@ void InspectionToolsTest::sectionSupportsFlipPositionCapAndSliceOnly()
     QVERIFY(!section.capEnabled());
     QVERIFY(section.sliceOnly());
     QCOMPARE(section.sliceDisplay(), QStringLiteral("filled"));
+    QCOMPARE(section.sliceBorderColor(), QStringLiteral("#234567"));
+    QCOMPARE(section.sliceBorderWidth(), 3.25);
+
+    section.setSliceBorderWidth(100.0);
+    QCOMPARE(section.sliceBorderWidth(), 8.0);
+    section.setSliceBorderWidth(0.1);
+    QCOMPARE(section.sliceBorderWidth(), 0.5);
+    section.setSliceBorderColor(QStringLiteral("not-a-color"));
+    QCOMPARE(section.sliceBorderColor(), QStringLiteral("#234567"));
 }
 
 void InspectionToolsTest::sectionCanUseASelectedFacePlane()
@@ -212,14 +232,36 @@ void InspectionToolsTest::captureSettingsBoundCustomScaleAndInclusionOptions()
 {
     loupe::app::tools::CaptureController capture;
     capture.setViewportSize({400, 300});
-    capture.setCustomScale(9.0);
+    capture.setCustomScale(3.17);
     capture.setIncludeMeasurements(false);
     capture.setIncludeSectionCaps(false);
 
-    QCOMPARE(capture.scale(), 4.0);
-    QCOMPARE(capture.resolvedSize(), QSize(1600, 1200));
+    QCOMPARE(capture.scale(), 3.17);
+    QCOMPARE(capture.resolvedSize(), QSize(1268, 951));
+    capture.setCustomScale(9.0);
+    capture.setViewportSize({4096, 2160});
+    QVERIFY(capture.scale() <= capture.maximumScale());
     QVERIFY(!capture.includeMeasurements());
     QVERIFY(!capture.includeSectionCaps());
+}
+
+void InspectionToolsTest::captureReportsProgressUntilThePngIsSaved()
+{
+    loupe::app::tools::CaptureController capture;
+    capture.beginCapture();
+    QVERIFY(capture.inProgress());
+    QVERIFY(capture.progress() > 0.0);
+    capture.setCaptureProgress(0.65, QStringLiteral("Rendering at 3×…"));
+    QCOMPARE(capture.progress(), 0.65);
+    QCOMPARE(capture.statusMessage(), QStringLiteral("Rendering at 3×…"));
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QImage image(4, 4, QImage::Format_RGBA8888);
+    image.fill(Qt::transparent);
+    QVERIFY(capture.saveImage(image, QUrl::fromLocalFile(directory.filePath(QStringLiteral("progress.png")))));
+    QVERIFY(!capture.inProgress());
+    QCOMPARE(capture.progress(), 1.0);
 }
 
 void InspectionToolsTest::captureWritesAndVerifiesPngAtomically()
@@ -228,7 +270,7 @@ void InspectionToolsTest::captureWritesAndVerifiesPngAtomically()
     QVERIFY(directory.isValid());
     const auto path = directory.filePath(QStringLiteral("capture.png"));
     QImage image(32, 24, QImage::Format_RGBA8888);
-    image.fill(QColor(QStringLiteral("#336699")));
+    image.fill(QColor(0x33, 0x66, 0x99, 0x60));
     loupe::app::tools::CaptureController capture;
 
     QVERIFY(capture.saveImage(image, QUrl::fromLocalFile(path)));
@@ -238,6 +280,9 @@ void InspectionToolsTest::captureWritesAndVerifiesPngAtomically()
     QFile output(path);
     QVERIFY(output.open(QIODevice::ReadOnly));
     QCOMPARE(output.read(8), QByteArray::fromHex("89504e470d0a1a0a"));
+    const QImage decoded(path);
+    QVERIFY(!decoded.isNull());
+    QCOMPARE(decoded.pixelColor(0, 0).alpha(), 0x60);
 }
 
 QTEST_MAIN(InspectionToolsTest)

@@ -11,6 +11,6 @@ MenuSeparator {
 
     contentItem: Rectangle {
         implicitHeight: 1
-        color: control.theme ? control.theme.border : "#b9c5cb"
+        color: control.theme ? control.theme.border : "transparent"
     }
 }

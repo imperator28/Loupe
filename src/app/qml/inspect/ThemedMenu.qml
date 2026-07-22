@@ -5,14 +5,19 @@ Menu {
     id: control
 
     property QtObject theme
-    readonly property color fill: theme ? theme.surfaceRaised : "#ffffff"
-    readonly property color outline: theme ? theme.border : "#b9c5cb"
+    readonly property color fill: theme && theme.surface3 !== undefined ? theme.surface3
+                                                                        : theme ? theme.surfaceRaised : "transparent"
+    readonly property color outline: theme ? theme.border : "transparent"
+    readonly property int cornerRadius: theme && theme.radius3 !== undefined ? theme.radius3 : 8
+    readonly property int enterDuration: theme && theme.durStandard !== undefined ? theme.durStandard : 0
+    readonly property int exitDuration: Math.round(enterDuration * 0.7)
+    readonly property bool travelOk: theme && theme.reducedMotion !== undefined ? !theme.reducedMotion : true
 
     implicitWidth: Math.max(180, contentItem.implicitWidth + leftPadding + rightPadding)
     topPadding: 4
     bottomPadding: 4
-    leftPadding: 1
-    rightPadding: 1
+    leftPadding: 4
+    rightPadding: 4
 
     contentItem: ListView {
         implicitHeight: contentHeight
@@ -22,9 +27,33 @@ Menu {
     }
 
     background: Rectangle {
-        radius: 4
+        radius: control.cornerRadius
         color: control.fill
         border.color: control.outline
         border.width: 1
+    }
+
+    enter: Transition {
+        NumberAnimation {
+            property: "opacity"
+            from: 0
+            to: 1
+            duration: control.enterDuration
+            easing.type: Easing.BezierSpline
+            easing.bezierCurve: control.theme && control.theme.easeEnter !== undefined
+                                ? control.theme.easeEnter : [0.16, 1.0, 0.30, 1.0, 1.0, 1.0]
+        }
+    }
+
+    exit: Transition {
+        NumberAnimation {
+            property: "opacity"
+            from: 1
+            to: 0
+            duration: control.exitDuration
+            easing.type: Easing.BezierSpline
+            easing.bezierCurve: control.theme && control.theme.easeExit !== undefined
+                                ? control.theme.easeExit : [0.40, 0.0, 1.0, 1.0, 1.0, 1.0]
+        }
     }
 }

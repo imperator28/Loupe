@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QUrl>
 
@@ -19,7 +20,10 @@ private slots:
     void emptyDocumentShowsDocumentInspector();
     void selectionShowsComponentInspector();
     void ownsInspectionTaskControllers();
+    void formatsEstimatedMassInAppropriateUnits();
+    void rejectsNonStepFilesBeforeStartingImport();
     void opensStepThroughWorkerAndRetainsSnapshot();
+    void combinesMultiSelectionMassAndVisibilityActions();
     void reportsWorkerStartupFailure();
     void forwardsWorkerMeshToViewer();
     void replaysGeometryWithoutBlockingTheCaller();
@@ -68,6 +72,33 @@ void ApplicationControllerTest::ownsInspectionTaskControllers()
     QVERIFY(controller.captureController() != nullptr);
 }
 
+void ApplicationControllerTest::formatsEstimatedMassInAppropriateUnits()
+{
+    const auto grams = loupe::app::ApplicationController::formatMassKg(0.125);
+    const auto kilograms = loupe::app::ApplicationController::formatMassKg(1.5);
+
+    QCOMPARE(grams, QLocale{}.toString(125.0, 'f', 2) + QStringLiteral(" g"));
+    QCOMPARE(kilograms, QLocale{}.toString(1.5, 'f', 2) + QStringLiteral(" kg"));
+}
+
+void ApplicationControllerTest::rejectsNonStepFilesBeforeStartingImport()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("notes.txt"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("not a STEP file") > 0);
+    file.close();
+
+    loupe::app::ApplicationController controller;
+    controller.openFile(QUrl::fromLocalFile(path));
+
+    QCOMPARE(controller.documentState(), loupe::app::DocumentState::Invalid);
+    QVERIFY(controller.errorMessage().contains(QStringLiteral(".step"), Qt::CaseInsensitive));
+    QVERIFY(!controller.importInProgress());
+}
+
 void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
 {
     const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-worker.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
@@ -88,6 +119,40 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QTRY_VERIFY_WITH_TIMEOUT(controller.activeVolumeMm3() > 0.0, 10'000);
     QVERIFY(controller.assignActiveMaterial(QStringLiteral("aluminum-6061")));
     QVERIFY(controller.estimatedMassKg() > 0.0);
+}
+
+void ApplicationControllerTest::combinesMultiSelectionMassAndVisibilityActions()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-multiselect.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress(), 10'000);
+
+    const auto snapshot = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object();
+    const auto geometry = snapshot.value(QStringLiteral("geometry")).toArray();
+    QVERIFY(geometry.size() >= 2);
+    const auto first = geometry.at(0).toObject().value(QStringLiteral("nodeId")).toString();
+    const auto second = geometry.at(1).toObject().value(QStringLiteral("nodeId")).toString();
+    controller.setActiveNodeId(first);
+    QVERIFY(controller.assignActiveMaterial(QStringLiteral("aluminum-6061")));
+    const auto firstMass = controller.estimatedMassKg();
+    controller.setActiveNodeId(second);
+    QVERIFY(controller.assignActiveMaterial(QStringLiteral("aluminum-6061")));
+
+    controller.setActiveNodeId(first);
+    controller.selectNode(second, true);
+    QCOMPARE(controller.selectedNodeCount(), 2);
+    QVERIFY(controller.isNodeSelected(first));
+    QVERIFY(controller.isNodeSelected(second));
+    const auto combinedMass = controller.estimatedMassKg();
+    QVERIFY(combinedMass > firstMass);
+
+    const auto rootId = snapshot.value(QStringLiteral("nodes")).toArray().first().toObject().value(QStringLiteral("id")).toString();
+    controller.setActiveNodeId(rootId);
+    QCOMPARE(controller.estimatedMassKg(), combinedMass);
+    controller.hideActiveNode();
+    QVERIFY(!controller.isNodeVisible(first));
+    QVERIFY(!controller.isNodeVisible(second));
 }
 
 void ApplicationControllerTest::reportsWorkerStartupFailure()

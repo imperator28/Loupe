@@ -53,11 +53,13 @@ QVariantList ExportWorkspaceController::components() const
     for (const auto& component : components_) {
         if (!component.visibleInPicker) continue;
         result.append(QVariantMap{{QStringLiteral("nodeId"), component.id},
+                                  {QStringLiteral("parentId"), component.parentId},
                                   {QStringLiteral("name"), component.name},
                                   {QStringLiteral("path"), component.hierarchyPath},
                                   {QStringLiteral("kind"), kindLabel(component.kind)},
                                   {QStringLiteral("depth"), component.depth},
                                   {QStringLiteral("exportable"), component.exportable},
+                                  {QStringLiteral("hasChildren"), component.hasVisibleChildren},
                                   {QStringLiteral("checked"), checkedNodeIds_.contains(component.id)}});
     }
     return result;
@@ -111,6 +113,12 @@ void ExportWorkspaceController::replaceSnapshot(const QString& snapshotJson)
         component.visibleInPicker = !(component.kind == static_cast<int>(loupe::domain::NodeKind::Body)
             && rawBodyName && parentIndex >= 0
             && components_.at(parentIndex).kind != static_cast<int>(loupe::domain::NodeKind::Root));
+    }
+    for (const auto& component : components_) {
+        if (!component.visibleInPicker || component.parentId.isEmpty()) continue;
+        const auto parentIndex = componentIndexById_.value(component.parentId, -1);
+        if (parentIndex >= 0 && components_.at(parentIndex).visibleInPicker)
+            components_[parentIndex].hasVisibleChildren = true;
     }
     clearPlan();
     ++selectionRevision_;
