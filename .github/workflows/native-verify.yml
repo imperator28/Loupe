@@ -168,11 +168,35 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Package release app (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        # OpenCASCADE's CMake config overrides output directories, so the exe
+        # is located rather than assumed. Qt plugins and QML modules load at
+        # runtime and are never covered by vcpkg's applocal DLL copies, so
+        # windeployqt stages the full Qt runtime beside the app.
+        run: |
+          EXE=$(find "build/${{ matrix.configure_preset }}" -maxdepth 3 -name Loupe.exe -not -path "*CMakeFiles*" | head -1)
+          test -n "$EXE"
+          mkdir -p dist/loupe-windows-x64
+          cp "$EXE" dist/loupe-windows-x64/
+          cp "$(dirname "$EXE")"/*.dll dist/loupe-windows-x64/ 2>/dev/null || true
+          VCPKG_INSTALLED="build/${{ matrix.configure_preset }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}"
+          WINDEPLOY=$(find "$VCPKG_INSTALLED/tools" -name windeployqt.exe 2>/dev/null | head -1)
+          if [[ -n "$WINDEPLOY" ]]; then
+            "$WINDEPLOY" --release --qmldir src/app/qml dist/loupe-windows-x64/Loupe.exe
+          else
+            echo "windeployqt not found; staging Qt runtime wholesale"
+            cp -r "$VCPKG_INSTALLED/Qt6/plugins" dist/loupe-windows-x64/
+            cp -r "$VCPKG_INSTALLED/Qt6/qml" dist/loupe-windows-x64/
+            cp "$VCPKG_INSTALLED/bin"/*.dll dist/loupe-windows-x64/
+          fi
+
       - name: Upload release app (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: loupe-windows-x64
-          path: build/${{ matrix.configure_preset }}/src/app/
+          path: dist/loupe-windows-x64/
           if-no-files-found: error
           retention-days: 14
