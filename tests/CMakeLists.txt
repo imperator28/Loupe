@@ -146,6 +146,14 @@ target_include_directories(loupe-material-store-tests PRIVATE "${PROJECT_SOURCE_
 loupe_enable_warnings(loupe-material-store-tests)
 
 add_test(NAME material-store COMMAND loupe-material-store-tests)
+# MaterialStore throws when the QSQLITE driver cannot load. With shared Qt
+# (Windows CI) the driver is a runtime plugin whose own sqlite3 dependency
+# resolves through PATH, so this test needs the same runtime environment the
+# other Qt-plugin-dependent tests already declare.
+set_tests_properties(material-store PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
 
 add_executable(loupe-worker-client-tests
     app/test_worker_client.cpp
@@ -234,6 +242,12 @@ set_tests_properties(qml-smoke PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
+if(WIN32)
+    # Quick3D needs a real RHI device even under the minimal platform; CI
+    # runners have no GPU, so prefer the D3D11 WARP software rasterizer.
+    set_property(TEST qml-smoke APPEND PROPERTY
+        ENVIRONMENT "QSG_RHI_PREFER_SOFTWARE_RENDERER=1")
+endif()
 
 add_executable(loupe-qml-tests
     qml/qml_tests_main.cpp

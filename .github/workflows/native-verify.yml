@@ -141,7 +141,13 @@ jobs:
 
       - name: Test
         shell: bash
-        run: ctest --preset "${{ matrix.configure_preset }}" --output-on-failure
+        # On failure, rerun only the failed tests with full verbosity so the
+        # log always carries their exit codes and output, then still fail.
+        run: |
+          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure || {
+            ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose
+            exit 1
+          }
 
       - name: Package release app (macOS)
         if: runner.os == 'macOS'
