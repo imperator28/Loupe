@@ -237,16 +237,25 @@ target_compile_definitions(loupe-qml-smoke-tests PRIVATE
 )
 loupe_enable_warnings(loupe-qml-smoke-tests)
 
+# The smoke test drives real Quick3D scene setup. The minimal platform has
+# no surfaces for an RHI to target and hard-crashes on GPU-less Windows
+# runners (losing all buffered output), so it runs on the offscreen platform
+# with Qt's null RHI backend — the test asserts controller and geometry
+# state, not rendered pixels.
+if(WIN32)
+    set(_loupe_smoke_qpa_platform "offscreen")
+else()
+    set(_loupe_smoke_qpa_platform "${_loupe_qpa_platform}")
+endif()
+
 add_test(NAME qml-smoke COMMAND loupe-qml-smoke-tests)
 set_tests_properties(qml-smoke PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_smoke_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 if(WIN32)
-    # Quick3D needs a real RHI device even under the minimal platform; CI
-    # runners have no GPU, so prefer the D3D11 WARP software rasterizer.
     set_property(TEST qml-smoke APPEND PROPERTY
-        ENVIRONMENT "QSG_RHI_PREFER_SOFTWARE_RENDERER=1")
+        ENVIRONMENT "QSG_RHI_BACKEND=null")
 endif()
 
 add_executable(loupe-qml-tests
