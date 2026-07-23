@@ -143,9 +143,11 @@ jobs:
         shell: bash
         # On failure, rerun only the failed tests with full verbosity so the
         # log always carries their exit codes and output, then still fail.
+        # --timeout caps every test so a hang fails fast instead of consuming
+        # the whole job budget.
         run: |
-          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure || {
-            ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose
+          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure --timeout 600 || {
+            ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose --timeout 600
             exit 1
           }
 

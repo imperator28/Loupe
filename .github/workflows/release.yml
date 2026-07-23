@@ -117,8 +117,8 @@ jobs:
       - name: Test
         shell: bash
         run: |
-          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure || {
-            ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose
+          ctest --preset "${{ matrix.configure_preset }}" --output-on-failure --timeout 600 || {
+            ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose --timeout 600
             exit 1
           }
 
