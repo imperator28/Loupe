@@ -27,11 +27,15 @@ jobs:
             configure_preset: macos-arm64-release
             vcpkg_triplet: arm64-osx-release
             vcpkg_cache_path: ~/.cache/vcpkg/archives
+            vcpkg_install_options: --clean-buildtrees-after-build;--clean-packages-after-build
           - name: Windows 11 x64 release
             os: windows-2025
             configure_preset: windows-release
             vcpkg_triplet: x64-windows-release
             vcpkg_cache_path: ~\AppData\Local\vcpkg\archives
+            # Short buildtrees root keeps Qt object paths under Windows'
+            # MAX_PATH; see native-verify.yml for the measured rationale.
+            vcpkg_install_options: --clean-buildtrees-after-build;--clean-packages-after-build;--x-buildtrees-root=D:/bt
     env:
       LOUPE_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_COMMIT: db4723bd0a99eab031f1a3dee4336dca43049c87
@@ -97,7 +101,7 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg_triplet }}" \
             -DVCPKG_HOST_TRIPLET="${{ matrix.vcpkg_triplet }}" \
             -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
-            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build"
+            -DVCPKG_INSTALL_OPTIONS="${{ matrix.vcpkg_install_options }}"
 
       - name: Save vcpkg binary cache
         if: always()
