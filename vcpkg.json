@@ -1,6 +1,6 @@
 {
   "name": "loupe",
-  "version-string": "0.0.1",
+  "version-string": "0.1.0",
   "dependencies": [
     "catch2",
     "nlohmann-json",
