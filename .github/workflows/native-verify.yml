@@ -176,10 +176,10 @@ jobs:
         # runtime and are never covered by vcpkg's applocal DLL copies, so
         # windeployqt stages the full Qt runtime beside the app.
         run: |
-          EXE=$(find "build/${{ matrix.configure_preset }}" -maxdepth 3 -name Loupe.exe -not -path "*CMakeFiles*" | head -1)
+          EXE=$(find "build/${{ matrix.configure_preset }}" -maxdepth 3 \( -name Loupe.exe -o -name loupe-app.exe \) -not -path "*CMakeFiles*" | head -1)
           test -n "$EXE"
           mkdir -p dist/loupe-windows-x64
-          cp "$EXE" dist/loupe-windows-x64/
+          cp "$EXE" dist/loupe-windows-x64/Loupe.exe
           cp "$(dirname "$EXE")"/*.dll dist/loupe-windows-x64/ 2>/dev/null || true
           VCPKG_INSTALLED="build/${{ matrix.configure_preset }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}"
           WINDEPLOY=$(find "$VCPKG_INSTALLED/tools" -name windeployqt.exe 2>/dev/null | head -1)

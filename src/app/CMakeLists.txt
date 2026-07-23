@@ -57,6 +57,9 @@ qt_add_resources(loupe-app "loupe-branding"
         "${loupe_app_icon_png}"
 )
 
+# The shipped binary is named Loupe on every platform, not the target name.
+set_target_properties(loupe-app PROPERTIES OUTPUT_NAME Loupe)
+
 if(APPLE)
     set(loupe_app_icon_macos "${loupe_branding_dir}/Loupe.icns")
     set_source_files_properties("${loupe_app_icon_macos}" PROPERTIES
@@ -68,7 +71,6 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME Loupe
         MACOSX_BUNDLE_GUI_IDENTIFIER com.imperator28.Loupe
         MACOSX_BUNDLE_ICON_FILE Loupe.icns
-        OUTPUT_NAME Loupe
     )
     target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.mm)
     find_library(loupe_appkit_framework AppKit REQUIRED)
