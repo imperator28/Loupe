@@ -44,7 +44,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
-            text: qsTr("Version 0.1.0")
+            text: qsTr("Version 0.1.2")
             color: root.theme.muted
             font.pixelSize: root.theme.fontBody
         }
