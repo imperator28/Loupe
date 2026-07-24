@@ -28,7 +28,15 @@
 
 namespace {
 
-const auto kImporterVersion = QStringLiteral("step-importer-4");
+// Bumped from step-importer-4: StepImporter now splits a multi-solid
+// compound into per-solid Body children, changing the node tree shape for
+// any cached file that has one -- old cached snapshots must not be reused.
+// Bumped again (-6): those split bodies now also get their own mesh/edge
+// geometry entry instead of none, changing the cached geometry payload too.
+// Bumped again (-7): each split body now gets its own unique definitionId
+// instead of reusing the container's, so quantity grouping and per-definition
+// material assignment don't treat unrelated sibling bodies as one part.
+const auto kImporterVersion = QStringLiteral("step-importer-7");
 const auto kMeshProfile = QStringLiteral("progressive-1");
 // Mesh payloads now contain the composed occurrence transform.  Keep older
 // local-coordinate payloads out of the replay cache.
@@ -807,11 +815,17 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
     std::vector<models::AssemblyTreeModel::SnapshotNode> treeNodes;
     treeNodes.reserve(static_cast<std::size_t>(treeSourceNodes.size()));
     for (const auto& node : treeSourceNodes) {
-        if (node.isImplementationWrapper) continue;
         const auto displayName = !node.hasChildren && isImplementationName(node.name) ? QStringLiteral("Body") : node.name;
+        // Every node's ancestor-chain entry is kept regardless of whether it's
+        // shown as its own row below -- mass/volume aggregation, hide/isolate,
+        // and isNodeSelected all walk parentByNode_ generically, and an
+        // implementation-wrapper node still sits on the chain between its
+        // (reparented) children and its own parent even though the tree
+        // widget flattens past it.
         parentByNode_.insert(node.id, node.parentId);
         displayNameByNode_.insert(node.id, displayName);
         if (!node.definitionId.isEmpty()) definitionByNode_.insert(node.id, node.definitionId);
+        if (node.isImplementationWrapper) continue;
         treeNodes.push_back({
             node.id,
             visibleParentId(node.parentId),

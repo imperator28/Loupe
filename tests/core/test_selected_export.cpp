@@ -244,6 +244,46 @@ TEST_CASE("inch mirrored STL export scales placement and preserves outward windi
     requireOutwardWinding(triangles);
 }
 
+TEST_CASE("split body STL export contains only its own solid", "[export][stl][multi-solid]")
+{
+    const ScopedExportDirectory directory{"multi-solid-stl"};
+    const auto source = loupe::tests::writeMultiSolidBodyStep(directory.path() / "multi-solid.step");
+    const auto imported = loupe::import::StepImporter {}.read(source);
+    const auto container = std::ranges::find_if(imported.snapshot.nodes, [](const auto& node) {
+        return node.kind == NodeKind::Body && !node.subSolidIndex;
+    });
+    REQUIRE(container != imported.snapshot.nodes.end());
+    REQUIRE(container->bodyIds.size() == 2);
+
+    const auto boxBody = outputFor(imported, NodeKind::Body, SelectionKind::Body, Format::Stl, directory.path(), container->bodyIds[0]);
+    const auto boxResult = loupe::exporting::StlExporter {}.write(imported, boxBody);
+    REQUIRE(boxResult.written);
+    requireBounds(readBinaryStl(boxBody.finalPath()), 0.0F, 10.0F, 0.0F, 10.0F, 0.0F, 10.0F);
+
+    const auto secondBody = outputFor(imported, NodeKind::Body, SelectionKind::Body, Format::Stl, directory.path(), container->bodyIds[1]);
+    const auto secondResult = loupe::exporting::StlExporter {}.write(imported, secondBody);
+    REQUIRE(secondResult.written);
+    requireBounds(readBinaryStl(secondBody.finalPath()), 30.0F, 36.0F, 0.0F, 6.0F, 0.0F, 6.0F);
+}
+
+TEST_CASE("split body STEP export round-trips as a single-solid part", "[export][step][multi-solid]")
+{
+    const ScopedExportDirectory directory{"multi-solid-step"};
+    const auto source = loupe::tests::writeMultiSolidBodyStep(directory.path() / "multi-solid.step");
+    const auto imported = loupe::import::StepImporter {}.read(source);
+    const auto container = std::ranges::find_if(imported.snapshot.nodes, [](const auto& node) {
+        return node.kind == NodeKind::Body && !node.subSolidIndex;
+    });
+    REQUIRE(container != imported.snapshot.nodes.end());
+
+    const auto boxBody = outputFor(imported, NodeKind::Body, SelectionKind::Body, Format::Step, directory.path(), container->bodyIds[0]);
+    const auto result = loupe::exporting::StepExporter {}.write(imported, boxBody);
+    REQUIRE(result.written);
+    const auto roundTrip = loupe::import::StepImporter {}.read(boxBody.finalPath());
+    REQUIRE(roundTrip.snapshot.classification == loupe::domain::InputClass::SinglePart);
+    REQUIRE(roundTrip.unitEvidence.normalizedLongestExtentMm == Catch::Approx(10.0));
+}
+
 TEST_CASE("in-memory XCAF traversal composes nested assembly locations", "[import][nested]")
 {
     occ::handle<TDocStd_Document> document;

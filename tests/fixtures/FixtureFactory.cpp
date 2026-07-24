@@ -120,4 +120,23 @@ std::filesystem::path writeSingleCylinderStep(const std::filesystem::path& file)
     return write(document, file, FixtureUnit::Millimeter);
 }
 
+// One free shape whose own definition is a compound of disjoint solids, i.e. a
+// single STEP product/component containing multiple separately meaningful
+// bodies (the shape a `PlanRequest::Body` split should apply to) -- distinct
+// from writeFlatTwoSolidStep, where each solid is its own top-level free shape.
+std::filesystem::path writeMultiSolidBodyStep(const std::filesystem::path& file)
+{
+    const auto document = makeDocument(FixtureUnit::Millimeter);
+    const auto shapes = XCAFDoc_DocumentTool::ShapeTool(document->Main());
+    BRep_Builder builder;
+    TopoDS_Compound body;
+    builder.MakeCompound(body);
+    builder.Add(body, BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape());
+    gp_Trsf shift;
+    shift.SetTranslation(gp_Vec(30.0, 0.0, 0.0));
+    builder.Add(body, BRepBuilderAPI_Transform(BRepPrimAPI_MakeBox(6.0, 6.0, 6.0).Shape(), shift).Shape());
+    shapes->AddShape(body, false);
+    return write(document, file, FixtureUnit::Millimeter);
+}
+
 } // namespace loupe::tests

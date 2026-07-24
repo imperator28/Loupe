@@ -5,6 +5,8 @@
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <StlAPI_Writer.hxx>
 #include <TDF_Tool.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <TopExp_Explorer.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <gp_Pnt.hxx>
@@ -70,6 +72,14 @@ TopoDS_Shape selectedShape(const import::ImportResult& imported, const domain::A
     if (XCAFDoc_ShapeTool::IsComponent(label)) XCAFDoc_ShapeTool::GetReferredShape(label, label);
     TopoDS_Shape shape = shapes->GetShape(label);
     if (shape.IsNull()) throw std::runtime_error("selected export shape is empty");
+    if (node.subSolidIndex) {
+        int solidIndex = 0;
+        bool found = false;
+        for (TopExp_Explorer explorer(shape, TopAbs_SOLID); explorer.More(); explorer.Next(), ++solidIndex) {
+            if (solidIndex == *node.subSolidIndex) { shape = explorer.Current(); found = true; break; }
+        }
+        if (!found) throw std::runtime_error("selected export sub-solid was not found");
+    }
 
     gp_Trsf transform;
     transform.SetValues(node.placement.columnMajor[0], node.placement.columnMajor[4], node.placement.columnMajor[8], node.placement.columnMajor[12],

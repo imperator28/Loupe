@@ -13,6 +13,8 @@
 #include <TDataStd_Name.hxx>
 #include <TDF_Tool.hxx>
 #include <TDocStd_Document.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS_Shape.hxx>
 #include <XCAFApp_Application.hxx>
@@ -176,18 +178,62 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     addDefinition(definition, hash, result, definitions);
     const auto definitionId = definitions.at(labelEntry(definition));
     const auto id = domain::stableId(hash, entry, component ? "occurrence" : "body");
+    const auto nodeIndex = result.snapshot.nodes.size();
     result.snapshot.nodes.push_back({id, component ? NodeKind::Occurrence : NodeKind::Body,
                                      displayName(label, definition, component ? "occurrence" : "body"), entry, parentId, definitionId,
                                      transformFor(location)});
     if (!parentId) result.snapshot.rootIds.push_back(id);
     if (component) ++result.occurrenceCount;
+    const auto wholeShape = XCAFDoc_ShapeTool::GetShape(definition);
     auto native = std::const_pointer_cast<NativeDocument>(result.native);
-    native->labels.push_back(label);
-    native->definitionLabels.push_back(definition);
-    native->shapes.push_back(XCAFDoc_ShapeTool::GetShape(definition));
-    native->shapePlacements.push_back(location);
-    native->shapeNodeIds.push_back(id);
-    native->definitionIds.push_back(definitionId);
+
+    // A single STEP product can bundle several disjoint solids into one compound
+    // (e.g. a PCB plus its standoffs modeled as one part). Surface each as its own
+    // selectable/exportable/renderable Body child so individual solids can be
+    // picked out and previewed. The container keeps no mesh entry of its own in
+    // that case -- matching every other container kind (Root/Subassembly, which
+    // never have one either) -- so the same faces are never registered twice
+    // for rendering, which would otherwise z-fight where the split solids meet.
+    // The whole compound stays exportable as one file regardless, since export
+    // re-resolves the shape from hierarchyPath rather than from this array.
+    int solidCount = 0;
+    for (TopExp_Explorer explorer(wholeShape, TopAbs_SOLID); explorer.More(); explorer.Next()) ++solidCount;
+    if (solidCount > 1) {
+        int solidIndex = 0;
+        for (TopExp_Explorer explorer(wholeShape, TopAbs_SOLID); explorer.More(); explorer.Next(), ++solidIndex) {
+            const auto bodyId = domain::stableId(hash, entry, "body-solid:" + std::to_string(solidIndex));
+            // Each split body is a physically distinct solid, not a repeated
+            // instance of a shared part, so its snapshot definitionId must be
+            // its own -- reusing the container's here would make Inspect's
+            // quantity grouping (which counts nodes sharing a definitionId)
+            // miscount three unrelated bodies as "3x" copies of one, and would
+            // make per-definition material assignment leak across siblings.
+            AssemblyNode bodyNode{bodyId, NodeKind::Body, "Body " + std::to_string(solidIndex + 1), entry, id, bodyId,
+                                  transformFor(location)};
+            bodyNode.subSolidIndex = solidIndex;
+            result.snapshot.nodes.push_back(std::move(bodyNode));
+            result.snapshot.nodes[nodeIndex].bodyIds.push_back(bodyId);
+
+            native->labels.push_back(label);
+            native->definitionLabels.push_back(definition);
+            native->shapes.push_back(explorer.Current());
+            native->shapePlacements.push_back(location);
+            native->shapeNodeIds.push_back(bodyId);
+            // Unlike the snapshot definitionId above, this one is purely a
+            // mesh-tessellation cache key (see WorkerServer's preparedDefinitions):
+            // all split bodies share the same underlying compound shape, so
+            // reusing the container's here correctly triangulates it once
+            // instead of redundantly per solid.
+            native->definitionIds.push_back(definitionId);
+        }
+    } else {
+        native->labels.push_back(label);
+        native->definitionLabels.push_back(definition);
+        native->shapes.push_back(wholeShape);
+        native->shapePlacements.push_back(location);
+        native->shapeNodeIds.push_back(id);
+        native->definitionIds.push_back(definitionId);
+    }
 }
 
 } // namespace

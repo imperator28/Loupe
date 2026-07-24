@@ -5,6 +5,7 @@
 #include "core/units/UnitPolicy.h"
 #include "fixtures/FixtureFactory.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -54,6 +55,50 @@ TEST_CASE("STEP importer classifies flat and single-part files", "[step][classif
 
     REQUIRE(flat.snapshot.classification == InputClass::FlatMultiSolid);
     REQUIRE(single.snapshot.classification == InputClass::SinglePart);
+}
+
+TEST_CASE("STEP importer splits a multi-solid component's compound into selectable bodies", "[step][import][multi-solid]")
+{
+    const auto file = loupe::tests::writeMultiSolidBodyStep("multi-solid-body.step");
+    const auto result = loupe::import::StepImporter {}.read(file);
+
+    const auto container = std::ranges::find_if(result.snapshot.nodes, [](const auto& node) {
+        return node.kind == loupe::domain::NodeKind::Body && node.subSolidIndex == std::nullopt;
+    });
+    REQUIRE(container != result.snapshot.nodes.end());
+    REQUIRE(container->bodyIds.size() == 2);
+
+    std::vector<const loupe::domain::AssemblyNode*> splitBodies;
+    for (const auto& id : container->bodyIds) {
+        const auto body = std::ranges::find_if(result.snapshot.nodes, [&id](const auto& node) { return node.id == id; });
+        REQUIRE(body != result.snapshot.nodes.end());
+        splitBodies.push_back(&*body);
+    }
+    REQUIRE(splitBodies[0]->kind == loupe::domain::NodeKind::Body);
+    REQUIRE(splitBodies[0]->parentId == container->id);
+    REQUIRE(splitBodies[0]->hierarchyPath == container->hierarchyPath);
+    REQUIRE(splitBodies[0]->subSolidIndex == 0);
+    REQUIRE(splitBodies[0]->name == "Body 1");
+    REQUIRE(splitBodies[1]->subSolidIndex == 1);
+    REQUIRE(splitBodies[1]->name == "Body 2");
+
+    // Each split body is a physically distinct solid, not a repeated instance
+    // of one part, so it must carry its own definitionId rather than the
+    // container's -- otherwise Inspect's quantity grouping (which counts nodes
+    // sharing a definitionId) would miscount unrelated siblings as copies.
+    REQUIRE(splitBodies[0]->definitionId == splitBodies[0]->id);
+    REQUIRE(splitBodies[1]->definitionId == splitBodies[1]->id);
+    REQUIRE(splitBodies[0]->definitionId != splitBodies[1]->definitionId);
+    REQUIRE(splitBodies[0]->definitionId != container->definitionId);
+
+    // The container itself gets no mesh entry once split -- only its Body
+    // children do -- so the same faces are never registered for rendering
+    // twice (which would otherwise z-fight in the 3D viewport). It stays
+    // exportable as one file regardless, since export re-resolves the shape
+    // from hierarchyPath rather than from this array.
+    REQUIRE(std::ranges::count(result.native->shapeNodeIds, container->id) == 0);
+    REQUIRE(std::ranges::count(result.native->shapeNodeIds, splitBodies[0]->id) == 1);
+    REQUIRE(std::ranges::count(result.native->shapeNodeIds, splitBodies[1]->id) == 1);
 }
 
 TEST_CASE("STEP importer keeps declared inch and transferred XCAF unit evidence distinct", "[step][inch metadata]")

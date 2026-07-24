@@ -12,6 +12,8 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <TopExp_Explorer.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Pnt.hxx>
 
@@ -45,7 +47,12 @@ TopoDS_Shape localShape(const import::ImportResult& imported, const domain::Asse
     if (XCAFDoc_ShapeTool::IsComponent(label)) XCAFDoc_ShapeTool::GetReferredShape(label, label);
     const TopoDS_Shape shape = shapes->GetShape(label);
     if (shape.IsNull()) throw std::runtime_error("selected export shape is empty");
-    return shape;
+    if (!node.subSolidIndex) return shape;
+    int solidIndex = 0;
+    for (TopExp_Explorer explorer(shape, TopAbs_SOLID); explorer.More(); explorer.Next(), ++solidIndex) {
+        if (solidIndex == *node.subSolidIndex) return explorer.Current();
+    }
+    throw std::runtime_error("selected export sub-solid was not found");
 }
 
 } // namespace

@@ -55,6 +55,11 @@ struct AssemblyNode {
     Transform placement{};
     std::vector<std::string> bodyIds;
     std::vector<Warning> warnings;
+    // Set only on a Body node synthesized by splitting a multi-solid compound: the
+    // 0-based index of this node's solid within a TopAbs_SOLID exploration of the
+    // shape at hierarchyPath. Absent for every other node, including a Body whose
+    // own shape is a single solid.
+    std::optional<int> subSolidIndex;
 };
 
 struct AssemblySnapshot {
