@@ -36,6 +36,7 @@ public:
     Q_INVOKABLE void setCaptureProgress(double progress, const QString& message);
     Q_INVOKABLE void failCapture(const QString& message);
     Q_INVOKABLE bool saveImage(const QImage& image, const QUrl& destination);
+    Q_INVOKABLE bool copyImageToClipboard(const QImage& image);
     [[nodiscard]] QString format() const { return QStringLiteral("png"); }
     [[nodiscard]] QSize resolvedSize() const;
     [[nodiscard]] int resolvedWidth() const { return resolvedSize().width(); }

@@ -10,6 +10,7 @@ Rectangle {
     readonly property color subduedForeground: theme ? theme.muted : "transparent"
     signal closeRequested()
     signal captureRequested()
+    signal captureToClipboardRequested()
     implicitWidth: 320
     implicitHeight: content.implicitHeight + 32
     radius: root.theme.radius4
@@ -119,13 +120,27 @@ Rectangle {
             wrapMode: Text.WordWrap
             color: root.taskController && root.taskController.lastSaveSucceeded ? root.theme.accent : root.theme.error
         }
-        ThemedButton {
-            theme: root.theme
-            text: qsTr("Save PNG…")
+        RowLayout {
             Layout.fillWidth: true
-            enabled: root.taskController && !root.taskController.inProgress
-                     && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0
-            onClicked: root.captureRequested()
+            spacing: root.theme ? root.theme.spacing2 : 8
+
+            ThemedButton {
+                theme: root.theme
+                text: qsTr("Save PNG…")
+                Layout.fillWidth: true
+                enabled: root.taskController && !root.taskController.inProgress
+                         && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0
+                onClicked: root.captureRequested()
+            }
+            ThemedButton {
+                theme: root.theme
+                text: qsTr("Copy")
+                Accessible.name: qsTr("Copy capture to clipboard")
+                Layout.fillWidth: true
+                enabled: root.taskController && !root.taskController.inProgress
+                         && root.taskController.resolvedWidth > 0 && root.taskController.resolvedHeight > 0
+                onClicked: root.captureToClipboardRequested()
+            }
         }
     }
 }
