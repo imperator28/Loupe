@@ -676,6 +676,25 @@ Item {
         performCapture(qsTr("Copying to clipboard…"), function(capture, image) { capture.copyImageToClipboard(image) })
     }
 
+    // Quick-access path for the viewport's right-click menu and Ctrl/Cmd+C:
+    // always transparent, regardless of whatever the Capture panel's
+    // Transparent/Viewport solid toggle is currently set to, since that is
+    // exactly what this specific action promises by name.
+    function copyAsTransparentPicture() {
+        if (!root.controller) return
+        root.controller.capture.transparentBackground = true
+        captureToClipboard()
+    }
+
+    // Ctrl/Cmd+C is a window-wide shortcut, so without this guard it would
+    // also fire (and steal the key) while a text field elsewhere (the hex
+    // color field, a search box, ...) has focus and the user just wants to
+    // copy selected text out of it.
+    function isTextEditFocused() {
+        const item = root.Window.window ? root.Window.window.activeFocusItem : null
+        return !!(item && typeof item.selectAll === "function" && "text" in item)
+    }
+
     // Shared render pipeline behind captureToFile/captureToClipboard: both grab
     // the viewport at the requested scale identically and differ only in what
     // happens to the resulting image, via onResult(capture, image).
@@ -1301,6 +1320,13 @@ Item {
         theme: root.theme
         ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Fit assembly"); onTriggered: root.fitCamera() }
         ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
+        ThemedMenuSeparator { theme: viewportContextMenu.theme }
+        ThemedMenuItem {
+            theme: viewportContextMenu.theme
+            text: qsTr("Copy as transparent picture")
+            enabled: root.controller && !root.controller.capture.inProgress
+            onTriggered: root.copyAsTransparentPicture()
+        }
     }
 
     ThemedComboBox {
@@ -1357,6 +1383,12 @@ Item {
     Shortcut { sequences: ["1"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 0 }
     Shortcut { sequences: ["2"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 1 }
     Shortcut { sequences: ["3"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 2 }
+    Shortcut {
+        sequence: StandardKey.Copy
+        enabled: !root.presentationOnly && root.controller && !root.controller.capture.inProgress
+                 && !root.isTextEditFocused()
+        onActivated: root.copyAsTransparentPicture()
+    }
     // Ctrl/Cmd+O is owned by the File > Open STEP… menu item (Main.qml) so
     // there is exactly one shortcut registration for it at window scope.
     Shortcut {
