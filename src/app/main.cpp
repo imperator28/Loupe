@@ -32,6 +32,18 @@ int main(int argc, char* argv[])
     palette.setColor(QPalette::HighlightedText, QColor("#ffffff"));
     palette.setColor(QPalette::ToolTipBase, QColor("#26323c"));
     palette.setColor(QPalette::ToolTipText, QColor("#e6edf3"));
+    // Qt's own built-in dialogs (e.g. the QML ColorDialog used for material/
+    // body color pickers) style their header and footer bars from
+    // QPalette::Light, and borders from QPalette::Dark. Left unset, Qt
+    // auto-derives these from Button, landing on a shade visibly lighter than
+    // the rest of this dark palette — a washed-out band across otherwise-dark
+    // dialogs. Setting them explicitly keeps every native-QPalette-driven
+    // surface consistent with the rest of the app.
+    palette.setColor(QPalette::Light, QColor("#2a3540"));
+    palette.setColor(QPalette::Midlight, QColor("#24303a"));
+    palette.setColor(QPalette::Dark, QColor("#0d1318"));
+    palette.setColor(QPalette::Mid, QColor("#1a232b"));
+    palette.setColor(QPalette::Shadow, QColor("#05080a"));
     application.setPalette(palette);
     qmlRegisterUncreatableMetaObject(loupe::app::staticMetaObject, "Loupe.App", 1, 0, "AppState", "Application state only");
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");

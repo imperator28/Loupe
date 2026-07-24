@@ -31,6 +31,7 @@ Inspect.ElevatedPanel {
             item.controller = root.controller
             item.theme = Qt.binding(function() { return root.theme })
             item.presentationOnly = true
+            item.renderModeControlVisible = true
             item.selectionEnabled = Qt.binding(function() { return root.selectionEnabled })
             item.componentHoverEnabled = false
             item.contextActionsEnabled = true
