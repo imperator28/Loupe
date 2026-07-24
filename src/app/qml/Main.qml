@@ -74,18 +74,22 @@ ApplicationWindow {
         function onModeChanged() { appTheme.mode = root.themePreference.mode }
     }
 
-    menuBar: MenuBar {
-        Menu {
+    menuBar: Inspect.ThemedMenuBar {
+        theme: appTheme
+        Inspect.ThemedMenu {
+            theme: appTheme
             title: qsTr("File")
-            MenuItem {
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 action: Action {
                     text: qsTr("Open STEP…")
                     shortcut: StandardKey.Open
                     onTriggered: openStepDialog.open()
                 }
             }
-            MenuSeparator {}
-            MenuItem {
+            Inspect.ThemedMenuSeparator { theme: appTheme }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 action: Action {
                     text: qsTr("Quit Loupe")
                     shortcut: StandardKey.Quit
@@ -93,63 +97,75 @@ ApplicationWindow {
                 }
             }
         }
-        Menu {
+        Inspect.ThemedMenu {
+            theme: appTheme
             title: qsTr("View")
-            MenuItem {
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("Inspect")
                 checkable: true
                 checked: root.controller.workspace === AppState.Inspect
                 onTriggered: root.controller.setWorkspace(AppState.Inspect)
             }
-            MenuItem {
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("Export")
                 checkable: true
                 checked: root.controller.workspace === AppState.Export
                 onTriggered: root.controller.setWorkspace(AppState.Export)
             }
-            MenuSeparator {}
-            MenuItem {
+            Inspect.ThemedMenuSeparator { theme: appTheme }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("Interaction…")
                 onTriggered: interactionGuide.open()
             }
-            MenuSeparator {}
-            Menu {
+            Inspect.ThemedMenuSeparator { theme: appTheme }
+            Inspect.ThemedMenu {
+                theme: appTheme
                 title: qsTr("Appearance")
-                MenuItem {
+                Inspect.ThemedMenuItem {
+                    theme: appTheme
                     text: qsTr("System")
                     checkable: true
                     checked: root.themePreference.mode === "System"
                     onTriggered: { appTheme.mode = "System"; root.themePreference.mode = "System" }
                 }
-                MenuItem {
+                Inspect.ThemedMenuItem {
+                    theme: appTheme
                     text: qsTr("Light")
                     checkable: true
                     checked: root.themePreference.mode === "Light"
                     onTriggered: { appTheme.mode = "Light"; root.themePreference.mode = "Light" }
                 }
-                MenuItem {
+                Inspect.ThemedMenuItem {
+                    theme: appTheme
                     text: qsTr("Dark")
                     checkable: true
                     checked: root.themePreference.mode === "Dark"
                     onTriggered: { appTheme.mode = "Dark"; root.themePreference.mode = "Dark" }
                 }
             }
-            MenuSeparator {}
-            MenuItem {
+            Inspect.ThemedMenuSeparator { theme: appTheme }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("Reduce Motion")
                 checkable: true
                 checked: appTheme.reducedMotion
                 onTriggered: appTheme.reducedMotion = checked
             }
-            MenuSeparator {}
-            MenuItem {
+            Inspect.ThemedMenuSeparator { theme: appTheme }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("Review Source Units…")
                 onTriggered: unitReview.open()
             }
         }
-        Menu {
+        Inspect.ThemedMenu {
+            theme: appTheme
             title: qsTr("Help")
-            MenuItem {
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("About Loupe")
                 onTriggered: aboutLoupe.open()
             }

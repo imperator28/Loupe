@@ -19,6 +19,15 @@ Menu {
     leftPadding: 4
     rightPadding: 4
 
+    // Used only for content that isn't already an explicit ThemedMenuItem —
+    // in practice, a nested Menu (a submenu trigger like "Appearance").
+    // Without this, QQC2's own Menu.qml supplies its default, unthemed
+    // MenuItem for that row, which is how it ends up with light-theme text
+    // color inside an otherwise dark-themed menu.
+    delegate: ThemedMenuItem {
+        theme: control.theme
+    }
+
     contentItem: ListView {
         implicitHeight: contentHeight
         model: control.contentModel

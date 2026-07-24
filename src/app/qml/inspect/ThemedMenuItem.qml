@@ -15,7 +15,7 @@ MenuItem {
     implicitWidth: Math.max(180, implicitContentWidth + leftPadding + rightPadding)
     implicitHeight: 28
     leftPadding: checkable ? 34 : 12
-    rightPadding: 12
+    rightPadding: subMenu ? 28 : 12
 
     indicator: Item {
         x: 10
@@ -45,6 +45,15 @@ MenuItem {
             font.bold: true
             font.pixelSize: 12
         }
+    }
+
+    arrow: Text {
+        x: control.width - width - 10
+        y: (control.height - height) / 2
+        visible: control.subMenu
+        text: "›"
+        font.pixelSize: 16
+        color: control.highlighted ? control.highlightedTextColor : control.normalTextColor
     }
 
     contentItem: Text {
