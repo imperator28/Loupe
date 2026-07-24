@@ -16,6 +16,10 @@ build/
 build-*/
 out/
 
+# Local vcpkg checkout (routed here via a short C:\vcpkg symlink on Windows
+# to keep object paths under MAX_PATH)
+.tooling/
+
 # Browser-contract dependencies and test artifacts
 prototype/node_modules/
 prototype/test-results/

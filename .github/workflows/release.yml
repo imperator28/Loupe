@@ -140,6 +140,11 @@ jobs:
           mkdir -p dist/loupe-windows-x64
           cp "$EXE" dist/loupe-windows-x64/Loupe.exe
           cp "$(dirname "$EXE")"/*.dll dist/loupe-windows-x64/ 2>/dev/null || true
+          # The app launches loupe-worker.exe as a subprocess for all STEP
+          # import/geometry work; it sits beside the main exe in the build
+          # output but the *.dll glob above never picks it up, so every
+          # release before this fix shipped without it.
+          cp "$(dirname "$EXE")/loupe-worker.exe" dist/loupe-windows-x64/
           VCPKG_INSTALLED="build/${{ matrix.configure_preset }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}"
           WINDEPLOY=$(find "$VCPKG_INSTALLED/tools" -name windeployqt.exe 2>/dev/null | head -1)
           if [[ -n "$WINDEPLOY" ]]; then
@@ -149,6 +154,12 @@ jobs:
             cp -r "$VCPKG_INSTALLED/Qt6/plugins" dist/loupe-windows-x64/
             cp -r "$VCPKG_INSTALLED/Qt6/qml" dist/loupe-windows-x64/
             cp "$VCPKG_INSTALLED/bin"/*.dll dist/loupe-windows-x64/
+            # Qt only auto-discovers a "platforms" folder that is a direct
+            # sibling of the exe; staged wholesale it is one level deeper, at
+            # ./plugins/platforms, so without this qt.conf every packaged exe
+            # fails at launch with "Could not find the Qt platform plugin
+            # windows in ''" -- confirmed by inspecting the v0.1.0 asset itself.
+            printf '[Paths]\nPrefix = .\nPlugins = plugins\nQml2Imports = qml\n' > dist/loupe-windows-x64/qt.conf
           fi
           cd dist && 7z a "../loupe-${{ github.ref_name }}-windows-x64.zip" loupe-windows-x64
 
