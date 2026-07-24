@@ -1,10 +1,13 @@
 name: macOS Intel release build
 
-# Intel (x86_64) macOS builds run natively on GitHub's macos-13 runners, which
-# are the last Intel image (Apple Silicon runners cannot produce native x86_64
-# without cross-compilation). Kept separate from release.yml so the primary
-# release path is unaffected; this job appends its asset to the release once it
-# exists. Dispatch with a tag to append to an already-published release.
+# Intel (x86_64) macOS builds. GitHub's Intel runners (macos-13) are retired
+# and no longer schedule, so this builds x86_64 on an Apple Silicon runner.
+# Both vcpkg triplets are x64, so vcpkg performs an ordinary x64 build (no
+# fragile cross-compile path) and simply runs its own just-built x64 host
+# tools — and the x64 test binaries — under Rosetta 2. Kept separate from
+# release.yml so the primary release path is unaffected; this job appends its
+# asset to the release once it exists. Dispatch with a tag to append to an
+# already-published release.
 on:
   workflow_dispatch:
     inputs:
@@ -26,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: macOS Intel release
-    runs-on: macos-13
+    runs-on: macos-14
     timeout-minutes: 360
     env:
       LOUPE_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -36,6 +39,11 @@ jobs:
       CONFIGURE_PRESET: macos-x64-release
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rosetta 2
+        # Required to execute the x64 host tools vcpkg builds during the Qt
+        # build, and to run the x64 test binaries, on this arm64 runner.
+        run: softwareupdate --install-rosetta --agree-to-license
 
       - name: Resolve target release tag
         id: tag
@@ -69,7 +77,6 @@ jobs:
       - name: Configure
         timeout-minutes: 330
         run: |
-          test "$(uname -m)" = x86_64
           cmake --preset "$CONFIGURE_PRESET" \
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
             -DVCPKG_HOST_TRIPLET="$VCPKG_TRIPLET" \
