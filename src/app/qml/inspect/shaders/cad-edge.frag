@@ -1,0 +1,4 @@
+void MAIN()
+{
+    FRAGCOLOR = edgeColor;
+}
