@@ -75,6 +75,21 @@ if(APPLE)
     target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.mm)
     find_library(loupe_appkit_framework AppKit REQUIRED)
     target_link_libraries(loupe-app PRIVATE ${loupe_appkit_framework})
+
+    # The app spawns loupe-worker (out-of-process OpenCASCADE) for all STEP
+    # import and geometry work, locating it beside the main executable inside
+    # the bundle. A packaged .app has no build-tree fallback, so the worker
+    # must be copied into Contents/MacOS or every import fails with
+    # "Could not stage the STEP importer for launch". Static Qt/OCCT make the
+    # worker self-contained, so the executable alone is sufficient.
+    add_dependencies(loupe-app loupe-worker)
+    add_custom_command(TARGET loupe-app POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:loupe-worker>"
+            "$<TARGET_BUNDLE_CONTENT_DIR:loupe-app>/MacOS/"
+        COMMENT "Bundling loupe-worker into Loupe.app"
+        VERBATIM
+    )
 else()
     target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.cpp)
     if(WIN32)

@@ -34,3 +34,6 @@ Thumbs.db
 
 # Local release packaging output
 dist/
+
+# Compiled macOS helper app (built from scripts/macos/unblock-loupe.applescript)
+scripts/macos/*.app/

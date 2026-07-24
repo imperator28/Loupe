@@ -68,6 +68,24 @@ Useful shortcuts:
 
 The in-app **View > Interaction** guide contains this same mouse, trackpad, and keyboard reference.
 
+## Install a Release Build
+
+Download the platform archive from the [latest release](https://github.com/imperator28/Loupe/releases/latest) and unzip it.
+
+### macOS (Apple Silicon)
+
+Release builds are **not yet code-signed or notarized**, so macOS quarantines the download and refuses to open it with a misleading *"Loupe is damaged and can't be opened"* message. The app is not damaged — this is Gatekeeper blocking an unsigned download. Clear the quarantine flag once, using whichever you prefer:
+
+- **Finder:** in **System Settings → Privacy & Security**, scroll to the message about Loupe being blocked and click **Open Anyway**.
+- **Helper script:** the macOS zip includes **`Open Loupe (first run).command`**. Put it beside `Loupe.app`, right-click it → **Open** (needed the first time because it, too, is a download), and it clears the flag and launches Loupe. It is a short, readable shell script — open it in a text editor first if you like.
+- **Terminal:** `xattr -dr com.apple.quarantine /path/to/Loupe.app`
+
+After clearing it once, Loupe opens normally from then on.
+
+### Windows 11 (x64)
+
+Unzip and run `Loupe.exe`. SmartScreen may warn about an unrecognized publisher (again, because the build is unsigned) — choose **More info → Run anyway**. Keep the app's folder intact; `Loupe.exe` loads its bundled Qt runtime and the `loupe-worker.exe` import process from the same directory.
+
 ## Build on Apple Silicon
 
 ### Prerequisites

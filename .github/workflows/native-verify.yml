@@ -155,9 +155,16 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          ditto -c -k --keepParent \
-            "build/${{ matrix.configure_preset }}/src/app/Loupe.app" \
-            loupe-macos-arm64.zip
+          STAGE=dist/loupe-macos-arm64
+          mkdir -p "$STAGE"
+          cp -R "build/${{ matrix.configure_preset }}/src/app/Loupe.app" "$STAGE/"
+          # Bundle the first-run quarantine helper beside the app, since the
+          # unsigned build is otherwise blocked by Gatekeeper on download.
+          cp "scripts/macos/Open Loupe (first run).command" "$STAGE/"
+          # Confirm the import worker made it into the bundle — its absence is
+          # what broke STEP import in v0.1.1.
+          test -f "$STAGE/Loupe.app/Contents/MacOS/loupe-worker"
+          ditto -c -k --keepParent "$STAGE" loupe-macos-arm64.zip
 
       - name: Upload release app (macOS)
         if: runner.os == 'macOS'
