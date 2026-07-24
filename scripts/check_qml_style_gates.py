@@ -9,6 +9,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 QML_ROOT = ROOT / "src" / "app" / "qml"
 THEME = QML_ROOT / "Theme.qml"
+# The color picker is intrinsically built from literal colors that are not
+# themeable chrome: the rainbow hue strip, the white->transparent and
+# transparent->black saturation/value gradients, and a white/dark cursor handle
+# that must stay visible over any picked color. These are the picker's function,
+# not app styling, so the literal-color gate does not apply to it.
+COLOR_LITERAL_EXEMPT = {QML_ROOT / "inspect" / "ThemedColorDialog.qml"}
 HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
 LITERAL_DURATION = re.compile(r"\bduration\s*:\s*\d+\b")
 
@@ -22,7 +28,7 @@ def matches(path: Path, pattern: re.Pattern[str]):
 def main() -> int:
     failures: list[str] = []
     for path in sorted(QML_ROOT.rglob("*.qml")):
-        if path != THEME:
+        if path != THEME and path not in COLOR_LITERAL_EXEMPT:
             for number, line in matches(path, HEX_COLOR):
                 failures.append(f"{path.relative_to(ROOT)}:{number}: literal color: {line}")
         for number, line in matches(path, LITERAL_DURATION):

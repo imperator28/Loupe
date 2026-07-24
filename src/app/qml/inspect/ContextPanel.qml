@@ -144,11 +144,12 @@ ElevatedPanel {
         Item { Layout.fillHeight: true }
     }
 
-    ColorDialog {
+    ThemedColorDialog {
         id: appearanceDialog
+        theme: root.theme
         title: qsTr("Body color")
         selectedColor: controller ? controller.activeResolvedAppearanceColor : root.theme.neutralBody
-        onAccepted: if (controller) controller.setActiveAppearanceColor(selectedColor, assignmentScope.currentValue)
+        onAccepted: if (controller) controller.setActiveAppearanceColor(pickedColor, assignmentScope.currentValue)
     }
 
     Dialog {
@@ -262,11 +263,12 @@ ElevatedPanel {
         }
     }
 
-    ColorDialog {
+    ThemedColorDialog {
         id: materialColorDialog
+        theme: root.theme
         title: qsTr("Material color")
         selectedColor: materialDialog.materialColor
-        onAccepted: materialDialog.materialColor = selectedColor
+        onAccepted: materialDialog.materialColor = pickedColor
     }
 
     Dialog {
@@ -416,11 +418,12 @@ ElevatedPanel {
         }
     }
 
-    ColorDialog {
+    ThemedColorDialog {
         id: managerColorDialog
+        theme: root.theme
         title: qsTr("Material color")
         selectedColor: materialManager.materialColor
-        onAccepted: materialManager.materialColor = selectedColor
+        onAccepted: materialManager.materialColor = pickedColor
     }
 
     Dialog {
