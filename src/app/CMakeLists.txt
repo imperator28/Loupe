@@ -83,6 +83,9 @@ else()
             OBJECT_DEPENDS "${loupe_branding_dir}/Loupe.ico"
         )
         target_sources(loupe-app PRIVATE "${loupe_app_icon_windows_rc}")
+        # WindowChrome.cpp calls DwmSetWindowAttribute to keep the native
+        # title bar's dark/light mode in sync with the in-app theme toggle.
+        target_link_libraries(loupe-app PRIVATE dwmapi)
     endif()
 endif()
 
@@ -113,6 +116,8 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedMenu.qml
         qml/inspect/ThemedMenuItem.qml
         qml/inspect/ThemedMenuSeparator.qml
+        qml/inspect/ThemedMenuBar.qml
+        qml/inspect/ThemedMenuBarItem.qml
         qml/inspect/ThemedToolButton.qml
         qml/inspect/ThemedTabButton.qml
         qml/inspect/ThemedCheckBox.qml
@@ -134,8 +139,12 @@ qt_add_qml_module(loupe-app
         qml/inspect/MeasurementPanel.qml
         qml/inspect/SectionPanel.qml
         qml/inspect/CapturePanel.qml
+        qml/inspect/CadEdgeMaterial.qml
+        qml/inspect/ThemedColorDialog.qml
     RESOURCES
         qml/inspect/shaders/section-clip.frag
+        qml/inspect/shaders/cad-edge.vert
+        qml/inspect/shaders/cad-edge.frag
 )
 
 target_link_libraries(loupe-app PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Quick3D Qt6::Network Qt6::Sql Qt6::Svg)

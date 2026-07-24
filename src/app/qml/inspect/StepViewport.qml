@@ -11,6 +11,11 @@ Item {
     property QtObject controller
     property QtObject theme
     property bool presentationOnly: false
+    // presentationOnly hides the full interactive toolbar (section, measure,
+    // shortcuts, ...), but a presentation host (e.g. Export's preview panes)
+    // may still want the user to be able to switch Solid/Solid+Edges/Edges
+    // Only, so that one control is independently switchable.
+    property bool renderModeControlVisible: !presentationOnly
     property bool selectionEnabled: true
     property bool componentHoverEnabled: true
     property bool contextActionsEnabled: !presentationOnly
@@ -64,18 +69,6 @@ Item {
         const y = sceneMaximum.y - sceneMinimum.y
         const z = sceneMaximum.z - sceneMinimum.z
         return Math.max(0.001, Math.sqrt(x * x + y * y + z * z))
-    }
-    // CAD edge polylines sit directly on their shaded faces. Nudge them less
-    // than a pixel toward the active camera to remove depth-fighting speckles,
-    // while retaining the normal depth test that hides occluded edges.
-    readonly property vector3d edgeOverlayOffset: {
-        const x = navigation.cameraPosition.x - navigation.activePivot.x
-        const y = navigation.cameraPosition.y - navigation.activePivot.y
-        const z = navigation.cameraPosition.z - navigation.activePivot.z
-        const length = Math.sqrt(x * x + y * y + z * z)
-        if (length < 0.000001) return Qt.vector3d(0, 0, 0)
-        const amount = Math.max(sceneDiagonal * 0.0000025, sectionWorldPerPixel * 0.35)
-        return Qt.vector3d(x / length * amount, y / length * amount, z / length * amount)
     }
     readonly property vector3d sectionAnchor: {
         if (!controller) return sceneCenter
@@ -358,7 +351,13 @@ Item {
                     && (!controller || controller.isNodeVisible(modelByNode[id].nodeId))
         for (let id in edgeModelByNode) {
             const edgeModel = edgeModelByNode[id]
-            const selected = controller && controller.isNodeSelected(edgeModel.nodeId)
+            // The "show edges for a selected part even in Solid mode" override
+            // is an interactive-Inspect aid (so a multi-select stays legible
+            // without switching modes). A presentation-only host — e.g.
+            // Export's preview panes — sets its own displayed node as the
+            // shared controller selection too, which would otherwise always
+            // trip this override and make its render-mode control a no-op.
+            const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
             const sectionPreview = section && section.enabled && section.interacting
             edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
                     && nodeVisibleInPreview(edgeModel.nodeId)
@@ -669,7 +668,19 @@ Item {
     }
 
     function captureToFile(fileUrl) {
-        if (!root.controller || !fileUrl) return
+        if (!fileUrl) return
+        performCapture(qsTr("Encoding PNG…"), function(capture, image) { capture.saveImage(image, fileUrl) })
+    }
+
+    function captureToClipboard() {
+        performCapture(qsTr("Copying to clipboard…"), function(capture, image) { capture.copyImageToClipboard(image) })
+    }
+
+    // Shared render pipeline behind captureToFile/captureToClipboard: both grab
+    // the viewport at the requested scale identically and differ only in what
+    // happens to the resulting image, via onResult(capture, image).
+    function performCapture(encodingMessage, onResult) {
+        if (!root.controller) return
         const capture = root.controller.capture
         if (capture.inProgress) return
         capture.beginCapture()
@@ -694,8 +705,8 @@ Item {
             Qt.callLater(function() {
                 capture.setCaptureProgress(0.48, qsTr("Rendering at %1×…").arg(capture.scale.toFixed(2)))
                 const started = view.grabToImage(function(result) {
-                    capture.setCaptureProgress(0.82, qsTr("Encoding PNG…"))
-                    capture.saveImage(result.image, fileUrl)
+                    capture.setCaptureProgress(0.82, encodingMessage)
+                    onResult(capture, result.image)
                     view.explicitTextureWidth = 0
                     view.explicitTextureHeight = 0
                     orthographicCamera.horizontalMagnification = navigation.orthographicMagnification
@@ -779,18 +790,12 @@ Item {
                                          && root.controller.isNodeSelected(nodeId))
                                         || root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId))
             pickable: false
-            position: root.edgeOverlayOffset
             materials: [standardEdgeMaterial]
-            PrincipledMaterial {
+            CadEdgeMaterial {
                 id: standardEdgeMaterial
-                lighting: PrincipledMaterial.NoLighting
-                baseColor: edgeModelItem.selected ? viewportVisualTheme.selectionEdgeColor
+                edgeColor: edgeModelItem.selected ? viewportVisualTheme.selectionEdgeColor
                                                    : viewportVisualTheme.edgeColor
-                // The camera-facing model offset removes coplanar depth
-                // fighting. Depth testing still keeps hidden edges hidden.
                 lineWidth: edgeModelItem.selected ? 2.5 : 1.5
-                roughness: 1.0
-                cullMode: Material.NoCulling
             }
         }
     }
@@ -1301,7 +1306,7 @@ Item {
     ThemedComboBox {
         id: displayModeControl
         theme: root.theme
-        visible: !root.presentationOnly && !root.captureUiHidden
+        visible: root.renderModeControlVisible && !root.captureUiHidden
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 12

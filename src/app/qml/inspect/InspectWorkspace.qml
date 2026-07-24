@@ -96,21 +96,18 @@ Item {
                         palette.alternateBase: root.theme.surfaceSubtle
                         palette.highlight: "transparent"
                         // Qt's default indicator is a 40 px ColorImage sized for a
-                        // standard Button row; our compact 28 px rows clip/misalign
-                        // it (also why it reads as nearly invisible in dark mode).
-                        // A small themed glyph sized to the row fixes both.
-                        indicator: Text {
-                            visible: treeDelegate.hasChildren
-                            x: treeDelegate.leftMargin + treeDelegate.depth * treeDelegate.indentation
-                            y: (treeDelegate.height - height) / 2
-                            width: 16
-                            height: 16
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            text: treeDelegate.expanded ? "▾" : "▸"
-                            color: root.foreground
-                            font.pixelSize: 11
-                        }
+                        // standard Button row that clips/misaligns in our compact
+                        // 28 px rows, and its click-to-toggle wiring is a C++-side
+                        // TapHandler on the indicator item that competes with the
+                        // row's own TapHandler below (needed for selection and the
+                        // context menu) for the same tap — unreliably, in practice.
+                        // Disabling it and rendering an explicit ThemedToolButton in
+                        // contentItem instead (below) — the same real, interactive
+                        // button already used for this in Export's component list —
+                        // sidesteps that ambiguity entirely: a proper AbstractButton
+                        // reliably claims its own press events ahead of a sibling
+                        // TapHandler, exactly as it already does in Export.
+                        indicator: null
                         background: Rectangle {
                             radius: root.theme.radius1
                             color: treeDelegate.highlighted ? root.theme.accentTint
@@ -131,14 +128,36 @@ Item {
                                 ColorAnimation { duration: root.theme.durInstant }
                             }
                         }
-                        contentItem: Item {
-                            implicitWidth: treeLabel.implicitWidth
+                        contentItem: RowLayout {
                             implicitHeight: root.theme.rowCompact
+                            spacing: root.theme.spacing1
+
+                            Item {
+                                Layout.preferredWidth: root.theme.spacing6 + treeDelegate.depth * 16
+                                Layout.preferredHeight: 1
+                            }
+
+                            ThemedToolButton {
+                                id: disclosureButton
+                                theme: root.theme
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 24
+                                visible: treeDelegate.hasChildren
+                                text: treeDelegate.expanded ? "▾" : "▸"
+                                Accessible.name: treeDelegate.expanded
+                                                 ? qsTr("Collapse %1").arg(treeDelegate.name)
+                                                 : qsTr("Expand %1").arg(treeDelegate.name)
+                                onClicked: assemblyTree.toggleExpanded(treeDelegate.row)
+                            }
+                            Item {
+                                visible: !disclosureButton.visible
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 1
+                            }
 
                             Label {
                                 id: treeLabel
-                                anchors.fill: parent
-                                leftPadding: root.theme.spacing6
+                                Layout.fillWidth: true
                                 rightPadding: root.theme.spacing6
                                 text: definitionQuantity > 0 ? qsTr("%1  %2x").arg(name).arg(definitionQuantity) : name
                                 color: root.foreground
@@ -392,6 +411,9 @@ Item {
             else {
                 item.taskController = root.controller.capture
                 item.captureRequested.connect(function() { captureDialog.open() })
+                item.captureToClipboardRequested.connect(function() {
+                    if (viewportLoader.item) viewportLoader.item.captureToClipboard()
+                })
             }
             item.closeRequested.connect(function() {
                 root.taskPanelVisible = false
@@ -416,12 +438,13 @@ Item {
         }
     }
 
-    ColorDialog {
+    ThemedColorDialog {
         id: sectionBorderColorDialog
+        theme: root.theme
         title: qsTr("Section border color")
         selectedColor: root.theme.edge
         onAccepted: if (root.controller)
-            root.controller.section.sliceBorderColor = selectedColor.toString()
+            root.controller.section.sliceBorderColor = pickedColor.toString()
     }
 
     FileDialog {
