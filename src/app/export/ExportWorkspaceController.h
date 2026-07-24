@@ -78,6 +78,7 @@ public:
     void handleExportCanceled();
 
     Q_INVOKABLE void setChecked(const QString& nodeId, bool checked);
+    Q_INVOKABLE void setAllChecked(bool checked);
     Q_INVOKABLE bool isChecked(const QString& nodeId) const;
     Q_INVOKABLE bool containsNode(const QString& selectionId, const QString& nodeId) const;
     Q_INVOKABLE void setFocusedNodeId(const QString& nodeId);

@@ -174,6 +174,22 @@ void ExportWorkspaceController::setChecked(const QString& nodeId, const bool che
     emit selectionChanged();
 }
 
+void ExportWorkspaceController::setAllChecked(const bool checked)
+{
+    if (exporting_) return;
+    if (checked) {
+        for (const auto& component : components_) {
+            if (component.exportable && !checkedNodeIds_.contains(component.id)) checkedNodeIds_.append(component.id);
+        }
+    } else {
+        checkedNodeIds_.clear();
+        filenameOverrides_.clear();
+    }
+    refreshPlan();
+    ++selectionRevision_;
+    emit selectionChanged();
+}
+
 bool ExportWorkspaceController::isChecked(const QString& nodeId) const
 {
     return checkedNodeIds_.contains(nodeId);

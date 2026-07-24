@@ -23,6 +23,8 @@ private slots:
     void invalidFolderUrlDoesNotReplaceDestination();
     void reviewedExportLocksPlanAndTracksResults();
     void exportWaitsForNativeDocument();
+    void selectAllChecksEveryExportableComponent();
+    void deselectAllClearsSelection();
 };
 
 namespace {
@@ -297,6 +299,32 @@ void ExportWorkspaceControllerTest::exportWaitsForNativeDocument()
     QVERIFY(!controller.exportReviewedPlan());
     controller.setDocumentReady(true);
     QVERIFY(controller.canExport());
+}
+
+void ExportWorkspaceControllerTest::selectAllChecksEveryExportableComponent()
+{
+    loupe::app::exporting::ExportWorkspaceController controller;
+    controller.replaceSnapshot(snapshot());
+
+    controller.setAllChecked(true);
+
+    QCOMPARE(controller.checkedCount(), 3);
+    QVERIFY(controller.isChecked(QStringLiteral("sub")));
+    QVERIFY(controller.isChecked(QStringLiteral("cover")));
+    QVERIFY(controller.isChecked(QStringLiteral("insert")));
+    QVERIFY(!controller.isChecked(QStringLiteral("root")));
+}
+
+void ExportWorkspaceControllerTest::deselectAllClearsSelection()
+{
+    loupe::app::exporting::ExportWorkspaceController controller;
+    controller.replaceSnapshot(snapshot());
+    controller.setAllChecked(true);
+    QCOMPARE(controller.checkedCount(), 3);
+
+    controller.setAllChecked(false);
+
+    QCOMPARE(controller.checkedCount(), 0);
 }
 
 QTEST_MAIN(ExportWorkspaceControllerTest)
