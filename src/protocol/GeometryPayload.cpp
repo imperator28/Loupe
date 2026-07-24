@@ -7,6 +7,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <type_traits>
 
 namespace loupe::protocol {
@@ -124,11 +125,23 @@ void validate(const Payload& payload)
     for (const auto& range : payload.topology) {
         const auto expectedKind = std::is_same_v<Payload, MeshPayload> ? TopologyKind::Face : TopologyKind::Edge;
         const auto end = static_cast<quint64>(range.firstIndex) + range.indexCount;
-        if (range.topologyId == 0 || range.kind != expectedKind || range.indexCount == 0
-            || end > static_cast<quint64>(payload.indices.size()) || range.firstIndex < previousEnd
-            || !std::isfinite(range.measureMm) || range.measureMm < 0.0F
-            || !std::isfinite(range.radiusMm) || range.radiusMm < 0.0F) {
-            throw ProtocolError("Geometry topology range is invalid");
+        const char* reason = nullptr;
+        if (range.topologyId == 0) reason = "topologyId is zero";
+        else if (range.kind != expectedKind) reason = "kind mismatch";
+        else if (range.indexCount == 0) reason = "indexCount is zero";
+        else if (end > static_cast<quint64>(payload.indices.size())) reason = "range end past index count";
+        else if (range.firstIndex < previousEnd) reason = "firstIndex overlaps previous range";
+        else if (!std::isfinite(range.measureMm) || range.measureMm < 0.0F) reason = "measureMm invalid";
+        else if (!std::isfinite(range.radiusMm) || range.radiusMm < 0.0F) reason = "radiusMm invalid";
+        if (reason) {
+            throw ProtocolError(std::string("Geometry topology range is invalid: ") + reason
+                                + " (topologyId=" + std::to_string(range.topologyId)
+                                + " firstIndex=" + std::to_string(range.firstIndex)
+                                + " indexCount=" + std::to_string(range.indexCount)
+                                + " previousEnd=" + std::to_string(previousEnd)
+                                + " indices=" + std::to_string(payload.indices.size())
+                                + " measureMm=" + std::to_string(range.measureMm)
+                                + " radiusMm=" + std::to_string(range.radiusMm) + ")");
         }
         previousEnd = end;
     }

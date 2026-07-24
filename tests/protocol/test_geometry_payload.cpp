@@ -3,6 +3,8 @@
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolTypes.h"
 
+#include <limits>
+
 class GeometryPayloadTest final : public QObject
 {
     Q_OBJECT
@@ -13,6 +15,8 @@ private slots:
     void rejectsOutOfRangeIndices();
     void rejectsTruncatedPayload();
     void rejectsOverlappingTopologyRanges();
+    void rejectsNegativeMeasure();
+    void rejectsNonFiniteMeasure();
 };
 
 void GeometryPayloadTest::meshRoundTrips()
@@ -71,6 +75,37 @@ void GeometryPayloadTest::rejectsOverlappingTopologyRanges()
                                         {0, 1, 2},
                                         {{1, loupe::protocol::TopologyKind::Face, 0, 3, 0.5F, 0.0F},
                                          {2, loupe::protocol::TopologyKind::Face, 2, 1, 0.5F, 0.0F}}};
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError,
+                             static_cast<void>(loupe::protocol::encodeGeometry(source)));
+}
+
+// A face area or edge length can never be meaningfully negative; OCCT's GProp
+// mass occasionally returns tiny numerical-noise negatives on near-degenerate
+// geometry. The worker clamps those to zero (sanitizeMeasure) precisely because
+// the protocol treats a negative measure as invalid — regression guard for the
+// crash where such a payload reached the main-thread encoder and terminated the
+// worker (WER 0xC0000409).
+void GeometryPayloadTest::rejectsNegativeMeasure()
+{
+    loupe::protocol::MeshPayload source{1, 1, {}, QStringLiteral("node"), QStringLiteral("segment"),
+                                        QStringLiteral("#ffffff"), 0,
+                                        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2},
+                                        {{1, loupe::protocol::TopologyKind::Face, 0, 3, -0.0001F, 0.0F}}};
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError,
+                             static_cast<void>(loupe::protocol::encodeGeometry(source)));
+}
+
+void GeometryPayloadTest::rejectsNonFiniteMeasure()
+{
+    loupe::protocol::MeshPayload source{1, 1, {}, QStringLiteral("node"), QStringLiteral("segment"),
+                                        QStringLiteral("#ffffff"), 0,
+                                        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2},
+                                        {{1, loupe::protocol::TopologyKind::Face, 0, 3,
+                                          std::numeric_limits<float>::quiet_NaN(), 0.0F}}};
     QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError,
                              static_cast<void>(loupe::protocol::encodeGeometry(source)));
 }

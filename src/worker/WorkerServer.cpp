@@ -206,6 +206,17 @@ void prepareTessellation(const TopoDS_Shape& shape, const double sourceToMillime
     BRepMesh_IncrementalMesh mesher(shape, linearDeflection, false, profile.angularDeflectionRadians, true);
 }
 
+// OCCT's GProp mass (a face area or edge length) can come back as a tiny
+// negative value from floating-point roundoff on near-degenerate geometry.
+// The wire protocol requires every topology measure to be finite and
+// non-negative, so clamp numerical noise to zero here rather than emit a
+// schema-invalid payload — which fails validation in encodeGeometry and, since
+// that runs on the main thread's event loop, would terminate the whole worker.
+float sanitizeMeasure(const double value)
+{
+    return (std::isfinite(value) && value > 0.0) ? static_cast<float>(value) : 0.0F;
+}
+
 QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters,
                                 const occ::handle<XCAFDoc_ColorTool>& colors,
                                 const TDF_Label& occurrence, const TDF_Label& definition)
@@ -266,8 +277,8 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placem
         }
         segment.topology.append({static_cast<quint32>(faceIndex), protocol::TopologyKind::Face,
                                  firstIndex, static_cast<quint32>(segment.indices.size()) - firstIndex,
-                                 static_cast<float>(properties.Mass() * sourceToMillimeters * sourceToMillimeters),
-                                 radiusMm});
+                                 sanitizeMeasure(properties.Mass() * sourceToMillimeters * sourceToMillimeters),
+                                 sanitizeMeasure(radiusMm)});
     }
     return segments;
 }
@@ -306,7 +317,8 @@ EdgePayload encodeEdges(const TopoDS_Shape& shape, const gp_Trsf& placement, con
                 ? static_cast<float>(curve.Circle().Radius() * sourceToMillimeters) : 0.0F;
             payload.topology.append({static_cast<quint32>(edgeIndex), protocol::TopologyKind::Edge,
                                      firstIndex, static_cast<quint32>(payload.indices.size()) - firstIndex,
-                                     static_cast<float>(properties.Mass() * sourceToMillimeters), radiusMm});
+                                     sanitizeMeasure(properties.Mass() * sourceToMillimeters),
+                                     sanitizeMeasure(radiusMm)});
         } catch (const Standard_Failure&) {
             continue;
         }
@@ -399,7 +411,19 @@ void WorkerServer::send(QJsonObject event)
 void WorkerServer::sendGeometry(const protocol::GeometryPayload& payload)
 {
     if (!socket_) return;
-    socket_->write(protocol::encodeFrame(protocol::FrameType::Geometry, protocol::encodeGeometry(payload)));
+    // encodeGeometry validates the payload and throws ProtocolError on any
+    // malformed body. This runs on the main thread via a queued call from the
+    // tessellation thread, so an escaping exception has no handler and would
+    // terminate the whole worker (observed as WER 0xC0000409). Contain it: drop
+    // the offending body and keep the import alive rather than crashing.
+    QByteArray frame;
+    try {
+        frame = protocol::encodeFrame(protocol::FrameType::Geometry, protocol::encodeGeometry(payload));
+    } catch (const std::exception& error) {
+        qWarning("loupe-worker: dropping geometry payload that failed to encode: %s", error.what());
+        return;
+    }
+    socket_->write(frame);
     socket_->flush();
 }
 
