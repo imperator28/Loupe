@@ -1084,6 +1084,8 @@ Item {
         property real pressY: 0
         property int pressButton: Qt.NoButton
         property bool dragging: false
+        property bool rolling: false
+        property real lastRollAngle: 0
         hoverEnabled: true
 
         onPressed: function(mouse) {
@@ -1106,6 +1108,28 @@ Item {
             const deltaY = mouse.y - pressY
             if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) dragging = true
             if (!dragging) return
+            // Alt + left drag spins the view in its own plane. Measured as the
+            // cursor's angle about the viewport centre rather than a pixels-per-degree
+            // factor, so the model tracks the pointer directly.
+            if (pressButton === Qt.LeftButton && (mouse.modifiers & Qt.AltModifier)) {
+                const angle = Math.atan2(mouse.y - root.height / 2, mouse.x - root.width / 2)
+                        * 180 / Math.PI
+                if (!rolling) {
+                    // Latch the starting angle so engaging the gesture cannot jump.
+                    rolling = true
+                } else {
+                    let step = angle - lastRollAngle
+                    // Crossing the +/-180 seam would otherwise read as a full turn.
+                    while (step > 180) step -= 360
+                    while (step < -180) step += 360
+                    navigation.roll(step)
+                }
+                lastRollAngle = angle
+                pressX = mouse.x
+                pressY = mouse.y
+                return
+            }
+            rolling = false
             if (pressButton === Qt.MiddleButton || (pressButton === Qt.LeftButton && (mouse.modifiers & Qt.ShiftModifier)))
                 navigation.pan(deltaX, deltaY)
             else if (pressButton === Qt.LeftButton)
@@ -1128,6 +1152,7 @@ Item {
                 else viewportContextMenu.popup(mouse.x, mouse.y)
             }
             pressButton = Qt.NoButton
+            rolling = false
             navigation.clearPendingOrbitPivot()
         }
         onExited: {

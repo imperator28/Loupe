@@ -97,6 +97,7 @@ Dialog {
                         GuideRow { input: qsTr("Left drag"); action: qsTr("Rotate around the cursor pivot") }
                         GuideRow { input: qsTr("Middle drag"); action: qsTr("Pan") }
                         GuideRow { input: qsTr("Shift + left drag"); action: qsTr("Pan") }
+                        GuideRow { input: qsTr("Alt + left drag"); action: qsTr("Rotate in plane") }
                         GuideRow { input: qsTr("Mouse wheel"); action: qsTr("Zoom") }
                         GuideRow { input: qsTr("Two-finger scroll"); action: qsTr("Pan") }
                         GuideRow { input: qsTr("Pinch"); action: qsTr("Zoom") }
