@@ -558,36 +558,32 @@ ctest --preset windows-release --output-on-failure
 
 ---
 
-## Task 9b: Labels printed on the cube faces, and axis arrowheads
+## Task 9b: Labels printed on the cube faces, and axis arrowheads — DONE 2026-07-25
 
-Requested during review: the face labels should be printed onto the faces so they
-foreshorten in perspective rather than standing upright as 2D overlays, and the axis
-triad should have real colour-matched arrowheads.
+Labels now lie on the faces as decals and foreshorten with them; the triad has
+cylinder-and-cone arrows in the axis colours.
 
-**Attempted and reverted.** The natural Qt Quick 3D route is a per-face
-`PrincipledMaterial.baseColorMap` built from `Texture { sourceItem: ... }`, with the
-label drawn in the source item. It renders correctly but **segfaults the qml-smoke
-test**, which runs under `QT_QPA_PLATFORM=minimal`: rendering a QQuick item to a
-texture needs a real render context, and there is none offscreen. Shipping it would
-break the suite and any software-rendered environment, so it was reverted to the
-working overlay-label cube.
+- [x] Print labels on the faces without `sourceItem`. Each is a pre-rendered SVG of
+      white glyphs on a transparent ground, used as the material's **opacity map**:
+      the glyph alpha masks, the tint comes from the theme, so labels follow light and
+      dark mode and the source stays vector.
+- [x] Axis arrowheads, `#Cylinder` shaft plus `#Cone` tip per axis.
+- [x] qml-smoke re-run specifically. It fails by crashing rather than asserting, so a
+      green core suite is not evidence on its own; 149/149 including qml-smoke.
 
-- [ ] Print labels on the faces without `sourceItem`. Options, cheapest first:
-      pre-render the six labels as image assets and use them as `baseColorMap`
-      (static text, so nothing is lost); or generate the texture procedurally from a
-      `Canvas`; or keep `sourceItem` but guard it so the texture is only created when
-      a render context exists, leaving the overlay labels as the offscreen fallback.
-- [ ] Add axis arrowheads: `#Cylinder` shafts with `#Cone` tips, one per axis in the
-      axis colour. This part did not cause the crash and can land independently of
-      the label work.
-- [ ] Re-run qml-smoke specifically; it is the only test that exercises this path and
-      it fails by crashing rather than asserting, so a green core suite is not
-      evidence.
+**Why `Texture.sourceItem` is unusable here**, recorded because it is the obvious
+first choice: rendering a QQuick item to a texture needs a live render context, so it
+segfaults under the offscreen platform the smoke test uses, and would do the same in
+any software-rendered environment.
 
-Note for whoever picks this up: the axis colours read `theme.errorColor`,
-`theme.success` and `theme.accentColor`, which are undefined in the smoke test's stub
-theme and log "Unable to assign [undefined] to QColor". Harmless, but it means the
-stub theme needs those keys if the cube is asserted on there.
+The change is additive -- the cube body and its normal-based picking are untouched and
+the decals are non-pickable -- so the reviewed behaviour was preserved rather than
+rewritten.
+
+Remaining polish, not blocking: the smoke test's stub theme lacks `errorColor`,
+`success` and `accentColor`, so the axis colours log "Unable to assign [undefined] to
+QColor" there. Harmless, but the stub needs those keys before the cube is asserted on
+in that test.
 
 ---
 
