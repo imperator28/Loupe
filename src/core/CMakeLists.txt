@@ -1,5 +1,12 @@
 add_library(loupe-core STATIC
     domain/StableId.cpp
+    drawing/DrawingContour.cpp
+    drawing/DrawingProjector.cpp
+    drawing/DrawingValidator.cpp
+    drawing/DrawingWriter.cpp
+    drawing/DxfWriter.cpp
+    drawing/PdfWriter.cpp
+    drawing/SvgWriter.cpp
     export/ExportPlan.cpp
     export/StepExporter.cpp
     export/StlExporter.cpp
@@ -32,6 +39,17 @@ target_link_libraries(loupe-core
         TKPrim
         TKMesh
         TKDESTL
+        # 2D drawing export: TKHLR provides hidden-line removal (the projection
+        # engine), TKGeomBase the exact spline decomposition and controlled
+        # tessellation, TKShHealing the edge-to-wire stitching, TKTopAlgo the
+        # BRepLib plane the HLR result is expressed on. All four already arrive
+        # transitively through TKXCAF -> TKVCAF -> TKV3d and are already packaged
+        # in releases; listing them makes the dependency explicit rather than
+        # incidental. No vcpkg.json change and no new shipped library.
+        TKHLR
+        TKGeomBase
+        TKShHealing
+        TKTopAlgo
     PRIVATE
         Qt6::Core
 )

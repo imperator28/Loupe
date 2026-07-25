@@ -27,6 +27,10 @@ add_executable(loupe-core-tests
     core/test_stable_id.cpp
     core/test_unit_policy.cpp
     core/test_step_import.cpp
+    core/test_drawing_contour.cpp
+    core/test_drawing_projection.cpp
+    core/test_drawing_validation.cpp
+    core/test_drawing_writers.cpp
     core/test_export_plan.cpp
     core/test_selected_export.cpp
     core/test_output_validation.cpp
