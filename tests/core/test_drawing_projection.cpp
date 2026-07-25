@@ -4,6 +4,7 @@
 #include "core/drawing/DrawingProjector.h"
 
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <gp_Ax2.hxx>
@@ -174,6 +175,65 @@ TEST_CASE("projection never invents a full circle from an open arc", "[drawing-p
             }
         }
     }
+}
+
+TEST_CASE("silhouette mode keeps only edges that bound material", "[drawing-projection][silhouette]")
+{
+    // A stepped block: viewed from the side, the step's top face projects to a line
+    // straight across the middle. It is genuinely visible, so hidden-line removal
+    // reports it, but it does not describe where material ends and must not appear
+    // in a cut outline.
+    const TopoDS_Shape base = BRepPrimAPI_MakeBox(40.0, 20.0, 10.0).Shape();
+    const TopoDS_Shape upper =
+        BRepPrimAPI_MakeBox(gp_Pnt(0.0, 0.0, 10.0), 40.0, 10.0, 10.0).Shape();
+    const TopoDS_Shape stepped = BRepAlgoAPI_Fuse(base, upper).Shape();
+
+    auto cutRequest = requestFor(stepped, gp_Dir(0.0, 1.0, 0.0));
+    cutRequest.mode = ContentMode::CutContours;
+    const auto cut = loupe::drawing::project(cutRequest);
+
+    auto silhouetteRequest = requestFor(stepped, gp_Dir(0.0, 1.0, 0.0));
+    silhouetteRequest.mode = ContentMode::OuterContourOnly;
+    const auto silhouette = loupe::drawing::project(silhouetteRequest);
+
+    // The silhouette must be strictly simpler, and it must say what it dropped.
+    REQUIRE(silhouette.statistics.interiorEdgesRemoved > 0);
+    REQUIRE(countPrimitives(silhouette.drawing) < countPrimitives(cut.drawing));
+
+    // Closed by construction: classifying regions and keeping their shared boundary
+    // cannot leave a dangling end, which is what a cutter needs.
+    REQUIRE(silhouette.statistics.closedContours >= 1);
+    REQUIRE(silhouette.statistics.openContours == 0);
+
+    // Same real-world size -- filtering must not move anything.
+    const auto cutBounds = cut.drawing.bounds();
+    const auto silhouetteBounds = silhouette.drawing.bounds();
+    REQUIRE(silhouetteBounds.width() == Catch::Approx(cutBounds.width()).margin(1.0e-6));
+    REQUIRE(silhouetteBounds.height() == Catch::Approx(cutBounds.height()).margin(1.0e-6));
+}
+
+TEST_CASE("silhouette mode preserves a through hole", "[drawing-projection][silhouette]")
+{
+    // A hole is a boundary: material on one side, empty space on the other. Dropping
+    // it would be as wrong as keeping a step line.
+    auto request = requestFor(drilledPlate(), gp_Dir(0.0, 0.0, 1.0));
+    request.mode = ContentMode::OuterContourOnly;
+    const auto result = loupe::drawing::project(request);
+
+    REQUIRE(result.statistics.closedContours >= 2);
+    REQUIRE(result.statistics.openContours == 0);
+
+    bool keptHole = false;
+    for (const auto& layer : result.drawing.layers) {
+        for (const auto& contour : layer.contours) {
+            for (const auto& primitive : contour.primitives) {
+                if (const auto* arc = std::get_if<Arc>(&primitive)) {
+                    if (std::abs(arc->radius - 5.0) < 1.0e-6) keptHole = true;
+                }
+            }
+        }
+    }
+    REQUIRE(keptHole);
 }
 
 TEST_CASE("a view direction parallel to the up direction is refused", "[drawing-projection]")

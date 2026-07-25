@@ -770,6 +770,7 @@ int runDrawingSpike(const std::vector<std::string>& args)
             const auto& stats = projected.statistics;
             written.push_back({{"projection",
                                 {{"edges", stats.edges},
+                                 {"interiorEdgesRemoved", stats.interiorEdgesRemoved},
                                  {"analyticLines", stats.analyticLines},
                                  {"analyticCircles", stats.analyticCircles},
                                  {"recoveredArcs", stats.recoveredArcs},

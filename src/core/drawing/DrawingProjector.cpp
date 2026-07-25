@@ -1,9 +1,14 @@
 #include "core/drawing/DrawingProjector.h"
 
+#include <BRepAlgoAPI_Splitter.hxx>
+#include <BndLib_Add2dCurve.hxx>
+#include <Bnd_Box2d.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepLib.hxx>
 #include <BRepTools_WireExplorer.hxx>
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
@@ -24,8 +29,12 @@
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
+#include <gp.hxx>
+#include <gp_Pln.hxx>
+#include <NCollection_List.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
@@ -39,6 +48,7 @@
 #include <cmath>
 #include <numbers>
 #include <optional>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -409,42 +419,177 @@ private:
     std::vector<ProjectedTriangle> triangles_;
 };
 
-// True when material lies on both sides of this edge, i.e. it is interior to the
-// silhouette and describes no physical boundary.
-[[nodiscard]] bool edgeIsInterior(const Geom2dAdaptor_Curve& adaptor, const double first, const double last,
-                                 const FootprintOracle& oracle, const double probeDistance)
+// ---------------------------------------------------------------------------
+// Silhouette by region classification.
+//
+// The outer contour is already present in the hidden-line output; the problem is
+// deciding WHICH of those edges bound material. Two earlier framings were wrong:
+//
+//   * Classifying each edge by probing to either side. Hidden-line removal splits
+//     edges at visibility changes, not at boundary/interior transitions, so an edge
+//     that is partly boundary gets one verdict for its whole length -- leaving
+//     over-extended stubs -- and a probe near a thin wall straddles it, dropping a
+//     genuine boundary edge. No probe distance satisfies both.
+//   * Taking edges belonging to exactly one projected triangle. Front and back
+//     faces project onto the same area, so the projected triangles overlap
+//     arbitrarily and are not a valid planar complex; shared-edge counting does not
+//     describe the union boundary at all.
+//
+// What works is to treat it as an area question, which is what a silhouette is.
+// Split a canvas face by the projected edges to get the planar regions they define,
+// ask of each region whether it is inside the part's footprint, and keep the edges
+// that separate an inside region from an outside one. Those edges are the original
+// analytic curves, so the output stays exact -- the mesh is consulted only to
+// classify a region, never to produce geometry.
+// ---------------------------------------------------------------------------
+
+// A point guaranteed to lie inside a planar face, taken from its own triangulation.
+// An area centroid is not safe here: a split region can be L-shaped or annular, and
+// its centroid can fall outside it or inside a hole.
+[[nodiscard]] std::optional<gp_Pnt2d> interiorPointOf(const TopoDS_Face& face)
 {
-    // Sample along the edge rather than only at its midpoint: an edge can be
-    // partly on the boundary, and one interior sample is not enough to condemn it.
-    constexpr int samples = 5;
-    int interiorSamples = 0;
-    int testedSamples = 0;
-    for (int index = 1; index <= samples; ++index) {
-        const double fraction = static_cast<double>(index) / (samples + 1);
-        const double parameter = first + (last - first) * fraction;
-        const gp_Pnt2d point = adaptor.Value(parameter);
+    BRepMesh_IncrementalMesh mesher(face, 0.5, false, 0.5, false);
+    static_cast<void>(mesher.IsDone());
+    TopLoc_Location location;
+    const auto triangulation = BRep_Tool::Triangulation(face, location);
+    if (triangulation.IsNull() || triangulation->NbTriangles() < 1) return std::nullopt;
+    const gp_Trsf transform = location.Transformation();
 
-        gp_Vec2d tangent;
-        gp_Pnt2d ignored;
-        adaptor.D1(parameter, ignored, tangent);
-        if (tangent.Magnitude() < Precision::Confusion()) continue;
-        const gp_Vec2d normal(-tangent.Y() / tangent.Magnitude(), tangent.X() / tangent.Magnitude());
-
-        const gp_Pnt2d left(point.X() + normal.X() * probeDistance, point.Y() + normal.Y() * probeDistance);
-        const gp_Pnt2d right(point.X() - normal.X() * probeDistance, point.Y() - normal.Y() * probeDistance);
-        ++testedSamples;
-        if (oracle.contains(left) && oracle.contains(right)) ++interiorSamples;
+    // Largest triangle, so the sample sits as far from an edge as the mesh allows.
+    double bestArea = -1.0;
+    gp_Pnt2d best;
+    for (int index = 1; index <= triangulation->NbTriangles(); ++index) {
+        int a = 0;
+        int b = 0;
+        int c = 0;
+        triangulation->Triangle(index).Get(a, b, c);
+        const gp_Pnt pa = triangulation->Node(a).Transformed(transform);
+        const gp_Pnt pb = triangulation->Node(b).Transformed(transform);
+        const gp_Pnt pc = triangulation->Node(c).Transformed(transform);
+        const double area = std::abs((pb.X() - pa.X()) * (pc.Y() - pa.Y())
+                                     - (pb.Y() - pa.Y()) * (pc.X() - pa.X())) * 0.5;
+        if (area > bestArea) {
+            bestArea = area;
+            best = gp_Pnt2d((pa.X() + pb.X() + pc.X()) / 3.0, (pa.Y() + pb.Y() + pc.Y()) / 3.0);
+        }
     }
-    if (testedSamples == 0) return false;
-    // Require a clear majority so a single ambiguous probe near a corner cannot
-    // discard a genuine boundary edge.
-    return interiorSamples * 2 > testedSamples;
+    if (bestArea <= 0.0) return std::nullopt;
+    return best;
+}
+
+// Edges separating inside from outside, i.e. the silhouette. Returns empty when the
+// split fails, so the caller can report rather than silently emit the full edge set.
+[[nodiscard]] occ::handle<ShapeSequence> silhouetteEdges(const occ::handle<ShapeSequence>& edges,
+                                                        const FootprintOracle& oracle,
+                                                        ProjectionStatistics& statistics)
+{
+    auto boundary = occ::handle<ShapeSequence>(new ShapeSequence());
+    if (edges.IsNull() || edges->IsEmpty()) return boundary;
+
+    Bnd_Box2d extent;
+    for (int index = 1; index <= edges->Length(); ++index) {
+        const TopoDS_Edge edge = TopoDS::Edge(edges->Value(index));
+        double first = 0.0;
+        double last = 0.0;
+        const auto curve = pcurveOf(edge, first, last);
+        if (curve.IsNull()) continue;
+        BndLib_Add2dCurve::Add(Geom2dAdaptor_Curve(curve, first, last), 0.0, extent);
+    }
+    if (extent.IsVoid()) return boundary;
+    double xMin = 0.0;
+    double yMin = 0.0;
+    double xMax = 0.0;
+    double yMax = 0.0;
+    extent.Get(xMin, yMin, xMax, yMax);
+    // Pad so the canvas rim can never coincide with real geometry, which would make
+    // an outer region ambiguous.
+    const double pad = std::max(1.0, std::max(xMax - xMin, yMax - yMin) * 0.1);
+
+    TopoDS_Face canvas;
+    try {
+        canvas = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), xMin - pad, xMax + pad,
+                                        yMin - pad, yMax + pad).Face();
+    } catch (const Standard_Failure&) { return boundary; }
+    if (canvas.IsNull()) return boundary;
+
+    // Hidden-line edges carry only a pcurve, no 3D curve. The splitter is a 3D
+    // boolean and dereferences that curve, so handing them over as they arrive
+    // crashes it outright. Build the 3D curves first; this is the one place the
+    // pcurve-only nature of HLR output has to be repaired rather than worked around.
+    BRep_Builder builder;
+    TopoDS_Compound toolCompound;
+    builder.MakeCompound(toolCompound);
+    int usableTools = 0;
+    for (int index = 1; index <= edges->Length(); ++index) {
+        const TopoDS_Edge edge = TopoDS::Edge(edges->Value(index));
+        double first = 0.0;
+        double last = 0.0;
+        const auto curve = pcurveOf(edge, first, last);
+        // A degenerate or zero-extent edge has no meaningful curve for the boolean
+        // to intersect against, and feeding one in is a way to crash it rather than
+        // get an error back.
+        if (curve.IsNull() || !(last - first > Precision::PConfusion())) continue;
+        if (BRep_Tool::Degenerated(edge)) continue;
+        const Geom2dAdaptor_Curve adaptor(curve, first, last);
+        if (adaptor.Value(first).Distance(adaptor.Value(last)) < Precision::Confusion()
+            && std::abs(last - first) < Precision::PConfusion()) {
+            continue;
+        }
+        // Per edge rather than on the whole compound: one bad edge should cost one
+        // edge, not the entire silhouette.
+        try {
+            if (!BRepLib::BuildCurves3d(edge)) continue;
+        } catch (const Standard_Failure&) { continue; }
+        builder.Add(toolCompound, edge);
+        ++usableTools;
+    }
+    if (usableTools == 0) return boundary;
+
+    NCollection_List<TopoDS_Shape> arguments;
+    arguments.Append(canvas);
+    NCollection_List<TopoDS_Shape> tools;
+    for (TopExp_Explorer it(toolCompound, TopAbs_EDGE); it.More(); it.Next()) tools.Append(it.Current());
+
+    TopoDS_Shape split;
+    try {
+        BRepAlgoAPI_Splitter splitter;
+        splitter.SetArguments(arguments);
+        splitter.SetTools(tools);
+        splitter.Build();
+        if (!splitter.IsDone()) return boundary;
+        split = splitter.Shape();
+    } catch (const Standard_Failure&) { return boundary; }
+    if (split.IsNull()) return boundary;
+
+    // Count, per edge, how many INSIDE regions it bounds. One means it separates
+    // material from empty space, so it is on the silhouette; two means it is interior.
+    std::map<const void*, std::pair<TopoDS_Edge, int>> tally;
+    int insideRegions = 0;
+    for (TopExp_Explorer faces(split, TopAbs_FACE); faces.More(); faces.Next()) {
+        const TopoDS_Face region = TopoDS::Face(faces.Current());
+        const auto sample = interiorPointOf(region);
+        if (!sample || !oracle.contains(*sample)) continue;
+        ++insideRegions;
+        for (TopExp_Explorer regionEdges(region, TopAbs_EDGE); regionEdges.More(); regionEdges.Next()) {
+            const TopoDS_Edge edge = TopoDS::Edge(regionEdges.Current());
+            const void* key = edge.TShape().get();
+            auto found = tally.find(key);
+            if (found == tally.end()) tally.emplace(key, std::pair{edge, 1});
+            else ++found->second.second;
+        }
+    }
+    if (insideRegions == 0) return boundary;
+
+    for (const auto& [key, entry] : tally) {
+        if (entry.second == 1) boundary->Append(entry.first);
+        else ++statistics.interiorEdgesRemoved;
+    }
+    return boundary;
 }
 
 void appendUniqueEdges(const TopoDS_Shape& compound, const double tolerance,
                        const occ::handle<ShapeSequence>& edges, std::set<EdgeKey>& seen,
-                       ProjectionStatistics& statistics, const FootprintOracle* oracle,
-                       const double probeDistance)
+                       ProjectionStatistics& statistics)
 {
     if (compound.IsNull()) return;
     for (TopExp_Explorer explorer(compound, TopAbs_EDGE); explorer.More(); explorer.Next()) {
@@ -458,12 +603,6 @@ void appendUniqueEdges(const TopoDS_Shape& compound, const double tolerance,
                                     adaptor.Value(last), tolerance);
         if (!seen.insert(key).second) {
             ++statistics.duplicatesRemoved;
-            continue;
-        }
-        // Filter before stitching, so interior edges cannot fragment a boundary
-        // loop and the survivors stitch into cleaner contours.
-        if (oracle != nullptr && edgeIsInterior(adaptor, first, last, *oracle, probeDistance)) {
-            ++statistics.interiorEdgesRemoved;
             continue;
         }
         edges->Append(edge);
@@ -686,10 +825,6 @@ ProjectionResult project(const ProjectionRequest& request)
             oracle.reset();
         }
     }
-    // Probe far enough to clear the mesh's own chordal error, close enough not to
-    // step across a genuinely thin feature.
-    const double probeDistance = std::max(request.deflectionMm * 4.0, 0.04);
-    const FootprintOracle* filter = oracle ? &*oracle : nullptr;
 
     // Sharp edges and silhouettes together form the cut profile, so they are
     // deduplicated against each other and stitched as one set: a hole boundary
@@ -697,8 +832,21 @@ ProjectionResult project(const ProjectionRequest& request)
     {
         auto edges = occ::handle<ShapeSequence>(new ShapeSequence());
         std::set<EdgeKey> seen;
-        appendUniqueEdges(hiddenLine.sharp, tolerance, edges, seen, statistics, filter, probeDistance);
-        appendUniqueEdges(hiddenLine.outline, tolerance, edges, seen, statistics, filter, probeDistance);
+        appendUniqueEdges(hiddenLine.sharp, tolerance, edges, seen, statistics);
+        appendUniqueEdges(hiddenLine.outline, tolerance, edges, seen, statistics);
+        if (oracle) {
+            // Reduce to the edges that separate material from empty space. If the
+            // split fails we keep nothing rather than quietly emitting the full edge
+            // set, because the two look similar and one is the wrong cut path.
+            const auto boundary = silhouetteEdges(edges, *oracle, statistics);
+            if (boundary.IsNull() || boundary->IsEmpty()) {
+                result.drawing.warnings.push_back(
+                    {std::string(warningCode::silhouetteUnavailable), 1});
+                edges = occ::handle<ShapeSequence>(new ShapeSequence());
+            } else {
+                edges = boundary;
+            }
+        }
         auto contours = stitchContours(edges, tolerance, request, statistics);
         if (!contours.empty()) {
             result.drawing.layers.push_back(
@@ -712,7 +860,7 @@ ProjectionResult project(const ProjectionRequest& request)
     if (!hiddenLine.smooth.IsNull()) {
         auto edges = occ::handle<ShapeSequence>(new ShapeSequence());
         std::set<EdgeKey> seen;
-        appendUniqueEdges(hiddenLine.smooth, tolerance, edges, seen, statistics, nullptr, 0.0);
+        appendUniqueEdges(hiddenLine.smooth, tolerance, edges, seen, statistics);
         auto contours = stitchContours(edges, tolerance, request, statistics);
         if (!contours.empty()) {
             result.drawing.layers.push_back(
