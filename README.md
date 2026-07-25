@@ -156,6 +156,7 @@ The UI displays controller-owned state. Stable node IDs, immutable export plans,
 
 ## Documentation
 
+- [2D drawing export requirements (draft)](docs/product/2026-07-24-2d-drawing-export-prd.md)
 - [UI refinement handoff](docs/review/ui-refinement-handoff.md)
 - [Apple Silicon development guide](docs/development/macos-apple-silicon.md)
 - [Cross-platform development contract](docs/development/portability.md)
