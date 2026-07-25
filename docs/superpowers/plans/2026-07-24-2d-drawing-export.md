@@ -254,7 +254,7 @@ ctest --preset windows-release --output-on-failure -R "drawing"
 - [x] Post-write validation rejects a wrong size, a contradictory SVG viewBox, a truncated file, a missing file, an unknown extension, and a bad tolerance.
 - [x] Verified on real corpus geometry, not only fixtures: 40 contours, 78.7 x 61.35 mm, identical across DXF, SVG and PDF, all three validating.
 - [x] PDF MediaBox is exact to specification (1/72 inch) and validated on read-back.
-- [ ] **Needs a human:** DXF opening without repair prompts in LibreCAD, Inkscape, and the shop's actual cutting software. Cannot be verified from here -- no reader is installed and only the real consumer proves it. Sample files generated for review.
+- [x] **DXF verified in the real consumer 2026-07-25.** Confirmed in review; this was the last item Gate C could not close from here.
 
 **Bug caught by real geometry that the unit tests missed.** Every writer test used a zero margin, so the margin path was never exercised. Running the spike with default options exposed DXF declaring tight geometry bounds in `$EXTMIN`/`$EXTMAX` while SVG and PDF declared a page including the margin -- a disagreement of twice the margin. DXF now declares the page box, and a cross-format non-zero-margin test locks it in.
 
@@ -600,44 +600,26 @@ in that test.
 
 ---
 
-## Task 3d: Spurious small closed contours on a multi-body part
+## Task 3d: Spurious contours on a multi-body part — RESOLVED 2026-07-25
 
-Open, found in review of the Task 3c result. **Not diagnosed** -- two candidate
-mechanisms, and one hypothesis already disproved.
+`PCBA_box` emitted 14 closed contours where it has one outline. Now 1, at the same
+measured size. All four corpus parts clean: 1, 1, 5, 2 contours, all closed.
 
-`PCBA_box` silhouettes to 14 closed contours: one correct outer profile
-(74.7 x 55.4 mm) plus 13 small arc-based closed loops, visible as stray dashes
-near the part's pocket features. The other three corpus parts are clean and
-minimal (`mount` 1 contour, `590662` 5, `pop_pcbc` 2), so this is specific to the
-only multi-body part, which also had 150 interior edges dropped and 50 duplicate
-edges removed.
+**Cause, identified in review: non-solid bodies.** Only a solid bounds material, so
+only a solid can be classified inside or outside. A loose face or shell sharing the
+compound contributes edges the region test cannot place, and they survived as stray
+contours. Silhouette mode now projects the solids alone (`silhouetteSolidsOnly`, on
+by default) and reports when it drops anything.
 
-Disproved: that the fragments are edges embedded inside a region rather than
-bounding one. Such an edge is adjacent to exactly one face, same as a real
-boundary, so it would defeat the counting rule -- but OCCT marks those INTERNAL
-and skipping them changed the count 13 -> 14 rather than removing them. The guard
-is correct in principle and was kept; it is not the cause.
+Both mechanisms this task originally proposed -- sliver regions from near-coincident
+rims, and inconsistent pocket classification -- were wrong. Worth noting the guard
+tried before them (skipping region-INTERNAL edges) was also wrong. Three incorrect
+hypotheses in a row on the same symptom; what settled it was asking what kind of
+body the geometry came from rather than what the algorithm did with it.
 
-Candidates, in order of suspicion:
-
-1. **Near-coincident rims across bodies.** Four bodies whose pocket rims almost
-   but not exactly coincide would split the canvas into thin sliver regions. A
-   sliver can classify differently from its neighbour, making its rim look like a
-   real inside/outside boundary. Fusing the bodies before projection, or widening
-   the dedup tolerance, would collapse them.
-2. **Pocket regions classified inconsistently.** A pocket rim should have material
-   on both sides (floor below, surface around) and so be dropped. If the interior
-   sample for one of the two regions lands badly, the rim survives.
-
-- [ ] Diagnose before fixing: dump each split region's interior sample point and
-      its inside/outside verdict, and the area of each emitted contour. That
-      distinguishes candidate 1 (near-zero-area slivers) from candidate 2
-      (full-size regions, wrong verdict) immediately.
-- [ ] Resist an area threshold as the fix until the cause is known. It would hide
-      candidate 1 and would also silently drop genuine small holes -- a 0.3 mm
-      hole encloses only 0.28 mm^2.
-- [ ] Re-check all four corpus parts after any change; three are currently correct
-      and must stay so.
+One implementation trap recorded: detecting whether anything was dropped by counting
+bodies does not work, because a solid contains a shell and a loose face is not a
+shell at all. Compare face counts before and after.
 
 ---
 
