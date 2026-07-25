@@ -139,6 +139,18 @@ QtObject {
         apply()
     }
 
+    // Spin the view about the axis it already looks along, for a two-finger
+    // twist. Rotating the camera offset about its own direction is the identity,
+    // so the camera stays put and only its up vector turns -- which is what
+    // makes this feel like turning the drawing rather than orbiting the part.
+    // A standard-view click re-derives up from world axes and so clears any roll.
+    function roll(degrees) {
+        if (!isFinite(degrees) || Math.abs(degrees) < 0.0001) return
+        const forward = orientation.times(Qt.vector3d(0, 0, 1))
+        orientation = Quaternion.fromAxisAndAngle(forward, degrees).times(orientation).normalized()
+        apply()
+    }
+
     function pan(deltaX, deltaY) {
         const right = orientation.times(Qt.vector3d(1, 0, 0))
         const up = orientation.times(Qt.vector3d(0, 1, 0))

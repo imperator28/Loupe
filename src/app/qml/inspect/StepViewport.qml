@@ -16,6 +16,10 @@ Item {
     // may still want the user to be able to switch Solid/Solid+Edges/Edges
     // Only, so that one control is independently switchable.
     property bool renderModeControlVisible: !presentationOnly
+    // The view cube belongs in every viewport the user can orbit, including the
+    // presentation-only embedded previews, so it is opt-in the same way the
+    // display-mode control above is rather than being tied to presentationOnly.
+    property bool viewCubeVisible: !presentationOnly
     property bool selectionEnabled: true
     property bool componentHoverEnabled: true
     property bool contextActionsEnabled: !presentationOnly
@@ -1132,16 +1136,28 @@ Item {
         }
         onWheel: function(wheel) {
             const deviceType = wheel.device ? wheel.device.type : PointerDevice.Unknown
+            // Ctrl/Command forces zoom. Windows delivers a trackpad pinch as
+            // Ctrl+wheel, so this is what keeps pinch-to-zoom working there now
+            // that a plain two-finger drag pans instead.
+            const zoomModifier = (wheel.modifiers & Qt.ControlModifier)
+                    || (wheel.modifiers & Qt.MetaModifier)
             const mode = pointerInputRouter.wheelMode(deviceType,
                                                        wheel.pixelDelta.x,
                                                        wheel.pixelDelta.y,
                                                        wheel.angleDelta.x,
-                                                       wheel.angleDelta.y)
+                                                       wheel.angleDelta.y,
+                                                       zoomModifier)
             if (mode === "pan") {
-                navigation.pan(wheel.pixelDelta.x, wheel.pixelDelta.y)
+                // Never pixelDelta directly: it is always (0,0) on Windows, so
+                // panning with it would move nothing at all there.
+                const delta = pointerInputRouter.wheelPanDelta(wheel.pixelDelta.x,
+                                                               wheel.pixelDelta.y,
+                                                               wheel.angleDelta.x,
+                                                               wheel.angleDelta.y)
+                navigation.pan(delta.x, delta.y)
             } else {
-                navigation.zoom(wheel.angleDelta.y !== 0
-                                ? wheel.angleDelta.y : wheel.pixelDelta.y)
+                navigation.zoom(pointerInputRouter.wheelZoomDelta(wheel.pixelDelta.y,
+                                                                  wheel.angleDelta.y))
             }
             wheel.accepted = true
         }
@@ -1186,14 +1202,74 @@ Item {
         }
     }
 
+    // Two-finger touch gestures: pinch to zoom, drag to pan, twist to roll.
+    //
+    // Deliberately two-point only, which leaves a one-finger drag to fall
+    // through to the MouseArea above (Qt synthesizes mouse events from an
+    // ungrabbed touch point) so a single finger still orbits and a tap still
+    // selects. Zoom and pan run together because that is how direct
+    // manipulation is expected to feel; roll is gated behind a threshold
+    // because a little incidental rotation is unavoidable whenever two fingers
+    // pinch or drag, and an unasked-for roll is disorienting.
     PinchHandler {
+        id: touchGestures
         target: null
-        property real previousScale: 1
-        onActiveChanged: previousScale = 1
-        onScaleChanged: {
+        minimumPointCount: 2
+        maximumPointCount: 2
+        // Without this the handler never activates. The MouseArea above covers the
+        // whole viewport and, via Qt's mouse-from-touch synthesis, grabs the first
+        // touch point; a pointer handler is not allowed to take a grab away from an
+        // item unless it is given permission, so the second finger arrived with the
+        // gesture already owned elsewhere.
+        grabPermissions: PointerHandler.CanTakeOverFromAnything
+                         | PointerHandler.ApprovesTakeOverByAnything
+
+        readonly property real twistThresholdDegrees: 8
+        property real lastScale: 1
+        property point lastTranslation: Qt.point(0, 0)
+        property real lastRotation: 0
+        property bool twisting: false
+
+        onActiveChanged: {
+            lastScale = 1
+            lastTranslation = Qt.point(0, 0)
+            lastRotation = 0
+            twisting = false
+            // Hand the gesture over from the single-finger orbit path.
+            //
+            // Qt synthesizes a mouse event from the first touch point, which latches
+            // input.pressButton. With a second finger down no matching release ever
+            // arrives, so the MouseArea kept treating every subsequent move as an
+            // orbit drag and the view pivoted continuously. Clearing that state on
+            // both transitions makes a two-finger gesture take over cleanly and stop
+            // cleanly.
+            input.pressButton = Qt.NoButton
+            input.dragging = false
+            if (navigation.clearPendingOrbitPivot) navigation.clearPendingOrbitPivot()
+        }
+        onActiveScaleChanged: {
+            if (!active || lastScale <= 0) return
+            navigation.zoomByFactor(activeScale / lastScale)
+            lastScale = activeScale
+        }
+        onActiveTranslationChanged: {
             if (!active) return
-            navigation.zoomByFactor(scale / previousScale)
-            previousScale = scale
+            navigation.pan(activeTranslation.x - lastTranslation.x,
+                           activeTranslation.y - lastTranslation.y)
+            lastTranslation = activeTranslation
+        }
+        onActiveRotationChanged: {
+            if (!active) return
+            if (!twisting) {
+                if (Math.abs(activeRotation) < twistThresholdDegrees) return
+                // Absorb the rotation accumulated up to the threshold so the
+                // view does not jump by the threshold amount on engagement.
+                twisting = true
+                lastRotation = activeRotation
+                return
+            }
+            navigation.roll(activeRotation - lastRotation)
+            lastRotation = activeRotation
         }
     }
 
@@ -1363,12 +1439,22 @@ Item {
     ViewCube {
         id: viewCube
         theme: root.theme
-        visible: !root.presentationOnly && !root.captureUiHidden
+        controller: root.controller
+        // Tracks the live camera so the cube always shows the part's orientation.
+        cameraOrientation: navigation.orientation
+        // captureUiHidden stays in the condition so the cube is never baked into
+        // an exported image.
+        visible: root.viewCubeVisible && !root.captureUiHidden
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: displayModeControl.height + 22
         anchors.rightMargin: 14
         onViewRequested: function(normal) { root.setStandardView(normal) }
+        // Dragging the cube orbits the part, matching CAD convention.
+        onOrbitRequested: function(deltaX, deltaY) { navigation.orbit(deltaX, deltaY) }
+        // Clicking the face already square-on spins the drawing in its own plane,
+        // reusing the same roll the two-finger twist gesture uses.
+        onPlanarRotateRequested: function(degrees) { navigation.roll(degrees) }
     }
 
     Shortcut { sequence: "F"; enabled: !root.presentationOnly; onActivated: root.fitCamera() }

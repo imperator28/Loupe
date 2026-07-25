@@ -32,6 +32,8 @@ Inspect.ElevatedPanel {
             item.theme = Qt.binding(function() { return root.theme })
             item.presentationOnly = true
             item.renderModeControlVisible = true
+            // Both Export previews are orbitable, so both get the view cube.
+            item.viewCubeVisible = true
             item.selectionEnabled = Qt.binding(function() { return root.selectionEnabled })
             item.componentHoverEnabled = false
             item.contextActionsEnabled = true
