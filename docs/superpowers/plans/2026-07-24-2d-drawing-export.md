@@ -364,6 +364,19 @@ Inspect benefits from this gate on its own, independently of the rest of the fea
 - [ ] `DrawingPlanRequest` carries selections, destination, format, deflection, fiducial flag, and the document `UnitDecision`.
 - [ ] `DrawingOutputRow` and `DrawingPlan` follow the established pattern: private constructors with `friend buildDrawingPlan`, so a plan can only come from the builder.
 - [ ] Reuse the existing leaf sanitisation and Windows-comparable-path collision logic from `ExportPlan` — extract it to a shared internal header rather than copying it, since it encodes hard-won rules about reserved device names, trailing dots, and Unicode folding.
+
+      **Extraction is not mechanical; design settled during research.** Both helpers
+      (`sanitizedLeaf`, `windowsComparablePath`, plus `isReservedWindowsDeviceName`
+      and `leafOf`) live in `ExportPlan.cpp`'s anonymous namespace and **throw
+      `PlanError`**, an ExportPlan-specific type, so a shared version cannot throw it.
+      Move them to `src/core/export/OutputNaming.{h,cpp}` in `loupe::exporting::detail`
+      reporting failure neutrally -- `std::expected<std::string, NamingProblem>` with
+      `NamingProblem { UnsafeName, InvalidUtf8 }` -- and have each plan builder map
+      that onto its own error code (`PlanError::UnsafeOutputName`, or the drawing
+      equivalent). Budget for touching `ExportPlan.cpp`, which carries 25 tests over
+      exactly these rules: reserved device names, trailing dots and spaces, malformed
+      UTF-8, case-insensitive collisions, and NFC-folded accented collisions. Run
+      `ctest -R "export-plan"` before and after and expect identical results.
 - [ ] Validation, each with its own error code: empty selection; blank destination; blocking `UnitDecision`; non-finite or non-positive scale; degenerate view direction; missing hierarchy path; output path collision; unsafe leaf name; invalid enum.
 - [ ] Fingerprint with `XXH3_128bits` over length-prefixed fields, matching the 3D pipeline, and include every field that changes output — view direction components, content mode, and scale included.
 - [ ] Generated leaf names must disambiguate by view label, and must include the scale when it is not 1:1.
