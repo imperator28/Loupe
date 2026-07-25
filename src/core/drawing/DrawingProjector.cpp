@@ -26,6 +26,7 @@
 #include <Precision.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <Standard_Failure.hxx>
+#include <TopAbs_Orientation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
@@ -571,6 +572,14 @@ private:
         if (!sample || !oracle.contains(*sample)) continue;
         ++insideRegions;
         for (TopExp_Explorer regionEdges(region, TopAbs_EDGE); regionEdges.More(); regionEdges.Next()) {
+            // An edge embedded inside a region rather than bounding it -- a fragment
+            // that never closes, typically a pocket outline whose interior is still
+            // material -- is adjacent to exactly one face too, so the count below
+            // cannot tell it from a real boundary. OCCT marks such an edge INTERNAL,
+            // which is the distinction. Without this, those fragments survive as
+            // stray dashes inside the silhouette.
+            const TopAbs_Orientation orientation = regionEdges.Current().Orientation();
+            if (orientation == TopAbs_INTERNAL || orientation == TopAbs_EXTERNAL) continue;
             const TopoDS_Edge edge = TopoDS::Edge(regionEdges.Current());
             const void* key = edge.TShape().get();
             auto found = tally.find(key);
