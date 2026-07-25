@@ -10,6 +10,7 @@ add_library(loupe-core STATIC
     drawing/SvgWriter.cpp
     export/ExportPlan.cpp
     export/OutputNaming.cpp
+    export/ShapeSelection.cpp
     export/StepExporter.cpp
     export/StlExporter.cpp
     import/StepImporter.cpp

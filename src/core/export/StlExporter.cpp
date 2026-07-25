@@ -1,4 +1,5 @@
 #include "core/export/StlExporter.h"
+#include "core/export/ShapeSelection.h"
 #include "core/export/AtomicExportFile.h"
 
 #include <BRepBuilderAPI_Transform.hxx>
@@ -48,56 +49,12 @@ void filterBinaryStl(const std::filesystem::path& source, const std::filesystem:
     if (!output) throw std::runtime_error("unable to finalize filtered STL payload");
 }
 
-const domain::AssemblyNode& selectedNode(const import::ImportResult& imported, const OutputRow& output)
+TopoDS_Shape selectedShape(const import::ImportResult& imported, const domain::AssemblyNode& node,
+                           const OutputRow& output)
 {
-    const auto found = std::ranges::find_if(imported.snapshot.nodes, [&output](const auto& node) { return node.id == output.nodeId(); });
-    if (found == imported.snapshot.nodes.end()) throw std::runtime_error("selected export node was not found");
-    return *found;
-}
-
-TDF_Label labelFor(const import::ImportResult& imported, const domain::AssemblyNode& node)
-{
-    TDF_Label label;
-    TDF_Tool::Label(imported.native->document->GetData(), node.hierarchyPath.c_str(), label);
-    if (label.IsNull()) {
-        throw std::runtime_error("selected export label was not found");
-    }
-    return label;
-}
-
-TopoDS_Shape selectedShape(const import::ImportResult& imported, const domain::AssemblyNode& node, const OutputRow& output)
-{
-    const auto shapes = XCAFDoc_DocumentTool::ShapeTool(imported.native->document->Main());
-    TDF_Label label = labelFor(imported, node);
-    if (XCAFDoc_ShapeTool::IsComponent(label)) XCAFDoc_ShapeTool::GetReferredShape(label, label);
-    TopoDS_Shape shape = shapes->GetShape(label);
-    if (shape.IsNull()) throw std::runtime_error("selected export shape is empty");
-    if (node.subSolidIndex) {
-        int solidIndex = 0;
-        bool found = false;
-        for (TopExp_Explorer explorer(shape, TopAbs_SOLID); explorer.More(); explorer.Next(), ++solidIndex) {
-            if (solidIndex == *node.subSolidIndex) { shape = explorer.Current(); found = true; break; }
-        }
-        if (!found) throw std::runtime_error("selected export sub-solid was not found");
-    }
-
-    gp_Trsf transform;
-    transform.SetValues(node.placement.columnMajor[0], node.placement.columnMajor[4], node.placement.columnMajor[8], node.placement.columnMajor[12],
-                        node.placement.columnMajor[1], node.placement.columnMajor[5], node.placement.columnMajor[9], node.placement.columnMajor[13],
-                        node.placement.columnMajor[2], node.placement.columnMajor[6], node.placement.columnMajor[10], node.placement.columnMajor[14]);
-    if (output.coordinates() == Coordinates::Assembly) shape = BRepBuilderAPI_Transform(shape, transform, true).Shape();
-    double nativeMeters = 0.001;
-    XCAFDoc_DocumentTool::GetLengthUnit(imported.native->document, nativeMeters);
-    const auto declared = imported.unitEvidence.declaredRepresentationUnits.empty()
-        ? units::LengthUnit::Millimeter : imported.unitEvidence.declaredRepresentationUnits.front();
-    const double shapeScale = output.sourceToOutputScale()
-        * (nativeMeters * 1000.0 / units::millimetersPerUnit(declared));
-    if (shapeScale != 1.0) {
-        gp_Trsf scale;
-        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), shapeScale);
-        shape = BRepBuilderAPI_Transform(shape, scale, true).Shape();
-    }
-    return shape;
+    TopoDS_Shape shape = detail::localShape(imported, node);
+    if (output.coordinates() == Coordinates::Assembly) shape = detail::placedInAssembly(shape, node);
+    return detail::scaledAboutOrigin(shape, output.sourceToOutputScale() * detail::nativeUnitRebase(imported));
 }
 
 } // namespace
@@ -106,7 +63,7 @@ ExportResult StlExporter::write(const import::ImportResult& imported, const Outp
 {
     if (output.format() != Format::Stl) throw std::invalid_argument("STL exporter requires an STL output row");
     if (!imported.native || imported.native->document.IsNull()) throw std::runtime_error("import has no native XCAF document");
-    const TopoDS_Shape shape = selectedShape(imported, selectedNode(imported, output), output);
+    const TopoDS_Shape shape = selectedShape(imported, detail::selectedNode(imported, output.nodeId()), output);
     BRepMesh_IncrementalMesh mesher(shape, 0.1);
     if (!mesher.IsDone()) throw std::runtime_error("STL triangulation failed");
 
