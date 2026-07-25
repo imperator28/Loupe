@@ -29,6 +29,11 @@ public:
     Q_INVOKABLE bool appendWorkerMesh(const QByteArray& meshJson);
     Q_INVOKABLE bool replaceWorkerMesh(const QByteArray& meshJson);
     Q_INVOKABLE QVariantMap topologyAtPoint(double x, double y, double z) const;
+    // The whole face rather than one point on it: an area-weighted normal, the area
+    // centroid, and how far the face's own triangles tilt away from that normal. A pick
+    // gives the normal at a point, which cannot tell a flat face from a curved one, and
+    // "normal to this face" is only a meaningful view when the face is flat.
+    Q_INVOKABLE [[nodiscard]] QVariantMap faceFrameFor(quint32 topologyId) const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
     Q_INVOKABLE bool copySectionOverlayFrom(QObject* source);
     Q_INVOKABLE void clearMesh();

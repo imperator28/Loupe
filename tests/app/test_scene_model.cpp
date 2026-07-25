@@ -1,6 +1,10 @@
 #include <QtTest/QTest>
 
 #include <QGuiApplication>
+#include <QVector3D>
+
+#include <cmath>
+#include <numbers>
 #include "app/render/SceneModel.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/SectionMeshBuilder.h"
@@ -27,6 +31,7 @@ private slots:
     void sectionOverlayBuildsFilledContoursWithRoundedJoins();
     void topologyRangesResolveAndCopyCompleteEntities();
     void faceBoundaryExcludesInternalTessellationEdges();
+    void faceFrameDistinguishesAFlatFaceFromACurvedOne();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -276,6 +281,75 @@ void SceneModelTest::faceBoundaryExcludesInternalTessellationEdges()
 
     loupe::app::render::CadEdgeGeometry wrongSource;
     QVERIFY(!boundary.copyFaceBoundaryFrom(&wrongSource, 17));
+}
+
+void SceneModelTest::faceFrameDistinguishesAFlatFaceFromACurvedOne()
+{
+    // Two coplanar triangles forming a 2x2 square in z=0, and a four-triangle strip
+    // wrapped around a quarter cylinder. "Normal to this face" is only a meaningful view
+    // for the first, so the frame has to tell them apart from the tessellation alone.
+    //
+    // The square's shading normals deliberately disagree with its geometry: this is what
+    // a shared border vertex looks like once neighbouring faces have been averaged in,
+    // and the flatness verdict must not depend on them.
+    loupe::protocol::MeshPayload flatPayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"),
+        QStringLiteral("segment"), QStringLiteral("#ffffff"), 1,
+        {0.0F, 0.0F, 0.0F, 2.0F, 0.0F, 0.0F, 2.0F, 2.0F, 0.0F, 0.0F, 2.0F, 0.0F},
+        {0.0F, 0.7F, 0.7F, 0.7F, 0.0F, 0.7F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+        {0, 1, 2, 0, 2, 3},
+        {{17, loupe::protocol::TopologyKind::Face, 0, 6, 4.0F, 0.0F}}};
+    loupe::app::render::MeshGeometry flat;
+    QVERIFY(flat.appendWorkerMesh(loupe::protocol::encodeGeometry(flatPayload)));
+
+    const auto flatFrame = flat.faceFrameFor(17);
+    QVERIFY(!flatFrame.isEmpty());
+    const auto flatNormal = flatFrame.value(QStringLiteral("normal")).value<QVector3D>();
+    QVERIFY(qFuzzyCompare(flatNormal.z(), 1.0F));
+    QVERIFY(qFuzzyIsNull(flatNormal.x()));
+    QVERIFY(qFuzzyIsNull(flatNormal.y()));
+    QVERIFY(flatFrame.value(QStringLiteral("maximumDeviationDegrees")).toDouble() < 0.01);
+    const auto flatCentroid = flatFrame.value(QStringLiteral("centroid")).value<QVector3D>();
+    QVERIFY(qFuzzyCompare(flatCentroid.x(), 1.0F));
+    QVERIFY(qFuzzyCompare(flatCentroid.y(), 1.0F));
+    QCOMPARE(flatFrame.value(QStringLiteral("areaMm2")).toDouble(), 4.0);
+
+    // A quarter cylinder of radius 1 about the y axis, as five columns at 0/22.5/45/
+    // 67.5/90 degrees extruded 1 mm. Its triangles span the full quarter turn.
+    QVector<float> curvedVertices;
+    QVector<float> curvedNormals;
+    QVector<quint32> curvedIndices;
+    constexpr int columns = 5;
+    for (int column = 0; column < columns; ++column) {
+        const auto angle = static_cast<float>(column) / (columns - 1) * static_cast<float>(std::numbers::pi / 2.0);
+        const auto x = std::cos(angle);
+        const auto z = std::sin(angle);
+        for (const auto y : {0.0F, 1.0F}) {
+            curvedVertices << x << y << z;
+            curvedNormals << x << 0.0F << z;
+        }
+    }
+    for (int column = 0; column + 1 < columns; ++column) {
+        const auto base = static_cast<quint32>(column) * 2;
+        curvedIndices << base << base + 1 << base + 3 << base << base + 3 << base + 2;
+    }
+    loupe::protocol::MeshPayload curvedPayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"),
+        QStringLiteral("segment"), QStringLiteral("#ffffff"), 1, curvedVertices, curvedNormals, curvedIndices,
+        {{23, loupe::protocol::TopologyKind::Face, 0, static_cast<quint32>(curvedIndices.size()), 1.57F, 1.0F}}};
+    loupe::app::render::MeshGeometry curved;
+    QVERIFY(curved.appendWorkerMesh(loupe::protocol::encodeGeometry(curvedPayload)));
+
+    const auto curvedFrame = curved.faceFrameFor(23);
+    QVERIFY(!curvedFrame.isEmpty());
+    // Each facet sits 11.25 degrees off its neighbour and the mean points at 45 degrees,
+    // so the outermost facets tilt roughly 39 degrees away from it. The exact figure
+    // matters less than it being nowhere near flat.
+    QVERIFY(curvedFrame.value(QStringLiteral("maximumDeviationDegrees")).toDouble() > 30.0);
+
+    // An unknown face reports nothing rather than a default frame, which would silently
+    // become a wrong view direction. The mirror case -- an edge range asked for as a face
+    // -- is unreachable: the protocol refuses a non-Face range inside a mesh payload, so
+    // the kind check in faceFrameFor is belt-and-braces and has no payload to test with.
+    QVERIFY(flat.faceFrameFor(99).isEmpty());
 }
 
 int main(int argc, char* argv[])

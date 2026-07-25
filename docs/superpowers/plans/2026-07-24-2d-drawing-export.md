@@ -430,7 +430,7 @@ ctest --preset windows-release --output-on-failure -R "drawing-plan"
 
 ---
 
-## Task 11: Expose a whole-face frame for face-normal views
+## Task 11: Expose a whole-face frame for face-normal views — DONE 2026-07-25
 
 A picked face's normal already reaches the app in millimetre scene space. The gap is that it is the normal at one point, not the face, so a curved face cannot be distinguished from a flat one.
 
@@ -440,9 +440,37 @@ A picked face's normal already reaches the app in millimetre scene space. The ga
 - Modify: `src/app/render/MeshGeometry.cpp`
 - Modify: `tests/app/test_scene_model.cpp`
 
-- [ ] Add `Q_INVOKABLE QVariantMap faceFrameFor(quint32 topologyId)` returning the area-weighted normal, the centroid, and the maximum angular deviation across the face's vertex normals.
-- [ ] Implement over the already-resident `sourceNormalData_`, `sourceIndexData_`, and `sourceTopology_`, walking one topology range the way `copyTopologyFrom` already does. No worker, protocol, or cache change is needed.
-- [ ] Tests: a planar face reports near-zero deviation and the exact normal; a cylindrical face reports a large deviation.
+- [x] Add `Q_INVOKABLE QVariantMap faceFrameFor(quint32 topologyId)` returning the area-weighted normal, the centroid, and the maximum angular deviation across the face's vertex normals.
+
+      Returns `normal`, `centroid`, `maximumDeviationDegrees`, `areaMm2`, `triangleCount`,
+      or an empty map for an unknown face -- never a default frame, which would silently
+      become a wrong view direction.
+
+      **Deviation is measured from triangle normals, not vertex normals.** This is a
+      correction to the sketch, not a shortcut. `calculateNormals` accumulates every
+      triangle sharing a vertex, including triangles from *neighbouring faces*, so a
+      vertex on a flat face's border carries a blended normal and the face reads as
+      curved. Triangle normals depend only on this face's own triangles and hold whatever
+      produced the shading normals. The flat-face test encodes this: its vertex normals
+      are deliberately blended 45 degrees off the plane, so a vertex-normal
+      implementation fails it.
+
+      Area weighting is free -- summing the raw cross products weights each by 2A -- and
+      zero-area slivers are skipped, since normalising one turns rounding noise into a
+      spurious deviation.
+- [x] Implement over the already-resident `sourceNormalData_`, `sourceIndexData_`, and `sourceTopology_`, walking one topology range the way `copyTopologyFrom` already does. No worker, protocol, or cache change is needed.
+
+      Confirmed: no worker, protocol, or cache change was needed.
+- [x] Tests: a planar face reports near-zero deviation and the exact normal; a cylindrical face reports a large deviation.
+
+      **19 cases pass** in `scene-model`. A quarter cylinder tessellated in four facets
+      reports over 30 degrees; the flat square reports under 0.01.
+
+      One planned case was dropped as unreachable rather than left failing: an edge range
+      asked for as a face. `validate()` in `GeometryPayload.cpp` refuses a non-Face
+      range inside a mesh payload, so no payload can produce it and `encodeGeometry`
+      throws when constructing one. The kind check in `faceFrameFor` stays as
+      belt-and-braces.
 
 **Focused verification:**
 

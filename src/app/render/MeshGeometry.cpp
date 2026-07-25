@@ -16,6 +16,7 @@
 #include <limits>
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace loupe::app::render {
 namespace {
@@ -200,6 +201,67 @@ QVariantMap MeshGeometry::topologyAtPoint(const double x, const double y, const 
             {QStringLiteral("entityKind"), QStringLiteral("face")},
             {QStringLiteral("measureMm"), closestRange->measureMm},
             {QStringLiteral("radiusMm"), closestRange->radiusMm}};
+}
+
+QVariantMap MeshGeometry::faceFrameFor(const quint32 topologyId) const
+{
+    const auto range = std::find_if(sourceTopology_.cbegin(), sourceTopology_.cend(),
+                                    [topologyId](const auto& value) {
+                                        return value.topologyId == topologyId
+                                            && value.kind == protocol::TopologyKind::Face;
+                                    });
+    if (range == sourceTopology_.cend()) return {};
+
+    const auto pointAt = [this](const quint32 index) {
+        const auto offset = static_cast<qsizetype>(index) * 3;
+        return QVector3D{sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1),
+                         sourceVertexData_.at(offset + 2)};
+    };
+
+    // Deviation is measured from the face's own triangle geometry, not from the vertex
+    // normals. calculateNormals accumulates every triangle that shares a vertex,
+    // including triangles belonging to neighbouring faces, so a vertex on a flat face's
+    // border carries a blended normal and the face would read as curved. Triangle
+    // normals depend only on this face's triangles, whatever produced the shading normals.
+    QVector<QVector3D> triangleNormals;
+    QVector3D areaWeightedNormal;
+    QVector3D areaWeightedCentroid;
+    double totalArea = 0.0;
+
+    const auto end = static_cast<qsizetype>(range->firstIndex) + range->indexCount;
+    for (auto index = static_cast<qsizetype>(range->firstIndex); index + 2 < end; index += 3) {
+        const auto first = pointAt(sourceIndexData_.at(index));
+        const auto second = pointAt(sourceIndexData_.at(index + 1));
+        const auto third = pointAt(sourceIndexData_.at(index + 2));
+        const auto cross = QVector3D::crossProduct(second - first, third - first);
+        const auto doubleArea = static_cast<double>(cross.length());
+        // A sliver contributes no area and no reliable direction; normalising it would
+        // turn rounding noise into a spurious deviation.
+        if (doubleArea <= 0.0) continue;
+        const auto area = doubleArea * 0.5;
+        // Summing the raw cross products is the area weighting: each has length 2A.
+        areaWeightedNormal += cross;
+        areaWeightedCentroid += (first + second + third) / 3.0F * static_cast<float>(area);
+        totalArea += area;
+        triangleNormals.append(cross / static_cast<float>(doubleArea));
+    }
+    if (totalArea <= 0.0 || areaWeightedNormal.isNull()) return {};
+
+    const auto normal = areaWeightedNormal.normalized();
+    double maximumDeviation = 0.0;
+    for (const auto& triangleNormal : triangleNormals) {
+        const auto alignment = std::clamp(static_cast<double>(QVector3D::dotProduct(triangleNormal, normal)),
+                                          -1.0, 1.0);
+        maximumDeviation = std::max(maximumDeviation, std::acos(alignment));
+    }
+
+    return {{QStringLiteral("topologyId"), topologyId},
+            {QStringLiteral("normal"), QVariant::fromValue(normal)},
+            {QStringLiteral("centroid"),
+             QVariant::fromValue(areaWeightedCentroid / static_cast<float>(totalArea))},
+            {QStringLiteral("maximumDeviationDegrees"), maximumDeviation * 180.0 / std::numbers::pi},
+            {QStringLiteral("areaMm2"), totalArea},
+            {QStringLiteral("triangleCount"), triangleNormals.size()}};
 }
 
 bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
