@@ -1384,7 +1384,7 @@ Item {
     Shortcut { sequences: ["2"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 1 }
     Shortcut { sequences: ["3"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 2 }
     Shortcut {
-        sequence: StandardKey.Copy
+        sequences: [StandardKey.Copy]
         enabled: !root.presentationOnly && root.controller && !root.controller.capture.inProgress
                  && !root.isTextEditFocused()
         onActivated: root.copyAsTransparentPicture()

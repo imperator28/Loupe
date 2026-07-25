@@ -101,6 +101,11 @@ else()
         # WindowChrome.cpp calls DwmSetWindowAttribute to keep the native
         # title bar's dark/light mode in sync with the in-app theme toggle.
         target_link_libraries(loupe-app PRIVATE dwmapi)
+        # Without this the target links as a console-subsystem app, so a
+        # console window tags along beside the QML window on every launch,
+        # showing qDebug/qWarning output. qt_add_executable links Qt's
+        # WinMain shim automatically once this is set.
+        set_target_properties(loupe-app PROPERTIES WIN32_EXECUTABLE TRUE)
     endif()
 endif()
 
