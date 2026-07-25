@@ -1,3 +1,8 @@
+#include "core/drawing/DrawingProjector.h"
+#include "core/drawing/DrawingValidator.h"
+#include "core/drawing/DxfWriter.h"
+#include "core/drawing/PdfWriter.h"
+#include "core/drawing/SvgWriter.h"
 #include "core/export/ExportPlan.h"
 #include "core/export/StepExporter.h"
 #include "core/export/StlExporter.h"
@@ -11,15 +16,32 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepLib.hxx>
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <Bnd_Box2d.hxx>
+#include <BndLib_Add2dCurve.hxx>
+#include <Geom2dAdaptor_Curve.hxx>
+#include <Geom2d_BSplineCurve.hxx>
+#include <Geom_Plane.hxx>
+#include <HLRAlgo_Projector.hxx>
+#include <HLRBRep_Algo.hxx>
+#include <HLRBRep_HLRToShape.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TDF_Tool.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 
@@ -434,14 +456,360 @@ int runExport(const std::vector<std::string>& args)
     } catch (const std::exception& error) { fail(exportFailure, error.what()); }
 }
 
+// ---------------------------------------------------------------------------
+// Drawing spike: Gate A of the 2D drawing export plan.
+//
+// Answers the four questions that gate the feature, on real geometry:
+//   1. Is orthographic hidden-line removal exactly 1:1?
+//   2. How long does it take on a real assembly?
+//   3. How often does OCCT silently coarsen a curve to its 15-point,
+//      degree-1 fallback (which has no tolerance control)?
+//   4. Do circles survive as circles, or arrive pre-tessellated?
+// ---------------------------------------------------------------------------
+
+std::string curveTypeName(const GeomAbs_CurveType type)
+{
+    switch (type) {
+    case GeomAbs_Line: return "line";
+    case GeomAbs_Circle: return "circle";
+    case GeomAbs_Ellipse: return "ellipse";
+    case GeomAbs_Hyperbola: return "hyperbola";
+    case GeomAbs_Parabola: return "parabola";
+    case GeomAbs_BezierCurve: return "bezier";
+    case GeomAbs_BSplineCurve: return "bspline";
+    case GeomAbs_OffsetCurve: return "offset";
+    case GeomAbs_OtherCurve: return "other";
+    }
+    return "unknown";
+}
+
+gp_Dir parseViewAxis(const std::string_view value)
+{
+    if (value == "X") return {1.0, 0.0, 0.0};
+    if (value == "-X") return {-1.0, 0.0, 0.0};
+    if (value == "Y") return {0.0, 1.0, 0.0};
+    if (value == "-Y") return {0.0, -1.0, 0.0};
+    if (value == "Z") return {0.0, 0.0, 1.0};
+    if (value == "-Z") return {0.0, 0.0, -1.0};
+    fail(invalidArguments, "axis must be one of X, -X, Y, -Y, Z, -Z");
+}
+
+// gp_Ax2's main direction is the view direction; its X direction sets the
+// in-plane orientation. Pick a reference up vector that cannot be parallel to
+// the view direction, otherwise the cross product is degenerate and OCCT throws.
+gp_Ax2 projectorAxes(const gp_Dir& viewDirection)
+{
+    const gp_Dir reference = std::abs(viewDirection.Z()) > 0.9
+        ? gp_Dir(0.0, 1.0, 0.0) : gp_Dir(0.0, 0.0, 1.0);
+    return {gp_Pnt(0.0, 0.0, 0.0), viewDirection, reference.Crossed(viewDirection)};
+}
+
+struct HlrStats {
+    std::map<std::string, int> curveTypes;
+    int edges{};
+    int nullPcurves{};
+    int coarseFallback{};
+};
+
+// Accumulate curve-type counts and the 2D extent of one HLR result compound.
+//
+// The result edges carry NO 3D curve -- only a stored pcurve on BRepLib's global
+// plane -- so BRepAdaptor_Curve fails on them.
+//
+// Use the CurveOnSurface overload that hands back the pcurve, its surface, and
+// its location, i.e. ask the edge what it actually stored. Do NOT use
+// CurveOnPlane: despite the name it does not read a stored planar pcurve, it
+// *projects the edge's 3D curve* onto the plane you supply, so on an HLR result
+// edge (which has no 3D curve) it returns null for every single edge. Measured:
+// 171 of 171 null.
+void accumulateHlrCompound(const TopoDS_Shape& compound,
+                           HlrStats& stats,
+                           Bnd_Box2d& extent)
+{
+    if (compound.IsNull()) return;
+    for (TopExp_Explorer explorer(compound, TopAbs_EDGE); explorer.More(); explorer.Next()) {
+        const TopoDS_Edge edge = TopoDS::Edge(explorer.Current());
+        ++stats.edges;
+        double first = 0.0;
+        double last = 0.0;
+        occ::handle<Geom2d_Curve> curve;
+        occ::handle<Geom_Surface> surface;
+        TopLoc_Location location;
+        BRep_Tool::CurveOnSurface(edge, curve, surface, location, first, last);
+        if (curve.IsNull()) {
+            ++stats.nullPcurves;
+            continue;
+        }
+        const Geom2dAdaptor_Curve adaptor(curve, first, last);
+        const auto type = adaptor.GetType();
+        stats.curveTypes[curveTypeName(type)] += 1;
+        // OCCT's HLRBRep::MakeEdge falls back to a 15-pole, degree-1 B-spline
+        // for curve types it cannot classify -- a 14-segment polyline with no
+        // tolerance control. On a cut path that is a silent accuracy cliff.
+        if (type == GeomAbs_BSplineCurve) {
+            const auto bspline = adaptor.BSpline();
+            if (!bspline.IsNull() && bspline->Degree() == 1 && bspline->NbPoles() == 15) {
+                ++stats.coarseFallback;
+            }
+        }
+        BndLib_Add2dCurve::Add(adaptor, 0.0, extent);
+    }
+}
+
+struct HlrRun {
+    HlrStats sharp;
+    HlrStats outline;
+    Bnd_Box2d extent;
+    double milliseconds{};
+};
+
+HlrRun runHiddenLineRemoval(const TopoDS_Shape& shape, const gp_Dir& viewDirection)
+{
+    const auto plane = BRepLib::Plane();
+    if (plane.IsNull()) fail(exportFailure, "BRepLib plane is null");
+    // BRepLib::Plane() is a mutable global static that HLR results are expressed
+    // on. Assert it is still XOY: if any other code has replaced it, every
+    // coordinate below would be silently measured against a different plane.
+    if (!plane->Position().Direction().IsEqual(gp_Dir(0.0, 0.0, 1.0), 1.0e-12)) {
+        fail(exportFailure, "BRepLib plane is not XOY; HLR output frame is not the expected plane");
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    occ::handle<HLRBRep_Algo> algo = new HLRBRep_Algo();
+    // nbIso = 0: no isoparametric lines. A drawing wants edges, not surface grids.
+    algo->Add(shape, 0);
+    algo->Projector(HLRAlgo_Projector(projectorAxes(viewDirection)));
+    algo->Update();
+    algo->Hide();
+    HLRBRep_HLRToShape toShape(algo);
+    const TopoDS_Shape sharp = toShape.VCompound();
+    const TopoDS_Shape outline = toShape.OutLineVCompound();
+    const auto finished = std::chrono::steady_clock::now();
+
+    HlrRun run;
+    run.milliseconds = std::chrono::duration<double, std::milli>(finished - started).count();
+    accumulateHlrCompound(sharp, run.sharp, run.extent);
+    accumulateHlrCompound(outline, run.outline, run.extent);
+    return run;
+}
+
+std::array<double, 2> sortedExtent(const Bnd_Box2d& box)
+{
+    if (box.IsVoid()) return {0.0, 0.0};
+    double xMin = 0.0;
+    double yMin = 0.0;
+    double xMax = 0.0;
+    double yMax = 0.0;
+    box.Get(xMin, yMin, xMax, yMax);
+    std::array<double, 2> extent{xMax - xMin, yMax - yMin};
+    if (extent[0] > extent[1]) std::swap(extent[0], extent[1]);
+    return extent;
+}
+
+// A rigid orthographic projection of an axis-aligned box must reproduce two of
+// its three dimensions exactly. This is the 1:1 claim, asserted rather than
+// assumed: the projector forces its own scale factor to 1, so any deviation is
+// a bug in our transform handling, not an inherent approximation.
+nlohmann::json verifyExactScale()
+{
+    constexpr double length = 100.0;
+    constexpr double width = 50.0;
+    constexpr double height = 10.0;
+    constexpr double tolerance = 1.0e-9;
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(length, width, height).Shape();
+
+    const std::array<std::pair<std::string, std::array<double, 2>>, 3> cases{{
+        {"Z", {width, length}},
+        {"Y", {height, length}},
+        {"X", {height, width}},
+    }};
+
+    nlohmann::json results = nlohmann::json::array();
+    bool allPassed = true;
+    for (const auto& [axis, expectedUnsorted] : cases) {
+        auto expected = expectedUnsorted;
+        if (expected[0] > expected[1]) std::swap(expected[0], expected[1]);
+        const auto run = runHiddenLineRemoval(box, parseViewAxis(axis));
+        const auto measured = sortedExtent(run.extent);
+        const double errorA = std::abs(measured[0] - expected[0]);
+        const double errorB = std::abs(measured[1] - expected[1]);
+        const bool passed = errorA <= tolerance && errorB <= tolerance;
+        allPassed = allPassed && passed;
+        results.push_back({{"axis", axis},
+                           {"expectedMm", {expected[0], expected[1]}},
+                           {"measuredMm", {measured[0], measured[1]}},
+                           {"maxErrorMm", std::max(errorA, errorB)},
+                           {"passed", passed}});
+    }
+    return {{"toleranceMm", tolerance}, {"passed", allPassed}, {"cases", results}};
+}
+
+// Does an analytic circle survive projection as a circle, or does HLR hand back
+// a tessellated B-spline? This decides whether DXF can emit exact CIRCLE/ARC
+// entities and polyline bulges, or whether every curved feature has to be
+// approximated. A cylinder viewed down its own axis is the controlled case:
+// its rim is a circle exactly parallel to the view plane.
+nlohmann::json probeCurveFidelity()
+{
+    const TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(10.0, 20.0).Shape();
+    const auto down = runHiddenLineRemoval(cylinder, gp_Dir(0.0, 0.0, 1.0));
+    const auto side = runHiddenLineRemoval(cylinder, gp_Dir(1.0, 0.0, 0.0));
+
+    std::map<std::string, int> axialTypes = down.sharp.curveTypes;
+    for (const auto& [name, count] : down.outline.curveTypes) axialTypes[name] += count;
+    std::map<std::string, int> sideTypes = side.sharp.curveTypes;
+    for (const auto& [name, count] : side.outline.curveTypes) sideTypes[name] += count;
+
+    const bool circlePreserved = axialTypes.contains("circle");
+    return {{"axialViewTypes", axialTypes},
+            {"sideViewTypes", sideTypes},
+            {"circlePreservedAnalytically", circlePreserved},
+            {"axialExtentMm", sortedExtent(down.extent)[1]}};
+}
+
+nlohmann::json curveTypeJson(const HlrStats& stats)
+{
+    return {{"edges", stats.edges},
+            {"nullPcurves", stats.nullPcurves},
+            {"coarseFallbackEdges", stats.coarseFallback},
+            {"curveTypes", stats.curveTypes}};
+}
+
+int runDrawingSpike(const std::vector<std::string>& args)
+{
+    if (args.size() < 2) fail(invalidArguments, "usage: drawing-spike <file.step> [axis]");
+    const std::filesystem::path file(args[1]);
+    const gp_Dir viewDirection = parseViewAxis(args.size() > 2 ? args[2] : "Z");
+
+    const auto exactScale = verifyExactScale();
+    const auto curveFidelity = probeCurveFidelity();
+
+    loupe::import::ImportResult imported;
+    try {
+        imported = loupe::import::StepImporter{}.read(file);
+    } catch (const std::exception& error) { fail(importFailure, error.what()); }
+
+    const auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+
+    // Compose every body at its assembly placement into one shape. HLR must be
+    // fed a single pre-located shape: adding N located sub-shapes and hiding
+    // them pairwise is quadratic and far slower.
+    BRep_Builder builder;
+    TopoDS_Compound assembly;
+    builder.MakeCompound(assembly);
+    const auto& native = *imported.native;
+    const auto bodyCount = std::min(native.shapes.size(), native.shapePlacements.size());
+    for (std::size_t index = 0; index < bodyCount; ++index) {
+        if (native.shapes[index].IsNull()) continue;
+        builder.Add(assembly, native.shapes[index].Located(TopLoc_Location(native.shapePlacements[index])));
+    }
+
+    // Scale the shape, not the projector: HLRAlgo_Projector forces its own
+    // transform's scale factor to 1, so a scale baked into the projector is
+    // silently discarded for orthographic views.
+    TopoDS_Shape shape = assembly;
+    if (decision.sourceToMillimeters != 1.0) {
+        gp_Trsf scale;
+        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), decision.sourceToMillimeters);
+        shape = BRepBuilderAPI_Transform(assembly, scale, true).Shape();
+    }
+
+    HlrRun run;
+    try {
+        run = runHiddenLineRemoval(shape, viewDirection);
+    } catch (const Standard_Failure& error) {
+        fail(exportFailure, std::string("hidden line removal failed: ") + error.GetMessageString());
+    } catch (const std::exception& error) { fail(exportFailure, error.what()); }
+
+    const auto extent = sortedExtent(run.extent);
+    const int totalEdges = run.sharp.edges + run.outline.edges;
+    const int totalFallback = run.sharp.coarseFallback + run.outline.coarseFallback;
+
+    // Optional third argument: write real DXF/SVG/PDF from this part so the output
+    // can be opened in the software that will actually consume it. Gate C cannot
+    // be closed by unit tests alone -- only a real reader proves a DXF loads
+    // without a repair prompt.
+    nlohmann::json written = nlohmann::json::array();
+    if (args.size() > 3) {
+        const std::filesystem::path outputDirectory(args[3]);
+        std::filesystem::create_directories(outputDirectory);
+        loupe::drawing::ProjectionRequest projection;
+        projection.shape = shape;
+        projection.viewDirection = viewDirection;
+        projection.upDirection = std::abs(viewDirection.Z()) > 0.9 ? gp_Dir(0.0, 1.0, 0.0)
+                                                                  : gp_Dir(0.0, 0.0, 1.0);
+        projection.sourceToMillimeters = 1.0; // shape is already in millimetres here
+        // 6th argument selects the silhouette mode, so the outer-contour filter can
+        // be measured against the same part in both modes.
+        if (args.size() > 5 && args[5] == "silhouette") {
+            projection.mode = loupe::drawing::ContentMode::OuterContourOnly;
+        }
+        try {
+            const auto projected = loupe::drawing::project(projection);
+            loupe::drawing::DrawingWriteOptions options;
+            // Off by default, matching the product decision: the fiducial is a
+            // deliberate opt-in, and leaving it on put an unexplained magenta line
+            // across every sample drawing. Pass a 5th argument to enable it.
+            // Check the value, not merely that an argument exists: gating on
+            // arity alone meant passing "no" switched the fiducial ON.
+            options.includeScaleFiducial = args.size() > 4 && args[4] == "fiducial";
+            const auto emit = [&](const std::string& name, const auto& writer) {
+                const auto path = outputDirectory / name;
+                const auto result = writer.write(projected.drawing, path, options);
+                const auto validation = loupe::drawing::validateDrawing(
+                    {path, result.pageWidthMm, result.pageHeightMm, 0.01});
+                written.push_back({{"file", name},
+                                   {"widthMm", result.pageWidthMm},
+                                   {"heightMm", result.pageHeightMm},
+                                   {"contours", result.contoursWritten},
+                                   {"validated", validation.passed}});
+            };
+            emit("drawing.dxf", loupe::drawing::DxfWriter{});
+            emit("drawing.svg", loupe::drawing::SvgWriter{});
+            emit("drawing.pdf", loupe::drawing::PdfWriter{});
+            const auto& stats = projected.statistics;
+            written.push_back({{"projection",
+                                {{"edges", stats.edges},
+                                 {"analyticLines", stats.analyticLines},
+                                 {"analyticCircles", stats.analyticCircles},
+                                 {"recoveredArcs", stats.recoveredArcs},
+                                 {"exactCubics", stats.exactCubics},
+                                 {"tessellatedCurves", stats.tessellatedCurves},
+                                 {"coarseFallbackEdges", stats.coarseFallbackEdges},
+                                 {"duplicatesRemoved", stats.duplicatesRemoved},
+                                 {"closedContours", stats.closedContours},
+                                 {"openContours", stats.openContours}}}});
+        } catch (const std::exception& error) {
+            written.push_back({{"error", error.what()}});
+        }
+    }
+
+    printJson({{"status", "ok"},
+               {"exactScale", exactScale},
+               {"curveFidelity", curveFidelity},
+               {"bodies", bodyCount},
+               {"effectiveUnit", unitName(decision.effectiveUnit)},
+               {"sourceToMillimeters", decision.sourceToMillimeters},
+               {"hlrMilliseconds", run.milliseconds},
+               {"visibleSharp", curveTypeJson(run.sharp)},
+               {"visibleOutline", curveTypeJson(run.outline)},
+               {"totalEdges", totalEdges},
+               {"coarseFallbackEdges", totalFallback},
+               {"coarseFallbackRatio", totalEdges > 0 ? static_cast<double>(totalFallback) / totalEdges : 0.0},
+               {"extentMm", {extent[0], extent[1]}},
+               {"written", written}});
+    return exactScale.at("passed").get<bool>() ? success : validationFailure;
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
 {
     try {
         std::vector<std::string> args; for (int index = 1; index < argc; ++index) args.emplace_back(argv[index]);
-        if (args.empty()) fail(invalidArguments, "choose inspect, export, corpus, or benchmark");
+        if (args.empty()) fail(invalidArguments, "choose inspect, export, corpus, benchmark, or drawing-spike");
         if (args[0] == "inspect") return runInspect(args); if (args[0] == "export") return runExport(args); if (args[0] == "corpus") return runCorpus(args); if (args[0] == "benchmark") return runBenchmark(args);
+        if (args[0] == "drawing-spike") return runDrawingSpike(args);
         fail(invalidArguments, "unknown command");
     } catch (const CommandError& error) { printJson({{"status", "error"}, {"code", error.code}, {"message", error.message}}); return error.code;
     } catch (const std::exception& error) { printJson({{"status", "error"}, {"code", importFailure}, {"message", error.what()}}); return importFailure; }
