@@ -132,6 +132,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         applySnapshotToTree(snapshot);
         snapshotJson_ = QString::fromUtf8(snapshot);
         exportWorkspaceController_.replaceSnapshot(snapshotJson_);
+        drawingWorkspaceController_.replaceSnapshot(snapshotJson_);
         if (cacheStore_ && pendingSource_) {
             const auto document = QJsonDocument::fromJson(snapshot).object();
             const cache::UnitDecision unit{document.value(QStringLiteral("effectiveUnit")).toString(), document.value(QStringLiteral("sourceToMillimeters")).toDouble(1.0)};
@@ -184,6 +185,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         setImportProgress(stage, fraction);
         if (fraction >= 1.0) {
             exportWorkspaceController_.setDocumentReady(true);
+            drawingWorkspaceController_.setDocumentReady(true);
             saveGeometryCache();
         }
     });
@@ -398,6 +400,7 @@ void ApplicationController::openFile(const QUrl& file)
     }
     snapshotJson_.clear();
     exportWorkspaceController_.reset();
+    drawingWorkspaceController_.reset();
     geometryCacheArchive_.clear();
     geometryReplayTimer_.stop();
     geometryReplayQueue_.clear();
@@ -434,6 +437,7 @@ void ApplicationController::openFile(const QUrl& file)
             applySnapshotToTree(*cached);
             snapshotJson_ = QString::fromUtf8(*cached);
             exportWorkspaceController_.replaceSnapshot(snapshotJson_);
+            drawingWorkspaceController_.replaceSnapshot(snapshotJson_);
             documentState_ = DocumentState::TreeReady;
             cacheHit_ = true;
             emit snapshotChanged();

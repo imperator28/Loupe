@@ -481,7 +481,10 @@ ctest --preset windows-release --output-on-failure -R "scene-model"
 
 ---
 
-## Task 12: Build the drawing workspace controller
+## Task 12: Build the drawing workspace controller — DONE 2026-07-25
+
+The queue, the candidate, the live plan preview and the export lifecycle. Worker signal
+wiring is deliberately left to Task 13, where the events it connects to exist.
 
 **Files:**
 
@@ -493,21 +496,66 @@ ctest --preset windows-release --output-on-failure -R "scene-model"
 - Create: `tests/app/test_drawing_workspace_controller.cpp`
 - Modify: `tests/CMakeLists.txt`
 
-- [ ] Expose it as a single `QObject*` CONSTANT property `drawingWorkspace` on `ApplicationController`, matching how `exportWorkspace` is exposed. Do not register the type with QML directly.
-- [ ] Reuse the snapshot-to-component-list logic from `ExportWorkspaceController`, including the multi-solid body rows and the redundant-raw-body-row suppression, so the picker behaves identically.
-- [ ] **Candidate state:** `candidateNodeId`, `candidateViewKind` (`Standard` or `FaceNormal`), `candidateViewDirection`, `candidateViewLabel`, `candidateContentMode`, `candidateScale`, plus `candidateValid` and `candidateStatus`. Changing any of these invalidates the preview and re-requests it.
-- [ ] Reject a non-planar face selection with a plain-language reason using the deviation from Task 11, rather than projecting from an averaged normal.
-- [ ] **Queue:** an ordered `QVector<QueuedDrawing>` keyed by a generated `drawingId`. Explicitly **not** a checkbox set over the tree — a checkbox cannot express one part queued three times.
-- [ ] `Q_INVOKABLE addCandidateToQueue()` snapshots the resolved direction as a vector at add time, so later orbiting never mutates a queued drawing. Return the new `drawingId`.
-- [ ] `Q_INVOKABLE removeDrawing(drawingId)`, `moveDrawing(drawingId, index)`, `setFilenameOverride(drawingId, name)`, `selectDrawing(drawingId)` — selecting loads that drawing into the preview.
-- [ ] Report an exact-duplicate add (same part, view, content mode, and scale) as a duplicate rather than silently producing two identical files.
-- [ ] Expose `drawingCountForNode(nodeId)` so the picker can show a per-part count.
-- [ ] Live plan preview via `buildDrawingPlan`, mirroring `refreshPlan`: rows in queue order, `planError`, `planFingerprint`, `canExport`.
-- [ ] Lock every mutator while exporting, matching the Export controller.
-- [ ] Emit `executeRequested(planJson, fingerprint)` and `cancelRequested(requestId)`; add `handleDrawingProgress`, `handleDrawingRowResult`, `handleDrawingCompleted`, `handleDrawingFailed`, `handleDrawingCanceled`. Wire them in `ApplicationController::connectWorker()` — the single wiring seam. Do not touch `WorkerClient` from the controller.
-- [ ] Also emit a preview request signal, and cancel any superseded in-flight preview so a stale result never overwrites a newer one.
-- [ ] Register a `loupe-drawing-workspace-tests` target as ctest name `drawing-workspace`, following the `export-workspace` template.
-- [ ] Tests: queue add/remove/reorder; three views of one part coexist as three rows; removing one leaves the others; generated names disambiguate and do not collide; snapshot semantics hold when the camera changes after queueing; duplicate add is reported; non-planar face rejected; invalid candidate disables the add action; selecting a row loads its drawing; mutators locked while exporting; row-result reconciliation.
+- [x] Expose it as a single `QObject*` CONSTANT property `drawingWorkspace` on `ApplicationController`, matching how `exportWorkspace` is exposed. Do not register the type with QML directly.
+
+      It also shares the document lifecycle: the same four sites that feed the export
+      workspace a snapshot, mark it ready, and reset it now feed this one.
+- [x] Reuse the snapshot-to-component-list logic from `ExportWorkspaceController`, including the multi-solid body rows and the redundant-raw-body-row suppression, so the picker behaves identically.
+
+      Extracted to `app/models/PickerComponents` rather than copied, so "identically" is
+      true by construction. `ExportWorkspaceController` now holds one as a member; its 19
+      cases and the 26 application-controller cases are unchanged.
+
+      Worth recording from that refactor: mechanically rewriting
+      `componentIndexById_.contains(x)` to `indexOf(x) >= 0` silently broke two
+      conditions, because the surrounding `!` then bound to the index, and
+      `!indexOf(x) >= 0` is always true. Focus and hover stopped accepting any node, and
+      three tests caught it. The shared type therefore offers `contains()`.
+- [x] **Candidate state:** `candidateNodeId`, `candidateViewKind` (`Standard` or `FaceNormal`), `candidateViewDirection`, `candidateViewLabel`, `candidateContentMode`, `candidateScale`, plus `candidateValid` and `candidateStatus`. Changing any of these invalidates the preview and re-requests it.
+- [x] Reject a non-planar face selection with a plain-language reason using the deviation from Task 11, rather than projecting from an averaged normal.
+
+      Threshold 0.5 degrees, and the measured deviation is quoted back to the user. A
+      flat face's up direction is the world axis least aligned with its normal, which
+      keeps the up stable and can never be parallel to the view -- the plan refuses that
+      as a degenerate view, and it would refuse the whole batch.
+- [x] **Queue:** an ordered `QVector<QueuedDrawing>` keyed by a generated `drawingId`. Explicitly **not** a checkbox set over the tree — a checkbox cannot express one part queued three times.
+- [x] `Q_INVOKABLE addCandidateToQueue()` snapshots the resolved direction as a vector at add time, so later orbiting never mutates a queued drawing. Return the new `drawingId`.
+- [x] `Q_INVOKABLE removeDrawing(drawingId)`, `moveDrawing(drawingId, index)`, `setFilenameOverride(drawingId, name)`, `selectDrawing(drawingId)` — selecting loads that drawing into the preview.
+- [x] Report an exact-duplicate add (same part, view, content mode, and scale) as a duplicate rather than silently producing two identical files. The existing row is selected too, so the user is shown the drawing they asked for.
+- [x] Expose `drawingCountForNode(nodeId)` so the picker can show a per-part count; it is also on each picker row as `drawingCount`.
+- [x] Live plan preview via `buildDrawingPlan`, mirroring `refreshPlan`: rows in queue order, `planError`, `planFingerprint`, `canExport`.
+
+      Rows follow the queue rather than the plan's canonical order, because every
+      `rowIndex` in a worker event has to index what the user is looking at.
+
+      A plan error still yields one row per queued drawing, so the user sees which ones
+      need attention rather than an empty list.
+
+      Note on generated names, since users see them: the leaf comes from the part
+      **name**, matching what the 3D export workspace already produces, with a lowercased
+      view suffix appended -- `Base plate-top.dxf`. The mixed casing is deliberate. A
+      user cross-referencing a STEP export against its drawing sees the same part name in
+      both.
+- [x] Lock every mutator while exporting, matching the Export controller. Covered by a test that attempts every one of them.
+- [x] Emit `executeRequested(planJson, fingerprint)` and `cancelRequested(requestId)`; add `handleDrawingProgress`, `handleDrawingRowResult`, `handleDrawingCompleted`, `handleDrawingFailed`, `handleDrawingCanceled`. Do not touch `WorkerClient` from the controller.
+
+      Signals and handlers exist and are tested by calling the handlers directly.
+      **Connecting them in `connectWorker()` moved to Task 13**, which is where the
+      `DrawingProgress` / `DrawingRowResult` / `DrawingCompleted` events they attach to
+      are introduced. Wiring them here would mean connecting to signals that do not yet
+      exist.
+- [x] Also emit a preview request signal, and cancel any superseded in-flight preview so a stale result never overwrites a newer one. Each request carries a monotonic `revision`, and supersession cancels by revision rather than waiting: a late reply can still arrive, and the revision is what lets the view drop it.
+- [x] Register a `loupe-drawing-workspace-tests` target as ctest name `drawing-workspace`, following the `export-workspace` template.
+- [x] Tests: queue add/remove/reorder; three views of one part coexist as three rows; removing one leaves the others; generated names disambiguate and do not collide; snapshot semantics hold when the camera changes after queueing; duplicate add is reported; non-planar face rejected; invalid candidate disables the add action; selecting a row loads its drawing; mutators locked while exporting; row-result reconciliation.
+
+      **18 cases pass.** The snapshot case is the sharp one: it changes the candidate
+      view and scale after queueing, then asserts the queued row, its filename and the
+      plan fingerprint are all unmoved.
+
+      Two of my own mistakes worth keeping, because in both the test was wrong rather
+      than the code. The helper passed an up direction parallel to the view, which the
+      plan correctly refused as degenerate. And the expected filenames assumed node IDs
+      when the leaf comes from the part name.
 
 **Focused verification:**
 

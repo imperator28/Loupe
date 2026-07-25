@@ -4,6 +4,8 @@ qt_add_executable(loupe-app
     ApplicationController.h
     export/ExportWorkspaceController.cpp
     export/ExportWorkspaceController.h
+    drawing/DrawingWorkspaceController.cpp
+    drawing/DrawingWorkspaceController.h
     models/AssemblyTreeModel.cpp
     models/PickerComponents.cpp
     models/PickerComponents.h

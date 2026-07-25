@@ -18,6 +18,7 @@
 #include "app/models/MaterialLibraryModel.h"
 #include "app/models/VisibilityModel.h"
 #include "app/cache/OverrideStore.h"
+#include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
 #include "app/tools/MeasurementController.h"
 #include "app/tools/SectionController.h"
@@ -82,6 +83,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
     Q_PROPERTY(QObject* exportWorkspace READ exportWorkspaceController CONSTANT)
+    Q_PROPERTY(QObject* drawingWorkspace READ drawingWorkspaceController CONSTANT)
 
 public:
     explicit ApplicationController(QObject* parent = nullptr);
@@ -124,6 +126,7 @@ public:
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
+    [[nodiscard]] QObject* drawingWorkspaceController() noexcept { return &drawingWorkspaceController_; }
 
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
@@ -266,6 +269,7 @@ private:
     tools::SectionController sectionController_{this};
     tools::CaptureController captureController_{this};
     exporting::ExportWorkspaceController exportWorkspaceController_{this};
+    drawing::DrawingWorkspaceController drawingWorkspaceController_{this};
 };
 
 } // namespace loupe::app

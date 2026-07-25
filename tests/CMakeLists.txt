@@ -95,6 +95,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
@@ -144,6 +146,19 @@ target_include_directories(loupe-export-workspace-tests PRIVATE "${PROJECT_SOURC
 loupe_enable_warnings(loupe-export-workspace-tests)
 
 add_test(NAME export-workspace COMMAND loupe-export-workspace-tests)
+
+add_executable(loupe-drawing-workspace-tests
+    app/test_drawing_workspace_controller.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.h"
+)
+target_link_libraries(loupe-drawing-workspace-tests PRIVATE loupe::core Qt6::Core Qt6::Test)
+target_include_directories(loupe-drawing-workspace-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-drawing-workspace-tests)
+
+add_test(NAME drawing-workspace COMMAND loupe-drawing-workspace-tests)
 
 add_executable(loupe-material-store-tests
     app/test_material_store.cpp
