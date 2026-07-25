@@ -17,6 +17,8 @@ class ApplicationControllerTest final : public QObject
 
 private slots:
     void inspectIsDefaultWorkspace();
+    void resolvesStandardViewsAgainstDocumentUpAxis();
+    void rejectsUnknownUpAxisAndViewName();
     void emptyDocumentShowsDocumentInspector();
     void selectionShowsComponentInspector();
     void ownsInspectionTaskControllers();
@@ -384,6 +386,56 @@ void ApplicationControllerTest::reopensSourceWithPersistedAppearanceOverrides()
     reopened.setActiveNodeId(selectedNodeId);
     QCOMPARE(reopened.activeMaterialId(), QStringLiteral("aluminum-6061"));
     QCOMPARE(reopened.activeAppearanceColor(), QStringLiteral("#FF0055"));
+}
+
+
+// The renderer is Y-up while mechanical CAD is overwhelmingly Z-up, so a named
+// view has to resolve against the document's own convention. Getting this wrong
+// makes "Top" produce a front elevation, which in a 1:1 drawing is a wrong part
+// rather than a cosmetic annoyance.
+void ApplicationControllerTest::resolvesStandardViewsAgainstDocumentUpAxis()
+{
+    loupe::app::ApplicationController controller;
+
+    QCOMPARE(controller.upAxis(), QStringLiteral("Z"));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Top")), QVector3D(0, 0, 1));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Bottom")), QVector3D(0, 0, -1));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Front")), QVector3D(0, -1, 0));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Back")), QVector3D(0, 1, 0));
+
+    QSignalSpy spy(&controller, &loupe::app::ApplicationController::upAxisChanged);
+    QVERIFY(controller.setUpAxis(QStringLiteral("Y")));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(controller.upAxis(), QStringLiteral("Y"));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Top")), QVector3D(0, 1, 0));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Front")), QVector3D(0, 0, 1));
+
+    // Left and right are the same axis under either convention.
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Right")), QVector3D(1, 0, 0));
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Left")), QVector3D(-1, 0, 0));
+
+    // Setting the same axis again must not emit a spurious change.
+    QVERIFY(controller.setUpAxis(QStringLiteral("Y")));
+    QCOMPARE(spy.count(), 1);
+
+    // Every named view must be a unit direction, or the camera alignment would
+    // scale as well as rotate.
+    for (const auto* name : {"Top", "Bottom", "Front", "Back", "Left", "Right"}) {
+        const auto direction = controller.directionForStandardView(QString::fromLatin1(name));
+        QVERIFY(qFuzzyCompare(direction.length(), 1.0F));
+    }
+}
+
+void ApplicationControllerTest::rejectsUnknownUpAxisAndViewName()
+{
+    loupe::app::ApplicationController controller;
+
+    QVERIFY(!controller.setUpAxis(QStringLiteral("X")));
+    QVERIFY(!controller.setUpAxis(QString()));
+    QCOMPARE(controller.upAxis(), QStringLiteral("Z"));
+    // An unknown name yields a zero vector so a caller can reject it rather than
+    // silently aiming the camera somewhere arbitrary.
+    QCOMPARE(controller.directionForStandardView(QStringLiteral("Isometric")), QVector3D());
 }
 
 QTEST_MAIN(ApplicationControllerTest)

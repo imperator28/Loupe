@@ -1102,6 +1102,46 @@ bool ApplicationController::setUnitOverride(const QString& unit)
     return true;
 }
 
+bool ApplicationController::setUpAxis(const QString& axis)
+{
+    if (axis != QStringLiteral("Z") && axis != QStringLiteral("Y")) return false;
+    if (upAxis_ == axis) return true;
+    upAxis_ = axis;
+    // Deliberately no reimport, unlike a unit override: the up axis only decides
+    // what a named view is called and which way it points, so the geometry, the
+    // cache, and the assembly tree are all unaffected.
+    emit upAxisChanged();
+    return true;
+}
+
+QVector3D ApplicationController::directionForStandardView(const QString& name) const
+{
+    // Direction the camera looks FROM, in model space.
+    //
+    // The renderer is Y-up but mechanical CAD is overwhelmingly Z-up, so the two
+    // conventions disagree about which axis "Top" and "Front" mean. Resolving the
+    // name here, in one table, is what stops a named view from silently producing
+    // the wrong elevation in a 1:1 drawing.
+    const bool zUp = upAxis_ != QStringLiteral("Y");
+    if (name == QStringLiteral("Top")) return zUp ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
+    if (name == QStringLiteral("Bottom")) return zUp ? QVector3D(0, 0, -1) : QVector3D(0, -1, 0);
+    // In a Z-up document the front elevation is seen looking along +Y, so the
+    // camera sits on -Y.
+    if (name == QStringLiteral("Front")) return zUp ? QVector3D(0, -1, 0) : QVector3D(0, 0, 1);
+    if (name == QStringLiteral("Back")) return zUp ? QVector3D(0, 1, 0) : QVector3D(0, 0, -1);
+    if (name == QStringLiteral("Right")) return {1, 0, 0};
+    if (name == QStringLiteral("Left")) return {-1, 0, 0};
+    return {};
+}
+
+QString ApplicationController::labelForStandardView(const QString& name) const
+{
+    // Names are already resolved against the document convention, so the label is
+    // the name. Kept as a seam so a future convention (for example a Y-up
+    // document labelled with its own axis letters) has one place to change.
+    return name;
+}
+
 void ApplicationController::acceptViewSelection(const QString& nodeId, const double x, const double y, const double z, const double normalX, const double normalY, const double normalZ,
                                                 const bool additive)
 {

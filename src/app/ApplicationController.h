@@ -71,6 +71,13 @@ class ApplicationController : public QObject {
     Q_PROPERTY(bool importInProgress READ importInProgress NOTIFY importProgressChanged)
     Q_PROPERTY(bool previewReady READ previewReady NOTIFY importProgressChanged)
     Q_PROPERTY(QString effectiveUnit READ effectiveUnit NOTIFY effectiveUnitChanged)
+    // Which model axis points up in this document: "Z" or "Y". STEP carries no
+    // reliable up-axis field, so this is a documented convention with a user
+    // override, not an inference. It exists because the renderer is Y-up while
+    // mechanical CAD is overwhelmingly Z-up, which otherwise makes the view cube
+    // call model +Z "Front" and model +Y "Top" -- harmless while orbiting, but
+    // wrong for a named view that drives a 1:1 drawing.
+    Q_PROPERTY(QString upAxis READ upAxis NOTIFY upAxisChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -112,6 +119,7 @@ public:
     [[nodiscard]] bool importInProgress() const noexcept { return importInProgress_; }
     [[nodiscard]] bool previewReady() const noexcept { return previewGeometryReceived_; }
     [[nodiscard]] const QString& effectiveUnit() const noexcept { return effectiveUnit_; }
+    [[nodiscard]] const QString& upAxis() const noexcept { return upAxis_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -139,6 +147,12 @@ public:
     Q_INVOKABLE bool clearActiveAppearanceColor(const QString& scope);
     Q_INVOKABLE QString resolvedAppearanceColor(const QString& nodeId, const QString& sourceColor) const;
     Q_INVOKABLE bool setUnitOverride(const QString& unit);
+    // Unlike a unit override this must NOT reimport: it only renames views.
+    Q_INVOKABLE bool setUpAxis(const QString& axis);
+    // Resolved world-space direction for a named standard view, honouring the
+    // document's up axis. Returns a zero vector for an unknown name.
+    Q_INVOKABLE QVector3D directionForStandardView(const QString& name) const;
+    Q_INVOKABLE QString labelForStandardView(const QString& name) const;
     Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
                                          bool additive = false);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
@@ -162,6 +176,7 @@ signals:
     void visibilityChanged();
     void importProgressChanged();
     void effectiveUnitChanged();
+    void upAxisChanged();
     void meshReady(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson);
     void edgeReady(const QString& nodeId, const QByteArray& edgeJson);
 
@@ -237,6 +252,8 @@ private:
     double modelExtentMm_{};
     ViewerPresentation viewerPresentation_{ViewerPresentation::Full};
     QString effectiveUnit_{QStringLiteral("mm")};
+    // Z-up is the mechanical CAD norm and therefore the default.
+    QString upAxis_{QStringLiteral("Z")};
     QHash<QString, ComponentGeometry> geometryByNode_;
     QHash<QString, QString> parentByNode_;
     QHash<QString, QString> definitionByNode_;
