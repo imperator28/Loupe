@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/models/PickerComponents.h"
+
 #include <QObject>
 #include <QString>
 #include <QUrl>
@@ -109,28 +111,13 @@ signals:
     void cancelRequested(quint64 requestId);
 
 private:
-    struct Component final {
-        QString id;
-        QString parentId;
-        QString name;
-        QString hierarchyPath;
-        int kind{};
-        int depth{};
-        bool exportable{};
-        bool visibleInPicker{true};
-        bool hasVisibleChildren{};
-    };
-
-    [[nodiscard]] QString hierarchyPathFor(const QString& nodeId, QSet<QString>& resolving) const;
     [[nodiscard]] QString generatedLeafName(const QString& nodeId, int bucketIndex) const;
-    [[nodiscard]] QString pickerNodeForSceneNode(const QString& nodeId) const;
     void refreshPlan();
     void clearPlan();
     [[nodiscard]] QByteArray reviewedPlanJson() const;
     void clearExportResult();
 
-    QVector<Component> components_;
-    QHash<QString, int> componentIndexById_;
+    models::PickerComponents picker_;
     QVector<QString> checkedNodeIds_;
     int selectionRevision_{};
     QHash<QString, QString> filenameOverrides_;
@@ -142,8 +129,6 @@ private:
     QString grouping_{QStringLiteral("Separate files")};
     QString namingStrategy_{QStringLiteral("keep")};
     QString namingValue_;
-    QString effectiveUnit_{QStringLiteral("mm")};
-    double sourceToMillimeters_{1.0};
     QVariantList planRows_;
     QString planFingerprint_;
     QString planError_;

@@ -95,6 +95,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/MaterialLibraryModel.cpp"
@@ -134,6 +136,8 @@ add_executable(loupe-export-workspace-tests
     app/test_export_workspace_controller.cpp
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.h"
 )
 target_link_libraries(loupe-export-workspace-tests PRIVATE loupe::core Qt6::Core Qt6::Test)
 target_include_directories(loupe-export-workspace-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -177,6 +181,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/ThemePreference.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/ThemePreference.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"

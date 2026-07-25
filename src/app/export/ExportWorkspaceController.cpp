@@ -13,19 +13,6 @@
 namespace loupe::app::exporting {
 namespace {
 
-QString kindLabel(const int kind)
-{
-    using loupe::domain::NodeKind;
-    switch (static_cast<NodeKind>(kind)) {
-    case NodeKind::Subassembly: return QObject::tr("Subassembly");
-    case NodeKind::Occurrence: return QObject::tr("Component");
-    case NodeKind::Body: return QObject::tr("Body");
-    case NodeKind::Definition: return QObject::tr("Definition");
-    case NodeKind::Root: return QObject::tr("Assembly");
-    }
-    return QObject::tr("Component");
-}
-
 loupe::exporting::SelectionKind selectionKindFor(const int kind)
 {
     using loupe::domain::NodeKind;
@@ -49,14 +36,14 @@ ExportWorkspaceController::ExportWorkspaceController(QObject* parent)
 QVariantList ExportWorkspaceController::components() const
 {
     QVariantList result;
-    result.reserve(components_.size());
-    for (const auto& component : components_) {
+    result.reserve(picker_.components().size());
+    for (const auto& component : picker_.components()) {
         if (!component.visibleInPicker) continue;
         result.append(QVariantMap{{QStringLiteral("nodeId"), component.id},
                                   {QStringLiteral("parentId"), component.parentId},
                                   {QStringLiteral("name"), component.name},
                                   {QStringLiteral("path"), component.hierarchyPath},
-                                  {QStringLiteral("kind"), kindLabel(component.kind)},
+                                  {QStringLiteral("kind"), models::pickerKindLabel(component.kind)},
                                   {QStringLiteral("depth"), component.depth},
                                   {QStringLiteral("exportable"), component.exportable},
                                   {QStringLiteral("hasChildren"), component.hasVisibleChildren},
@@ -68,57 +55,13 @@ QVariantList ExportWorkspaceController::components() const
 void ExportWorkspaceController::replaceSnapshot(const QString& snapshotJson)
 {
     if (exporting_) return;
-    const auto document = QJsonDocument::fromJson(snapshotJson.toUtf8());
-    if (!document.isObject()) {
-        reset();
-        return;
-    }
-    const auto root = document.object();
-    effectiveUnit_ = root.value(QStringLiteral("effectiveUnit")).toString(QStringLiteral("mm"));
-    sourceToMillimeters_ = root.value(QStringLiteral("sourceToMillimeters")).toDouble(effectiveUnit_ == QStringLiteral("in") ? 25.4 : 1.0);
-    components_.clear();
-    componentIndexById_.clear();
     checkedNodeIds_.clear();
     filenameOverrides_.clear();
     focusedNodeId_.clear();
     hoveredNodeId_.clear();
-
-    const auto nodes = root.value(QStringLiteral("nodes")).toArray();
-    for (const auto& value : nodes) {
-        const auto node = value.toObject();
-        if (node.value(QStringLiteral("kind")).toInt() == static_cast<int>(loupe::domain::NodeKind::Definition)) continue;
-        Component component;
-        component.id = node.value(QStringLiteral("id")).toString();
-        component.parentId = node.value(QStringLiteral("parentId")).toString();
-        component.name = node.value(QStringLiteral("name")).toString().trimmed();
-        component.kind = node.value(QStringLiteral("kind")).toInt();
-        component.exportable = component.kind != static_cast<int>(loupe::domain::NodeKind::Root);
-        if (component.name.isEmpty()) component.name = tr("Unnamed component");
-        if (component.id.isEmpty()) continue;
-        componentIndexById_.insert(component.id, static_cast<int>(components_.size()));
-        components_.append(std::move(component));
-    }
-    for (auto& component : components_) {
-        QSet<QString> resolving;
-        component.hierarchyPath = hierarchyPathFor(component.id, resolving);
-        auto parentId = component.parentId;
-        while (!parentId.isEmpty() && componentIndexById_.contains(parentId)) {
-            ++component.depth;
-            parentId = components_.at(componentIndexById_.value(parentId)).parentId;
-        }
-        const auto normalizedName = component.name.trimmed().toUpper();
-        const auto parentIndex = componentIndexById_.value(component.parentId, -1);
-        const bool rawBodyName = normalizedName == QStringLiteral("SOLID")
-            || normalizedName == QStringLiteral("COMPOUND") || normalizedName == QStringLiteral("BODY");
-        component.visibleInPicker = !(component.kind == static_cast<int>(loupe::domain::NodeKind::Body)
-            && rawBodyName && parentIndex >= 0
-            && components_.at(parentIndex).kind != static_cast<int>(loupe::domain::NodeKind::Root));
-    }
-    for (const auto& component : components_) {
-        if (!component.visibleInPicker || component.parentId.isEmpty()) continue;
-        const auto parentIndex = componentIndexById_.value(component.parentId, -1);
-        if (parentIndex >= 0 && components_.at(parentIndex).visibleInPicker)
-            components_[parentIndex].hasVisibleChildren = true;
+    if (!picker_.replaceSnapshot(snapshotJson)) {
+        reset();
+        return;
     }
     clearPlan();
     ++selectionRevision_;
@@ -129,14 +72,11 @@ void ExportWorkspaceController::replaceSnapshot(const QString& snapshotJson)
 
 void ExportWorkspaceController::reset()
 {
-    components_.clear();
-    componentIndexById_.clear();
+    picker_.clear();
     checkedNodeIds_.clear();
     filenameOverrides_.clear();
     focusedNodeId_.clear();
     hoveredNodeId_.clear();
-    effectiveUnit_ = QStringLiteral("mm");
-    sourceToMillimeters_ = 1.0;
     documentReady_ = false;
     exporting_ = false;
     exportRequestId_ = 0;
@@ -160,8 +100,8 @@ void ExportWorkspaceController::setDocumentReady(const bool ready)
 void ExportWorkspaceController::setChecked(const QString& nodeId, const bool checked)
 {
     if (exporting_) return;
-    const auto index = componentIndexById_.value(nodeId, -1);
-    if (index < 0 || !components_.at(index).exportable) return;
+    const auto index = picker_.indexOf(nodeId);
+    if (index < 0 || !picker_.components().at(index).exportable) return;
     const auto changed = checked ? !checkedNodeIds_.contains(nodeId) : checkedNodeIds_.contains(nodeId);
     if (!changed) return;
     if (checked) checkedNodeIds_.append(nodeId);
@@ -178,7 +118,7 @@ void ExportWorkspaceController::setAllChecked(const bool checked)
 {
     if (exporting_) return;
     if (checked) {
-        for (const auto& component : components_) {
+        for (const auto& component : picker_.components()) {
             if (component.exportable && !checkedNodeIds_.contains(component.id)) checkedNodeIds_.append(component.id);
         }
     } else {
@@ -202,23 +142,23 @@ bool ExportWorkspaceController::containsNode(const QString& selectionId, const Q
     while (!current.isEmpty() && !visited.contains(current)) {
         if (current == selectionId) return true;
         visited.insert(current);
-        const auto index = componentIndexById_.value(current, -1);
+        const auto index = picker_.indexOf(current);
         if (index < 0) return false;
-        current = components_.at(index).parentId;
+        current = picker_.components().at(index).parentId;
     }
     return false;
 }
 
 void ExportWorkspaceController::setFocusedNodeId(const QString& nodeId)
 {
-    if (focusedNodeId_ == nodeId || (!nodeId.isEmpty() && !componentIndexById_.contains(nodeId))) return;
+    if (focusedNodeId_ == nodeId || (!nodeId.isEmpty() && !picker_.contains(nodeId))) return;
     focusedNodeId_ = nodeId;
     emit previewChanged();
 }
 
 void ExportWorkspaceController::setHoveredNodeId(const QString& nodeId)
 {
-    if (hoveredNodeId_ == nodeId || (!nodeId.isEmpty() && !componentIndexById_.contains(nodeId))) return;
+    if (hoveredNodeId_ == nodeId || (!nodeId.isEmpty() && !picker_.contains(nodeId))) return;
     hoveredNodeId_ = nodeId;
     emit previewChanged();
 }
@@ -317,7 +257,7 @@ void ExportWorkspaceController::setFilenameOverride(const QString& nodeId, const
 
 QString ExportWorkspaceController::focusSceneNode(const QString& nodeId)
 {
-    const auto pickerNodeId = pickerNodeForSceneNode(nodeId);
+    const auto pickerNodeId = picker_.pickerNodeForSceneNode(nodeId);
     setFocusedNodeId(pickerNodeId);
     return pickerNodeId;
 }
@@ -332,9 +272,9 @@ QString ExportWorkspaceController::generatedLeafName(const QString& nodeId, cons
 {
     const auto override = filenameOverrides_.constFind(nodeId);
     if (override != filenameOverrides_.cend()) return override.value();
-    const auto componentIndex = componentIndexById_.value(nodeId, -1);
+    const auto componentIndex = picker_.indexOf(nodeId);
     if (componentIndex < 0) return tr("Unnamed component");
-    const auto& component = components_.at(componentIndex);
+    const auto& component = picker_.components().at(componentIndex);
     if (namingStrategy_ == QStringLiteral("sequence")) {
         return QStringLiteral("%1-%2").arg(namingValue_.trimmed()).arg(bucketIndex + 1, 3, 10, QLatin1Char('0'));
     }
@@ -366,13 +306,13 @@ void ExportWorkspaceController::refreshPlan()
     request.grouping = loupe::exporting::Grouping::SeparateFiles;
     request.stepOutputUnit = loupe::exporting::StepOutputUnit::Millimeter;
     request.requestedUnitToMillimeters = 1.0;
-    request.unitDecision = {effectiveUnit_ == QStringLiteral("in") ? loupe::units::LengthUnit::Inch : loupe::units::LengthUnit::Millimeter,
-                            loupe::units::UnitConfidence::Confirmed, sourceToMillimeters_, "reviewed in Loupe"};
+    request.unitDecision = {picker_.effectiveUnit() == QStringLiteral("in") ? loupe::units::LengthUnit::Inch : loupe::units::LengthUnit::Millimeter,
+                            loupe::units::UnitConfidence::Confirmed, picker_.sourceToMillimeters(), "reviewed in Loupe"};
     for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
         const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-        const auto index = componentIndexById_.value(nodeId, -1);
+        const auto index = picker_.indexOf(nodeId);
         if (index < 0) continue;
-        const auto& component = components_.at(index);
+        const auto& component = picker_.components().at(index);
         request.selections.push_back({nodeId.toUtf8().toStdString(), selectionKindFor(component.kind)});
         request.hierarchyPaths.emplace(nodeId.toUtf8().toStdString(), component.hierarchyPath.toUtf8().toStdString());
         request.outputLeafNames.emplace(nodeId.toUtf8().toStdString(), generatedLeafName(nodeId, bucketIndex).toUtf8().toStdString());
@@ -385,9 +325,9 @@ void ExportWorkspaceController::refreshPlan()
         }
         for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
             const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-            const auto componentIndex = componentIndexById_.value(nodeId, -1);
+            const auto componentIndex = picker_.indexOf(nodeId);
             if (componentIndex < 0) continue;
-            const auto& component = components_.at(componentIndex);
+            const auto& component = picker_.components().at(componentIndex);
             const auto path = pathByNode.value(nodeId);
             planRows_.append(QVariantMap{{QStringLiteral("nodeId"), nodeId},
                                          {QStringLiteral("name"), component.name},
@@ -404,9 +344,9 @@ void ExportWorkspaceController::refreshPlan()
         if (planError_.isEmpty()) planError_ = QString::fromUtf8(error.what());
         for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
             const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-            const auto componentIndex = componentIndexById_.value(nodeId, -1);
+            const auto componentIndex = picker_.indexOf(nodeId);
             if (componentIndex < 0) continue;
-            const auto& component = components_.at(componentIndex);
+            const auto& component = picker_.components().at(componentIndex);
             const auto leaf = generatedLeafName(nodeId, bucketIndex)
                 + (format_ == QStringLiteral("STL") ? QStringLiteral(".stl") : QStringLiteral(".step"));
             planRows_.append(QVariantMap{{QStringLiteral("nodeId"), nodeId},
@@ -433,9 +373,9 @@ QByteArray ExportWorkspaceController::reviewedPlanJson() const
     QJsonArray selections;
     for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
         const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-        const auto componentIndex = componentIndexById_.value(nodeId, -1);
+        const auto componentIndex = picker_.indexOf(nodeId);
         if (componentIndex < 0) continue;
-        const auto& component = components_.at(componentIndex);
+        const auto& component = picker_.components().at(componentIndex);
         selections.append(QJsonObject{
             {QStringLiteral("nodeId"), nodeId},
             {QStringLiteral("kind"), static_cast<int>(selectionKindFor(component.kind))},
@@ -448,8 +388,8 @@ QByteArray ExportWorkspaceController::reviewedPlanJson() const
         {QStringLiteral("destination"), destination_.trimmed()},
         {QStringLiteral("format"), format_},
         {QStringLiteral("coordinates"), coordinates_},
-        {QStringLiteral("effectiveUnit"), effectiveUnit_},
-        {QStringLiteral("sourceToMillimeters"), sourceToMillimeters_},
+        {QStringLiteral("effectiveUnit"), picker_.effectiveUnit()},
+        {QStringLiteral("sourceToMillimeters"), picker_.sourceToMillimeters()},
         {QStringLiteral("selections"), selections},
     }).toJson(QJsonDocument::Compact);
 }
@@ -561,32 +501,6 @@ void ExportWorkspaceController::clearExportResult()
     exportSummary_.clear();
     exportSucceeded_ = false;
     if (changed) emit exportStateChanged();
-}
-
-QString ExportWorkspaceController::hierarchyPathFor(const QString& nodeId, QSet<QString>& resolving) const
-{
-    const auto index = componentIndexById_.value(nodeId, -1);
-    if (index < 0 || resolving.contains(nodeId)) return {};
-    resolving.insert(nodeId);
-    const auto& component = components_.at(index);
-    const auto parentPath = hierarchyPathFor(component.parentId, resolving);
-    resolving.remove(nodeId);
-    return parentPath.isEmpty() ? component.name : parentPath + QLatin1Char('/') + component.name;
-}
-
-QString ExportWorkspaceController::pickerNodeForSceneNode(const QString& nodeId) const
-{
-    auto current = nodeId;
-    QSet<QString> visited;
-    while (!current.isEmpty() && !visited.contains(current)) {
-        visited.insert(current);
-        const auto index = componentIndexById_.value(current, -1);
-        if (index < 0) return {};
-        const auto& component = components_.at(index);
-        if (component.visibleInPicker && component.exportable) return component.id;
-        current = component.parentId;
-    }
-    return {};
 }
 
 void ExportWorkspaceController::clearPlan()
