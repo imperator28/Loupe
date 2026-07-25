@@ -350,7 +350,11 @@ Inspect benefits from this gate on its own, independently of the rest of the fea
 
 ---
 
-## Task 10: Build the drawing plan domain type
+## Task 10: Build the drawing plan domain type — DONE 2026-07-25
+
+A queued batch of drawings now becomes a reviewed, canonically ordered, fingerprinted
+plan that the worker can be held to, sharing ExportPlan's output-naming rules rather
+than a second copy of them.
 
 **Files:**
 
@@ -359,11 +363,35 @@ Inspect benefits from this gate on its own, independently of the rest of the fea
 - Modify: `src/core/CMakeLists.txt`
 - Create: `tests/core/test_drawing_plan.cpp`
 
-- [ ] Define a parallel plan type rather than extending `ExportPlan`. A drawing row needs a view, content mode, and scale, and does not need STEP unit rebasing or assembly-versus-local coordinates; overloading the existing format enum would force each validator to reason about the other's domain.
-- [ ] `DrawingFormat { Dxf, Svg, Pdf }`. `DrawingSelection { drawingId, nodeId, hierarchyPath, viewDirection, upDirection, viewLabel, contentMode, scaleNumerator, scaleDenominator, outputLeafName }`.
-- [ ] `DrawingPlanRequest` carries selections, destination, format, deflection, fiducial flag, and the document `UnitDecision`.
-- [ ] `DrawingOutputRow` and `DrawingPlan` follow the established pattern: private constructors with `friend buildDrawingPlan`, so a plan can only come from the builder.
-- [ ] Reuse the existing leaf sanitisation and Windows-comparable-path collision logic from `ExportPlan` — extract it to a shared internal header rather than copying it, since it encodes hard-won rules about reserved device names, trailing dots, and Unicode folding.
+- [x] Define a parallel plan type rather than extending `ExportPlan`. A drawing row needs a view, content mode, and scale, and does not need STEP unit rebasing or assembly-versus-local coordinates; overloading the existing format enum would force each validator to reason about the other's domain.
+- [x] `DrawingFormat { Dxf, Svg, Pdf }`. `DrawingSelection { drawingId, nodeId, hierarchyPath, viewDirection, upDirection, viewLabel, contentMode, scaleNumerator, scaleDenominator, outputLeafName }`.
+
+      **Deviation, deliberate:** `hierarchyPath` and `outputLeafName` are not fields on
+      the selection. They live on the request as maps keyed by node ID and drawing ID
+      respectively, matching how `ExportPlan` already receives them and how the
+      workspace holds them -- one path per node, shared by every drawing of that node.
+      Keeping them on the selection would have let two drawings of the same part carry
+      contradictory paths for it, which nothing downstream could resolve.
+- [x] `DrawingPlanRequest` carries selections, destination, format, deflection, fiducial flag, and the document `UnitDecision`.
+- [x] `DrawingOutputRow` and `DrawingPlan` follow the established pattern: private constructors with `friend buildDrawingPlan`, so a plan can only come from the builder.
+
+      The deleted rvalue accessors earned their keep immediately: the first compile
+      failed on six of my own test lines that read `buildDrawingPlan(...).fingerprint()`
+      off a temporary. That is exactly the dangling reference the deletion exists to
+      stop, so the tests were fixed to name the plan first.
+- [x] Reuse the existing leaf sanitisation and Windows-comparable-path collision logic from `ExportPlan` — extract it to a shared internal header rather than copying it, since it encodes hard-won rules about reserved device names, trailing dots, and Unicode folding.
+
+      **Done, with one change from the sketch below:** the shared helpers throw a
+      neutral `OutputNamingError` carrying `Code { UnsafeName, InvalidUtf8 }` rather
+      than returning `std::expected`. Both call sites are inside code that already
+      reports failure by throwing a plan error, so `expected` would have been unwrapped
+      and rethrown at every use with nothing gained. Each plan builder catches it and
+      maps to its own code (`PlanError::UnsafeOutputName` /
+      `DrawingPlanError::UnsafeOutputName`). The extraction itself was done by script to
+      rule out transcription drift in rules nobody wants to re-derive.
+
+      Before and after: **41 assertions in 25 test cases, all passing** for
+      `[export-plan]` — identical, which was the required check.
 
       **Extraction is not mechanical; design settled during research.** Both helpers
       (`sanitizedLeaf`, `windowsComparablePath`, plus `isReservedWindowsDeviceName`
@@ -377,10 +405,21 @@ Inspect benefits from this gate on its own, independently of the rest of the fea
       exactly these rules: reserved device names, trailing dots and spaces, malformed
       UTF-8, case-insensitive collisions, and NFC-folded accented collisions. Run
       `ctest -R "export-plan"` before and after and expect identical results.
-- [ ] Validation, each with its own error code: empty selection; blank destination; blocking `UnitDecision`; non-finite or non-positive scale; degenerate view direction; missing hierarchy path; output path collision; unsafe leaf name; invalid enum.
-- [ ] Fingerprint with `XXH3_128bits` over length-prefixed fields, matching the 3D pipeline, and include every field that changes output — view direction components, content mode, and scale included.
-- [ ] Generated leaf names must disambiguate by view label, and must include the scale when it is not 1:1.
-- [ ] Tests: every error code; determinism; permuted selections give an identical fingerprint; changing view direction, content mode, or scale changes it; three views of one part produce three non-colliding paths.
+- [x] Validation, each with its own error code: empty selection; blank destination; blocking `UnitDecision`; non-finite or non-positive scale; degenerate view direction; missing hierarchy path; output path collision; unsafe leaf name; invalid enum.
+
+      Twelve codes in the end. Two beyond the list: `InvalidSourceScale` (a
+      non-positive source-to-millimetre factor would silently destroy the 1:1
+      guarantee) and `DuplicateDrawingId` (results are addressed by drawing ID, so a
+      duplicate makes a returned result ambiguous). `DegenerateView` also covers a view
+      direction parallel to the up direction, which leaves the in-plane axis undefined
+      and otherwise fails inside the geometry kernel with a message a user cannot act on.
+- [x] Fingerprint with `XXH3_128bits` over length-prefixed fields, matching the 3D pipeline, and include every field that changes output — view direction components, content mode, and scale included.
+- [x] Generated leaf names must disambiguate by view label, and must include the scale when it is not 1:1. `drawingLeafName` is exported so the workspace can show the name before export rather than after.
+- [x] Tests: every error code; determinism; permuted selections give an identical fingerprint; changing view direction, content mode, or scale changes it; three views of one part produce three non-colliding paths.
+
+      **18 test cases, 37 assertions, all passing.** Includes the case-insensitive
+      collision and the reserved-device-name refusal, which prove the shared naming
+      rules are actually in force here rather than merely linked.
 
 **Focused verification:**
 
