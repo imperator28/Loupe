@@ -24,20 +24,23 @@ Item {
     // plane, which is how a CAD cube lets you reorient a view without leaving it.
     signal planarRotateRequested(real degrees)
 
-    implicitWidth: 96
-    implicitHeight: 96
+    implicitWidth: 108
+    implicitHeight: 108
 
     readonly property color faceFill: theme ? theme.surface3 : "transparent"
     readonly property color edgeColor: theme ? theme.borderStrong : "transparent"
     readonly property color labelColor: theme ? theme.textPrimary : "transparent"
     readonly property color ringColor: theme ? theme.accentColor : "transparent"
     readonly property int ringWidth: theme ? theme.focusRingWidth : 2
+    readonly property color axisXColor: theme ? theme.errorColor : "transparent"
+    readonly property color axisYColor: theme ? theme.success : "transparent"
+    readonly property color axisZColor: theme ? theme.accentColor : "transparent"
 
     readonly property real halfSize: 1.0
     // Pixels per world unit for the cube's orthographic camera. Shared with the
     // 2D overlays so they can be placed analytically instead of via
     // mapFrom3DScene, which collapsed every label onto one point.
-    readonly property real pixelsPerUnit: Math.min(width, height) / 3.6
+    readonly property real pixelsPerUnit: Math.min(width, height) / 5.6
     // #Cube and #Rectangle are 100 units across, so this scales them to 2 units.
     readonly property real unitScale: 0.02
 
@@ -78,6 +81,37 @@ Item {
 
     // True when the camera already looks straight down this face's normal, i.e.
     // the cube is showing it as a flat square.
+    // Rotation carrying a #Rectangle mesh's own +Z normal onto an arbitrary
+    // direction, so a label decal lies flat on the cube face and its text
+    // foreshortens with the face instead of standing upright as an overlay.
+    function rotationOntoDirection(direction) {
+        const z = direction.z
+        if (z > 0.999999) return Qt.quaternion(1, 0, 0, 0)
+        if (z < -0.999999) return Quaternion.fromAxisAndAngle(Qt.vector3d(0, 1, 0), 180)
+        const axis = Qt.vector3d(-direction.y, direction.x, 0)
+        const angle = Math.acos(Math.max(-1, Math.min(1, z))) * 180 / Math.PI
+        return Quaternion.fromAxisAndAngle(axis, angle)
+    }
+
+    function labelMaskFor(name) { return "viewcube/" + name.toLowerCase() + ".svg" }
+
+    function axisColor(label) {
+        if (label === "X") return root.axisXColor
+        if (label === "Y") return root.axisYColor
+        return root.axisZColor
+    }
+
+    // #Cylinder and #Cone both run along +Y and are 100 units tall, so each axis
+    // needs the rotation that carries +Y onto it.
+    readonly property var axes: [
+        { label: "X", direction: Qt.vector3d(1, 0, 0), euler: Qt.vector3d(0, 0, -90) },
+        { label: "Y", direction: Qt.vector3d(0, 1, 0), euler: Qt.vector3d(0, 0, 0) },
+        { label: "Z", direction: Qt.vector3d(0, 0, 1), euler: Qt.vector3d(90, 0, 0) }
+    ]
+    readonly property real shaftLength: 1.5
+    readonly property real arrowHeight: 0.34
+    readonly property real axisReach: 2.15
+
     function isSquareOn(name) {
         const rotated = root.cameraOrientation.inverted().times(root.directionFor(name))
         return rotated.z > 0.999
@@ -173,60 +207,95 @@ Item {
                     }
                 }
             }
+
+            // Face labels as decals lying on the cube surface, so the text is seen
+            // in perspective rather than standing up as a 2D overlay.
+            //
+            // The mask is a pre-rendered SVG containing only white glyphs on a
+            // transparent ground, used as the material's opacity map: the glyph
+            // alpha does the masking and the colour comes from the theme, so the
+            // labels follow light and dark mode instead of being baked in.
+            //
+            // Deliberately NOT Texture.sourceItem, which is the obvious way to draw
+            // text onto a face: it needs a live render context and segfaults under
+            // the offscreen platform the QML smoke test runs on.
+            Repeater3D {
+                model: root.viewNames
+
+                Model {
+                    required property var modelData
+                    readonly property vector3d direction: root.directionFor(modelData)
+
+                    source: "#Rectangle"
+                    position: Qt.vector3d(direction.x * root.halfSize * 1.004,
+                                          direction.y * root.halfSize * 1.004,
+                                          direction.z * root.halfSize * 1.004)
+                    rotation: root.rotationOntoDirection(direction)
+                    scale: Qt.vector3d(root.unitScale, root.unitScale, root.unitScale)
+                    // Picking stays on the cube body, so a decal never intercepts it.
+                    pickable: false
+
+                    materials: PrincipledMaterial {
+                        baseColor: root.labelColor
+                        lighting: PrincipledMaterial.NoLighting
+                        alphaMode: PrincipledMaterial.Blend
+                        opacityMap: Texture { source: root.labelMaskFor(modelData) }
+                    }
+                }
+            }
+
+            // Axis triad with real arrowheads, so the direction each model axis runs
+            // is shown rather than implied by a floating letter.
+            Repeater3D {
+                model: root.axes
+
+                Node {
+                    required property var modelData
+                    eulerRotation: modelData.euler
+
+                    Model {
+                        source: "#Cylinder"
+                        // The mesh is 100 units tall and centred, so half the shaft
+                        // length places its base at the cube centre.
+                        y: root.shaftLength * 0.5
+                        scale: Qt.vector3d(0.0006, root.shaftLength / 100.0, 0.0006)
+                        materials: PrincipledMaterial {
+                            baseColor: root.axisColor(modelData.label)
+                            lighting: PrincipledMaterial.NoLighting
+                        }
+                    }
+                    Model {
+                        source: "#Cone"
+                        y: root.shaftLength + root.arrowHeight * 0.5
+                        scale: Qt.vector3d(0.0020, root.arrowHeight / 100.0, 0.0020)
+                        materials: PrincipledMaterial {
+                            baseColor: root.axisColor(modelData.label)
+                            lighting: PrincipledMaterial.NoLighting
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // Face labels, projected from the cube's own face centres so they stay upright
-    // and legible however the cube is turned.
+    // Axis letters, placed analytically just past each arrowhead and coloured to
+    // match it. These stay upright: the cube's own face labels are the ones that
+    // need to sit in perspective.
     Repeater {
-        model: root.viewNames
-
-        Text {
-            required property var modelData
-            readonly property vector3d direction: root.directionFor(modelData)
-            // Rotate the face direction the same way the cube node is rotated, then
-            // project it by hand. The camera is orthographic and looks down -Z, so
-            // screen x is scene x and screen y is inverted scene y -- exact, and
-            // free of mapFrom3DScene's missing camera dependency.
-            readonly property vector3d rotated: root.cameraOrientation.inverted().times(direction)
-            readonly property real facing: rotated.z
-
-            visible: facing > 0.25
-            x: root.width / 2 + rotated.x * root.halfSize * root.pixelsPerUnit - width / 2
-            y: root.height / 2 - rotated.y * root.halfSize * root.pixelsPerUnit - height / 2
-            text: modelData
-            color: root.labelColor
-            font.pixelSize: root.theme ? root.theme.fontCaption - 1 : 10
-            font.weight: root.hoveredView === modelData ? Font.Bold : Font.DemiBold
-        }
-    }
-
-    // Axis triad. The cube alone says which face is which; the triad says which way
-    // the model's own axes run, which is what makes an unfamiliar orientation
-    // readable at a glance.
-    Repeater {
-        model: [
-            { label: "X", direction: Qt.vector3d(1, 0, 0) },
-            { label: "Y", direction: Qt.vector3d(0, 1, 0) },
-            { label: "Z", direction: Qt.vector3d(0, 0, 1) }
-        ]
+        model: root.axes
 
         Text {
             required property var modelData
             readonly property vector3d rotated: root.cameraOrientation.inverted().times(modelData.direction)
-            readonly property real facing: rotated.z
-            readonly property real reach: root.halfSize * 1.6
-
-            visible: facing > -0.4
-            x: root.width / 2 + rotated.x * reach * root.pixelsPerUnit - width / 2
-            y: root.height / 2 - rotated.y * reach * root.pixelsPerUnit - height / 2
+            x: root.width / 2 + rotated.x * root.axisReach * root.pixelsPerUnit - width / 2
+            y: root.height / 2 - rotated.y * root.axisReach * root.pixelsPerUnit - height / 2
             text: modelData.label
-            color: modelData.label === "X" ? (root.theme ? root.theme.errorColor : "transparent")
-                 : modelData.label === "Y" ? (root.theme ? root.theme.success : "transparent")
-                 : (root.theme ? root.theme.accentColor : "transparent")
-            font.pixelSize: root.theme ? root.theme.fontCaption - 2 : 9
+            color: root.axisColor(modelData.label)
+            font.pixelSize: root.theme ? root.theme.fontCaption : 11
             font.weight: Font.Bold
-            opacity: facing > 0.1 ? 1.0 : 0.45
+            // Dimmed rather than hidden when an axis points away, so the triad reads
+            // as a whole.
+            opacity: rotated.z > 0.05 ? 1.0 : 0.4
         }
     }
 

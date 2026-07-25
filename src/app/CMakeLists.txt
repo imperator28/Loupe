@@ -162,6 +162,12 @@ qt_add_qml_module(loupe-app
         qml/inspect/CadEdgeMaterial.qml
         qml/inspect/ThemedColorDialog.qml
     RESOURCES
+        qml/inspect/viewcube/top.svg
+        qml/inspect/viewcube/bottom.svg
+        qml/inspect/viewcube/front.svg
+        qml/inspect/viewcube/back.svg
+        qml/inspect/viewcube/right.svg
+        qml/inspect/viewcube/left.svg
         qml/inspect/shaders/section-clip.frag
         qml/inspect/shaders/cad-edge.vert
         qml/inspect/shaders/cad-edge.frag
