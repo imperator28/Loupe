@@ -813,7 +813,37 @@ ProjectionResult project(const ProjectionRequest& request)
 {
     validate(request);
 
-    const auto shape = scaledToMillimetres(request.shape, request.sourceToMillimeters);
+    auto shape = scaledToMillimetres(request.shape, request.sourceToMillimeters);
+
+    // Silhouette mode: keep only the solids, since only a solid bounds material.
+    // A shell or loose face contributes edges that no region test can classify,
+    // which is how they end up as stray contours in the output.
+    bool droppedNonSolids = false;
+    if (request.mode == ContentMode::OuterContourOnly && request.silhouetteSolidsOnly) {
+        BRep_Builder solidBuilder;
+        TopoDS_Compound solids;
+        solidBuilder.MakeCompound(solids);
+        int solidCount = 0;
+        for (TopExp_Explorer it(shape, TopAbs_SOLID); it.More(); it.Next()) {
+            solidBuilder.Add(solids, it.Current());
+            ++solidCount;
+        }
+        if (solidCount > 0) {
+            // Compare face counts rather than body counts: a solid contains a shell,
+            // so counting shells finds nothing, and a loose face is not a shell at
+            // all. If the solids carry fewer faces than the original, geometry was
+            // left behind.
+            const auto faceCount = [](const TopoDS_Shape& value) {
+                int count = 0;
+                for (TopExp_Explorer it(value, TopAbs_FACE); it.More(); it.Next()) ++count;
+                return count;
+            };
+            droppedNonSolids = faceCount(solids) < faceCount(shape);
+            shape = solids;
+        }
+        // No solids at all means there is nothing whose interior could be found, so
+        // the whole shape is kept and the silhouette will report itself unavailable.
+    }
     const auto hiddenLine = runHiddenLineRemoval(shape, request);
     const double tolerance = request.stitchToleranceMm > 0.0
         ? request.stitchToleranceMm : std::max(1.0e-3, request.deflectionMm);
@@ -877,6 +907,11 @@ ProjectionResult project(const ProjectionRequest& request)
         }
     }
 
+    if (droppedNonSolids) {
+        // Say so: silently ignoring part of the model would be a surprising way to
+        // get a clean-looking drawing.
+        result.drawing.warnings.push_back({std::string(warningCode::nonSolidBodiesIgnored), 1});
+    }
     addWarning(result.drawing, warningCode::openContour, statistics.openContours);
     addWarning(result.drawing, warningCode::coarseCurveFallback, statistics.coarseFallbackEdges);
     addWarning(result.drawing, warningCode::duplicateEdgeRemoved, statistics.duplicatesRemoved);

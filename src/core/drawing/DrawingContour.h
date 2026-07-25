@@ -118,6 +118,9 @@ inline constexpr std::string_view duplicateEdgeRemoved = "duplicate_edge_removed
 // silhouette could not be isolated. Reported rather than silently falling back to
 // the full edge set, which looks similar but is a different cut path.
 inline constexpr std::string_view silhouetteUnavailable = "silhouette_unavailable";
+// Silhouette mode ignored one or more non-solid bodies, which have no interior for
+// the region test and would otherwise appear as stray contours.
+inline constexpr std::string_view nonSolidBodiesIgnored = "non_solid_bodies_ignored";
 } // namespace warningCode
 
 struct DrawingWarning final {

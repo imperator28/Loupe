@@ -5,9 +5,13 @@
 
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Pln.hxx>
+#include <TopoDS_Compound.hxx>
 
 #include <array>
 #include <cmath>
@@ -234,6 +238,44 @@ TEST_CASE("silhouette mode preserves a through hole", "[drawing-projection][silh
         }
     }
     REQUIRE(keptHole);
+}
+
+TEST_CASE("silhouette mode ignores non-solid bodies", "[drawing-projection][silhouette]")
+{
+    // Only a solid bounds material, so only a solid can be classified inside or
+    // outside. A loose face in the same compound contributes edges no region test
+    // can place, and those survived as stray contours: one corpus part emitted
+    // fourteen contours where it has one outline. Restricting to solids fixed it.
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(40.0, 30.0, 10.0).Shape();
+    const TopoDS_Shape strayFace =
+        BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(5.0, 5.0, 20.0), gp_Dir(0.0, 0.0, 1.0)),
+                                0.0, 12.0, 0.0, 8.0).Face();
+    BRep_Builder builder;
+    TopoDS_Compound mixed;
+    builder.MakeCompound(mixed);
+    builder.Add(mixed, box);
+    builder.Add(mixed, strayFace);
+
+    auto request = requestFor(mixed, gp_Dir(0.0, 0.0, 1.0));
+    request.mode = ContentMode::OuterContourOnly;
+    const auto filtered = loupe::drawing::project(request);
+
+    // Just the box outline, and the extents are the box's alone.
+    REQUIRE(filtered.statistics.closedContours == 1);
+    REQUIRE(filtered.statistics.openContours == 0);
+    const auto bounds = filtered.drawing.bounds();
+    REQUIRE(bounds.width() == Catch::Approx(40.0).margin(1.0e-6));
+    REQUIRE(bounds.height() == Catch::Approx(30.0).margin(1.0e-6));
+
+    // Dropping part of the model silently would be a surprising way to get a clean
+    // drawing, so it has to be reported.
+    REQUIRE(filtered.drawing.warningCount(loupe::drawing::warningCode::nonSolidBodiesIgnored) > 0);
+
+    // Opting out keeps every body, which is what the option is for.
+    request.silhouetteSolidsOnly = false;
+    const auto unfiltered = loupe::drawing::project(request);
+    REQUIRE(unfiltered.drawing.warningCount(loupe::drawing::warningCode::nonSolidBodiesIgnored) == 0);
+    REQUIRE(unfiltered.drawing.bounds().width() >= bounds.width());
 }
 
 TEST_CASE("a view direction parallel to the up direction is refused", "[drawing-projection]")

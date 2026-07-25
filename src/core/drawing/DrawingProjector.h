@@ -53,6 +53,14 @@ struct ProjectionRequest final {
     // Gap below which two edge ends are treated as the same point when
     // stitching. Derived from the shape's own tolerance when left at zero.
     double stitchToleranceMm{0.0};
+    // Silhouette mode only: restrict projection to the shape's solids.
+    //
+    // A silhouette is a statement about where material is, and only a solid has an
+    // inside. A loose shell, face or wire in a compound has no interior for the
+    // region test to find, so its edges cannot be classified as material boundaries
+    // and survive as stray contours. On by default for that reason; turn it off to
+    // include every body regardless of type.
+    bool silhouetteSolidsOnly{true};
 };
 
 // What the projection actually produced. Recorded because the requirements
