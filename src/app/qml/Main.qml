@@ -4,9 +4,24 @@ import QtQuick.Layouts
 import Loupe.App
 import "inspect" as Inspect
 import "export" as Export
+import "drawing" as Drawing
 
 ApplicationWindow {
     id: root
+
+    // A single ordered list of workspaces. The switcher, the View menu and the
+    // StackLayout all read it, so a fourth workspace cannot be added to one and forgotten
+    // in the others -- which is exactly what the previous two-way ternaries invited.
+    readonly property var workspaces: [
+        { state: AppState.Inspect, label: qsTr("Inspect") },
+        { state: AppState.Export, label: qsTr("Export") },
+        { state: AppState.Drawing, label: qsTr("Drawing") }
+    ]
+    readonly property int workspaceIndex: {
+        for (let index = 0; index < root.workspaces.length; ++index)
+            if (root.workspaces[index].state === root.controller.workspace) return index
+        return 0
+    }
     width: 1280
     height: 800
     visible: true
@@ -114,6 +129,13 @@ ApplicationWindow {
                 checked: root.controller.workspace === AppState.Export
                 onTriggered: root.controller.setWorkspace(AppState.Export)
             }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: qsTr("Drawing")
+                checkable: true
+                checked: root.controller.workspace === AppState.Drawing
+                onTriggered: root.controller.setWorkspace(AppState.Drawing)
+            }
             Inspect.ThemedMenuSeparator { theme: appTheme }
             Inspect.ThemedMenuItem {
                 theme: appTheme
@@ -201,11 +223,11 @@ ApplicationWindow {
             Inspect.ThemedSegmentedControl {
                 id: workspaceSwitcher
                 theme: appTheme
-                model: [qsTr("Inspect"), qsTr("Export")]
-                currentIndex: root.controller.workspace === AppState.Inspect ? 0 : 1
-                implicitWidth: 176
+                model: root.workspaces.map(function(entry) { return entry.label })
+                currentIndex: root.workspaceIndex
+                implicitWidth: 252
                 Accessible.name: qsTr("Workspace")
-                onActivated: index => root.controller.setWorkspace(index === 0 ? AppState.Inspect : AppState.Export)
+                onActivated: index => root.controller.setWorkspace(root.workspaces[index].state)
             }
             Item { Layout.fillWidth: true }
             Inspect.ThemedButton {
@@ -232,7 +254,8 @@ ApplicationWindow {
 
     StackLayout {
         anchors.fill: parent
-        currentIndex: root.controller.workspace === AppState.Inspect ? 0 : 1
+        // Index order must match root.workspaces.
+        currentIndex: root.workspaceIndex
 
         Inspect.InspectWorkspace {
             controller: root.controller
@@ -240,6 +263,11 @@ ApplicationWindow {
             onOpenFileRequested: openStepDialog.open()
         }
         Export.ExportWorkspace {
+            controller: root.controller
+            theme: appTheme
+        }
+        Drawing.DrawingWorkspace {
+            objectName: "drawingWorkspace"
             controller: root.controller
             theme: appTheme
         }

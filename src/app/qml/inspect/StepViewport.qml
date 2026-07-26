@@ -21,6 +21,9 @@ Item {
     // display-mode control above is rather than being tied to presentationOnly.
     property bool viewCubeVisible: !presentationOnly
     property bool selectionEnabled: true
+    // Drawing workspace: a left click reports the whole face's frame instead of selecting.
+    // Off everywhere else, so no existing viewport changes behaviour.
+    property bool faceFrameSelectionEnabled: false
     property bool componentHoverEnabled: true
     property bool contextActionsEnabled: !presentationOnly
     property bool requireDisplayFilter: false
@@ -128,6 +131,9 @@ Item {
     readonly property bool sectionFinalizing: sectionNeedsExactDisplay
             && sectionFinalizeTotal > 0 && sectionFinalizeRemaining > 0
     signal toolRequested(string tool)
+    // Carries MeshGeometry::faceFrameFor's result: normal, centroid, deviation, area.
+    // Empty-map results are not emitted, so a listener never sees a default frame.
+    signal faceFrameSelected(var frame)
     signal openFileRequested()
 
     ViewportVisualTheme {
@@ -653,6 +659,21 @@ Item {
         showHoverTopology(null)
     }
 
+    function reportFaceFrameAt(x, y) {
+        const hit = view.pick(x, y)
+        if (!hit.objectHit || !hit.scenePosition) return
+        const geometry = hit.objectHit.geometry
+        if (!geometry) return
+        const info = geometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y,
+                                              hit.scenePosition.z)
+        if (!info || !info.topologyId || info.entityKind !== "face") return
+        const frame = geometry.faceFrameFor(info.topologyId)
+        // An empty map means the face could not be resolved; emitting it would hand the
+        // listener a default frame that reads as a valid view.
+        if (!frame || frame.topologyId === undefined) return
+        root.faceFrameSelected(frame)
+    }
+
     function prepareOrbitPivotAt(x, y) {
         const hit = view.pick(x, y)
         if (hit.objectHit && hit.scenePosition)
@@ -1138,6 +1159,9 @@ Item {
             pressY = mouse.y
         }
         onReleased: function(mouse) {
+            if (!dragging && pressButton === Qt.LeftButton && root.faceFrameSelectionEnabled) {
+                root.reportFaceFrameAt(mouse.x, mouse.y)
+            }
             if (!dragging && pressButton === Qt.LeftButton && root.selectionEnabled) {
                 const additive = (mouse.modifiers & Qt.ShiftModifier)
                         || (mouse.modifiers & Qt.ControlModifier)

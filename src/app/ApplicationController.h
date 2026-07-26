@@ -30,7 +30,7 @@ namespace cache { class CacheStore; }
 
 Q_NAMESPACE
 
-enum class Workspace { Inspect, Export };
+enum class Workspace { Inspect, Export, Drawing };
 Q_ENUM_NS(Workspace)
 
 enum class InspectorMode { Document, Component };
@@ -155,6 +155,10 @@ public:
     // Resolved world-space direction for a named standard view, honouring the
     // document's up axis. Returns a zero vector for an unknown name.
     Q_INVOKABLE QVector3D directionForStandardView(const QString& name) const;
+    // The up direction that goes with that view, resolved against the same up axis. A
+    // drawing needs it to know which way is up on the page, and it must never be parallel
+    // to the view direction -- that leaves the in-plane axis undefined.
+    Q_INVOKABLE QVector3D upForStandardView(const QString& name) const;
     Q_INVOKABLE QString labelForStandardView(const QString& name) const;
     Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
                                          bool additive = false);

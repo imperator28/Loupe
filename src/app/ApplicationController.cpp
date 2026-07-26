@@ -1216,6 +1216,23 @@ QVector3D ApplicationController::directionForStandardView(const QString& name) c
     return {};
 }
 
+QVector3D ApplicationController::upForStandardView(const QString& name) const
+{
+    // Same table, same reason as directionForStandardView: a named view that resolved its
+    // direction one way and its up another would produce a rotated drawing that still
+    // looked plausible. Every pair here is perpendicular by construction.
+    const bool zUp = upAxis_ != QStringLiteral("Y");
+    if (zUp) {
+        // Plan views look along Z, so +Y reads up the page; every elevation looks
+        // horizontally, so +Z does.
+        if (name == QStringLiteral("Top") || name == QStringLiteral("Bottom")) return {0, 1, 0};
+        return {0, 0, 1};
+    }
+    if (name == QStringLiteral("Top")) return {0, 0, -1};
+    if (name == QStringLiteral("Bottom")) return {0, 0, 1};
+    return {0, 1, 0};
+}
+
 QString ApplicationController::labelForStandardView(const QString& name) const
 {
     // Names are already resolved against the document convention, so the label is

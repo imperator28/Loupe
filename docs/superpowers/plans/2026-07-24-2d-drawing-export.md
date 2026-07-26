@@ -664,7 +664,11 @@ ctest --preset windows-release --output-on-failure -R "protocol|worker-process"
 
 ---
 
-## Task 14: Build the workspace QML
+## Task 14: Build the workspace QML — DONE 2026-07-25
+
+Layout order is workflow order: choose a part, choose a view, read the 2D preview, then
+queue it. The add action sits below the preview deliberately -- nothing is queued
+sight-unseen.
 
 **Files:**
 
@@ -677,16 +681,58 @@ ctest --preset windows-release --output-on-failure -R "protocol|worker-process"
 - Modify: `src/app/CMakeLists.txt`
 - Modify: `tests/qml/qml_smoke.cpp`
 
-- [ ] Root workspace aliases the controller once as `readonly property QtObject draft: controller ? controller.drawingWorkspace : null` and passes `draft` down, matching `ExportWorkspace`.
-- [ ] Lazily instantiate the 3D preview through an async `Loader` and replay geometry once both previews are ready, reusing the `ExportWorkspace` activation pattern.
-- [ ] `DrawingComponentPicker` reuses the Export picker's structure — the outer `Item` plus inner visual `Rectangle` for the collapse-gap fix, `forceLayout()` on toggle, `spacing: 0`, `objectName` per row — and adds a per-part queued count.
-- [ ] `DrawingSetupPanel`: view control agreeing with the cube, content-mode segmented control, scale control, and the add action. **Ordered so the preview is read before the button is reached**, and disabled while the candidate is invalid or resolving.
-- [ ] `DrawingPreview2D` renders the returned contour geometry with a `Shape`, shows measured extents in the active unit, shows per-drawing warnings, shows a resolving state, and labels an approximate preview as approximate. It must never present stale geometry as current.
-- [ ] `DrawingQueue`: reorderable rows with a human-readable view label, editable filename using the non-clobbering `Binding`-on-focus pattern from `ExportBucket`, per-row remove, live count, and selecting a row loads it into the preview.
-- [ ] `DrawingOutputPanel`: format, destination via `FolderDialog`, plan error, export button with progress and cancel, and the result summary.
-- [ ] Register every new file in `qt_add_qml_module`'s `QML_FILES`.
-- [ ] No colour or duration literals anywhere; no new style-gate exemptions.
-- [ ] Smoke test: drive the picker, set a view, add two drawings of the same part with different views, and assert two independent queue rows exist.
+- [x] Root workspace aliases the controller once as `readonly property QtObject draft: controller ? controller.drawingWorkspace : null` and passes `draft` down, matching `ExportWorkspace`.
+- [x] Lazily instantiate the 3D preview through an async `Loader` and replay geometry once both previews are ready, reusing the `ExportWorkspace` activation pattern.
+
+      One 3D viewport here, not two, so the replay gate waits on that one. The 2D preview
+      is not a viewport and needs no geometry replay.
+- [x] `DrawingComponentPicker` reuses the Export picker's structure — the outer `Item` plus inner visual `Rectangle` for the collapse-gap fix, `forceLayout()` on toggle, `spacing: 0`, `objectName` per row — and adds a per-part queued count.
+
+      No checkboxes: a checkbox cannot express one part queued three times, so a part is
+      chosen here and queued from the setup panel, and the row shows its drawing count
+      instead of a checked state.
+- [x] `DrawingSetupPanel`: view control agreeing with the cube, content-mode segmented control, scale control, and the add action. **Ordered so the preview is read before the button is reached**, and disabled while the candidate is invalid or resolving.
+
+      Agreement with the cube is structural, not a convention: the panel resolves a named
+      view through the controller's own `directionForStandardView`, the same call the cube
+      uses. **`upForStandardView` had to be added** -- the cube only ever needed a
+      direction, but a drawing also needs to know which way is up on the page. It lives in
+      the same table for the same reason: a named view that resolved its direction one way
+      and its up another would produce a rotated drawing that still looked plausible.
+- [x] `DrawingPreview2D` renders the returned contour geometry with a `Shape`, shows measured extents in the active unit, shows per-drawing warnings, shows a resolving state, and labels an approximate preview as approximate. It must never present stale geometry as current.
+
+      Staleness is prevented twice: a reply whose revision is not the newest is discarded
+      on arrival, and a candidate change blanks the geometry immediately, before any reply
+      comes back. Leaving the previous drawing on screen while a new one resolves would
+      present it as authoritative.
+
+      Warning codes are translated into sentences rather than shown raw --
+      `non_solid_bodies_ignored` becomes a statement about bodies with no interior.
+- [x] `DrawingQueue`: reorderable rows with a human-readable view label, editable filename using the non-clobbering `Binding`-on-focus pattern from `ExportBucket`, per-row remove, live count, and selecting a row loads it into the preview.
+
+      Rows read "part · view · scale", because three drawings of one part would otherwise
+      read as three identical rows. Filename and status come from the plan rows, looked up
+      by drawing ID rather than by index: a plan error can leave the queue and the plan
+      rows momentarily different lengths, and an index would then show the wrong row's
+      error.
+- [x] `DrawingOutputPanel`: format, destination via `FolderDialog`, plan error, export button with progress and cancel, and the result summary. Plus the fiducial toggle, whose tooltip says why it exists -- DXF R12 cannot declare its own units, so a measured reference line is the only in-file proof the scale survived.
+- [x] Register every new file in `qt_add_qml_module`'s `QML_FILES`.
+- [x] No colour or duration literals anywhere; no new style-gate exemptions. `qml-style-gates` and `qml-theme-contrast` both clean.
+- [x] Smoke test: drive the picker, set a view, add two drawings of the same part with different views, and assert two independent queue rows exist.
+
+      Driven through the real QML with real clicks: it also asserts the add action is
+      disabled before a view is chosen, and that the two rows get non-colliding paths.
+
+      **One seam was needed in `StepViewport`:** `faceFrameSelectionEnabled` plus a
+      `faceFrameSelected(frame)` signal, so a left click reports the whole face's frame
+      rather than selecting a component. Off by default, so no existing viewport changes
+      behaviour. It refuses to emit an empty frame, which would hand the listener a
+      default that reads as a valid view.
+
+      Note for a later reader: `viewportCaptureUsesRequestedRenderResolution` in the same
+      binary fails when the executable is run directly and passes under ctest. It needs the
+      environment the ctest entry declares. It also flaked once in ten runs; it is
+      GPU-render dependent, not affected by this task.
 
 **Focused verification:**
 
@@ -697,18 +743,24 @@ ctest --preset windows-release --output-on-failure -R "qml-smoke|qml-style-gates
 
 ---
 
-## Task 15: Add the third workspace to the shell
+## Task 15: Add the third workspace to the shell — DONE 2026-07-25
 
 **Files:**
 
 - Modify: `src/app/ApplicationController.h`
 - Modify: `src/app/qml/Main.qml`
 
-- [ ] Add `Drawing` to the `Workspace` enum. It is exposed to QML as `AppState.Drawing` through the existing `Q_ENUM_NS` registration, so no new registration is required.
-- [ ] Add a third entry to the workspace segmented control and a third View-menu item.
-- [ ] **Replace the two-way ternaries** driving `StackLayout.currentIndex` and the segmented control's `currentIndex` with an explicit enum-to-index mapping. They are currently written as `x === Inspect ? 0 : 1`, which silently sends any third workspace to the Export pane.
-- [ ] Add `DrawingWorkspace` as the third `StackLayout` child.
-- [ ] Confirm drag-and-drop still forces Inspect on open.
+- [x] Add `Drawing` to the `Workspace` enum. It is exposed to QML as `AppState.Drawing` through the existing `Q_ENUM_NS` registration, so no new registration is required.
+
+      The switcher, the View menu and the `StackLayout` now all read one ordered
+      `workspaces` list instead of two-way ternaries, so a fourth workspace cannot be added
+      to one and forgotten in the others -- which is exactly what the ternaries invited.
+- [x] Add a third entry to the workspace segmented control and a third View-menu item.
+- [x] **Replace the two-way ternaries** driving `StackLayout.currentIndex` and the segmented control's `currentIndex` with an explicit enum-to-index mapping. They are currently written as `x === Inspect ? 0 : 1`, which silently sends any third workspace to the Export pane.
+
+      Done via the shared `workspaces` list and a single `workspaceIndex` derived from it.
+- [x] Add `DrawingWorkspace` as the third `StackLayout` child.
+- [x] Confirm drag-and-drop still forces Inspect on open. Unaffected: the open path calls `setWorkspace(AppState.Inspect)` by name, not by index, and `mainLoads` still exercises the drop.
 
 **Focused verification:**
 

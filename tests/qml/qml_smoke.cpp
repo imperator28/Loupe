@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
 #include "app/models/ThemePreference.h"
 #include "app/platform/WindowChrome.h"
@@ -71,6 +72,7 @@ private slots:
     void measurementFaceHighlightLoadsTopology();
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
+    void drawingWorkspaceQueuesOnePartAtSeveralViews();
 };
 
 void QmlSmokeTest::initTestCase()
@@ -448,6 +450,105 @@ void QmlSmokeTest::inspectionTaskPanelsLoad()
         std::unique_ptr<QObject> object(component.create());
         QVERIFY2(object != nullptr, qPrintable(component.errorString()));
     }
+}
+
+void QmlSmokeTest::drawingWorkspaceQueuesOnePartAtSeveralViews()
+{
+    // The case the whole queue design exists for, driven through the real QML: pick a part
+    // in the picker, choose two different views, and end up with two independent rows.
+    loupe::app::drawing::DrawingWorkspaceController draft;
+    draft.replaceSnapshot(QStringLiteral(R"({"effectiveUnit":"mm","sourceToMillimeters":1,"nodes":[
+        {"id":"root","name":"Assembly","kind":0,"parentId":""},
+        {"id":"plate","name":"Base plate","kind":2,"parentId":"root"}
+    ]})"));
+    draft.setDocumentReady(true);
+    draft.setDestination(QStringLiteral("/out"));
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY2(theme != nullptr, qPrintable(themeComponent.errorString()));
+
+    // The picker chooses the part.
+    QQmlComponent pickerComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/drawing/DrawingComponentPicker.qml")));
+    QVERIFY2(pickerComponent.isReady(), qPrintable(pickerComponent.errorString()));
+    std::unique_ptr<QObject> pickerObject(pickerComponent.createWithInitialProperties({
+        {QStringLiteral("draft"), QVariant::fromValue(static_cast<QObject*>(&draft))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("width"), 300},
+        {QStringLiteral("height"), 400},
+    }));
+    QVERIFY2(pickerObject != nullptr, qPrintable(pickerComponent.errorString()));
+    auto* picker = qobject_cast<QQuickItem*>(pickerObject.get());
+    QVERIFY(picker != nullptr);
+
+    QQuickWindow window;
+    window.resize(360, 760);
+    picker->setParentItem(window.contentItem());
+
+    // The setup panel chooses the view and adds to the queue. The controller resolves
+    // standard views, so it stands in as the view resolver.
+    loupe::app::ApplicationController controller;
+    QQmlComponent setupComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/drawing/DrawingSetupPanel.qml")));
+    QVERIFY2(setupComponent.isReady(), qPrintable(setupComponent.errorString()));
+    std::unique_ptr<QObject> setupObject(setupComponent.createWithInitialProperties({
+        {QStringLiteral("draft"), QVariant::fromValue(static_cast<QObject*>(&draft))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("viewResolver"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("width"), 340},
+    }));
+    QVERIFY2(setupObject != nullptr, qPrintable(setupComponent.errorString()));
+    auto* setup = qobject_cast<QQuickItem*>(setupObject.get());
+    QVERIFY(setup != nullptr);
+    setup->setParentItem(window.contentItem());
+    setup->setY(410);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    auto* partRow = findItemByObjectName(window.contentItem(), QStringLiteral("drawingComponentRow-plate"));
+    QVERIFY(partRow != nullptr);
+    const auto partCenter = partRow->mapToScene(QPointF(partRow->width() / 2.0, 16.0));
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, partCenter.toPoint());
+    QTRY_COMPARE(draft.candidateNodeId(), QStringLiteral("plate"));
+
+    auto* addButton = findItemByObjectName(window.contentItem(), QStringLiteral("drawingAddToQueue"));
+    QVERIFY(addButton != nullptr);
+    // Nothing can be queued before a view is chosen.
+    QVERIFY(!addButton->property("enabled").toBool());
+
+    auto* topButton = findItemByObjectName(window.contentItem(), QStringLiteral("drawingStandardView-Top"));
+    auto* frontButton = findItemByObjectName(window.contentItem(), QStringLiteral("drawingStandardView-Front"));
+    QVERIFY(topButton != nullptr);
+    QVERIFY(frontButton != nullptr);
+
+    const auto clickCentre = [&window](QQuickItem* item) {
+        const auto centre = item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0));
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
+    };
+
+    clickCentre(topButton);
+    QTRY_COMPARE(draft.candidateViewLabel(), QStringLiteral("Top"));
+    QTRY_VERIFY(addButton->property("enabled").toBool());
+    clickCentre(addButton);
+    QTRY_COMPARE(draft.queueCount(), 1);
+
+    clickCentre(frontButton);
+    QTRY_COMPARE(draft.candidateViewLabel(), QStringLiteral("Front"));
+    clickCentre(addButton);
+    QTRY_COMPARE(draft.queueCount(), 2);
+
+    // Two rows for one part, with different views and non-colliding filenames.
+    QCOMPARE(draft.drawingCountForNode(QStringLiteral("plate")), 2);
+    QCOMPARE(draft.planRows().size(), 2);
+    const auto firstPath = draft.planRows().at(0).toMap().value(QStringLiteral("path")).toString();
+    const auto secondPath = draft.planRows().at(1).toMap().value(QStringLiteral("path")).toString();
+    QVERIFY(firstPath != secondPath);
+    QVERIFY(draft.planError().isEmpty());
 }
 
 int main(int argc, char* argv[])
