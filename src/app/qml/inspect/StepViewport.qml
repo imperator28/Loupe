@@ -1013,7 +1013,11 @@ Item {
         objectName: "measurementXrayView"
         anchors.fill: parent
         renderMode: View3D.Offscreen
-        visible: !root.presentationOnly && ((root.hoverTopology && root.hoverTopology.entityKind === "face")
+        // presentationOnly suppresses measurement chrome in preview viewports, but picking a
+        // face to project normal to is a legitimate reason to show the face highlight in one:
+        // without it there is no way to tell which surface a click is about to take.
+        visible: (!root.presentationOnly || root.faceFrameSelectionEnabled)
+                 && ((root.hoverTopology && root.hoverTopology.entityKind === "face")
                  || root.hasAcceptedFaceHighlight
                  )
         environment: SceneEnvironment {
