@@ -117,38 +117,52 @@ Item {
             }
         }
 
-        ColumnLayout {
-            Layout.preferredWidth: 360
+        // Scrollable, because this column holds four panels and at 1080p or in a
+        // half-width window the queue and the export button would otherwise be pushed off
+        // the bottom with no way to reach them.
+        ScrollView {
+            Layout.preferredWidth: 380
             Layout.fillHeight: true
-            spacing: root.theme.spacing3
+            clip: true
+            contentWidth: availableWidth
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-            DrawingPreview2D {
-                id: preview2d
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(240, root.height * 0.38)
-                draft: root.draft
-                theme: root.theme
-            }
+            ColumnLayout {
+                width: parent.width
+                spacing: root.theme.spacing3
 
-            DrawingSetupPanel {
-                Layout.fillWidth: true
-                draft: root.draft
-                theme: root.theme
-                viewResolver: root.controller
-            }
+                DrawingPreview2D {
+                    id: preview2d
+                    Layout.fillWidth: true
+                    // Sizes to its own content so the extents and warnings below the canvas
+                    // cannot spill out over the panel beneath it.
+                    Layout.preferredHeight: implicitHeight
+                    draft: root.draft
+                    theme: root.theme
+                }
 
-            DrawingQueue {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: 180
-                draft: root.draft
-                theme: root.theme
-            }
+                DrawingSetupPanel {
+                    Layout.fillWidth: true
+                    draft: root.draft
+                    theme: root.theme
+                    viewResolver: root.controller
+                }
 
-            DrawingOutputPanel {
-                Layout.fillWidth: true
-                draft: root.draft
-                theme: root.theme
+                DrawingQueue {
+                    Layout.fillWidth: true
+                    // A real height rather than fillHeight: inside a scroll view fillHeight
+                    // collapses to the content height, which for an empty queue is nothing.
+                    Layout.preferredHeight: 260
+                    draft: root.draft
+                    theme: root.theme
+                }
+
+                DrawingOutputPanel {
+                    Layout.fillWidth: true
+                    draft: root.draft
+                    theme: root.theme
+                }
             }
         }
     }

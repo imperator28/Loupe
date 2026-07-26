@@ -659,15 +659,31 @@ Item {
         showHoverTopology(null)
     }
 
-    function reportFaceFrameAt(x, y) {
-        const hit = view.pick(x, y)
-        if (!hit.objectHit || !hit.scenePosition) return
+    // A face pick independent of the measurement mode, so the drawing workspace can pick and
+    // highlight faces without pretending to be a measurement tool.
+    function facePickFromHit(hit) {
+        if (!hit.objectHit || !hit.scenePosition) return null
         const geometry = hit.objectHit.geometry
-        if (!geometry) return
+        if (!geometry) return null
         const info = geometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y,
                                               hit.scenePosition.z)
-        if (!info || !info.topologyId || info.entityKind !== "face") return
-        const frame = geometry.faceFrameFor(info.topologyId)
+        if (!info || !info.topologyId || info.entityKind !== "face") return null
+        return {
+            nodeId: hit.objectHit.nodeId,
+            entityKind: info.entityKind,
+            topologyId: info.topologyId,
+            measureMm: info.measureMm,
+            radiusMm: info.radiusMm,
+            sourceGeometry: geometry,
+            point: hit.scenePosition,
+            normal: hit.sceneNormal
+        }
+    }
+
+    function reportFaceFrameAt(x, y) {
+        const pick = root.facePickFromHit(view.pick(x, y))
+        if (!pick) return
+        const frame = pick.sourceGeometry.faceFrameFor(pick.topologyId)
         // An empty map means the face could not be resolved; emitting it would hand the
         // listener a default frame that reads as a valid view.
         if (!frame || frame.topologyId === undefined) return
@@ -686,7 +702,9 @@ Item {
         const hit = view.pick(x, y)
         const nodeId = hit.objectHit && hit.objectHit.nodeId ? hit.objectHit.nodeId : ""
         if (hoveredNodeId !== nodeId) hoveredNodeId = nodeId
-        if (root.measurementActive && hit.objectHit && hit.objectHit.nodeId)
+        if (root.faceFrameSelectionEnabled)
+            showHoverTopology(root.facePickFromHit(hit))
+        else if (root.measurementActive && hit.objectHit && hit.objectHit.nodeId)
             showHoverTopology(topologyPickFromHit(hit))
         else if (root.hoverTopology)
             showHoverTopology(null)

@@ -26,6 +26,54 @@ Inspect.ElevatedPanel {
                                         && preview.empty === false
                                         && previewRevision === (draft ? draft.previewRevision : -1)
 
+    // Sizes itself to its content so the warnings below the canvas cannot overflow the
+    // panel. The enclosing column is scrollable, so growing is preferable to clipping.
+    implicitHeight: content.implicitHeight + (theme ? theme.spacing3 * 2 : 24)
+
+    // Display-only fit. The written file is always 1:1 whatever this happens to be.
+    readonly property real fitScale: {
+        if (!hasGeometry) return 1
+        const w = preview.widthMm
+        const h = preview.heightMm
+        if (!(w > 0) || !(h > 0)) return 1
+        return Math.max(0.0001, Math.min((canvasFrame.width - 24) / w, (canvasFrame.height - 24) / h))
+    }
+    readonly property real surfaceWidth: hasGeometry ? preview.widthMm * fitScale : 0
+    readonly property real surfaceHeight: hasGeometry ? preview.heightMm * fitScale : 0
+
+    // One polyline list per stroke style rather than one object per contour.
+    //
+    // This is not a micro-optimisation, it is the only thing that works: Repeater requires
+    // an Item delegate, and ShapePath is not an Item, so a Repeater over contours silently
+    // adds nothing to the Shape and the preview renders blank. PathMultiline exists for
+    // exactly this shape of data.
+    readonly property var closedPaths: root.buildPaths(true)
+    readonly property var openPaths: root.buildPaths(false)
+
+    function buildPaths(closed) {
+        if (!root.hasGeometry) return []
+        const result = []
+        const scale = root.fitScale
+        const height = root.surfaceHeight
+        const originX = root.preview.minX
+        const originY = root.preview.minY
+        for (const layer of root.preview.layers) {
+            for (const contour of layer.contours) {
+                if (contour.closed !== closed) continue
+                const points = contour.points
+                const polyline = []
+                for (let index = 0; index + 1 < points.length; index += 2) {
+                    // Y is flipped for display only: the IR is Y-up, the scene is Y-down.
+                    // The writers do their own conversion.
+                    polyline.push(Qt.point((points[index] - originX) * scale,
+                                           height - (points[index + 1] - originY) * scale))
+                }
+                if (polyline.length > 1) result.push(polyline)
+            }
+        }
+        return result
+    }
+
     function applyPreview(json, revision, isApproximate) {
         // A reply for anything but the newest candidate is dropped outright.
         if (!root.draft || revision !== root.draft.previewRevision) return
@@ -54,6 +102,7 @@ Inspect.ElevatedPanel {
     }
 
     ColumnLayout {
+        id: content
         anchors.fill: parent
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2
@@ -66,6 +115,7 @@ Inspect.ElevatedPanel {
                 color: root.foreground
                 font.bold: true
                 font.pixelSize: root.theme.fontTitle
+                elide: Text.ElideRight
             }
             Label {
                 objectName: "drawingPreviewExtents"
@@ -84,65 +134,38 @@ Inspect.ElevatedPanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 200
+            implicitHeight: 200
             color: root.theme ? root.theme.surfaceSubtle : "transparent"
             border.color: root.theme ? root.theme.border : "transparent"
             radius: root.theme.radius1
             clip: true
 
-            // Fit the drawing into the frame. Display-only: the written file is always
-            // 1:1 regardless of what this scale happens to be.
-            readonly property real fitScale: {
-                if (!root.hasGeometry) return 1
-                const w = root.preview.widthMm
-                const h = root.preview.heightMm
-                if (!(w > 0) || !(h > 0)) return 1
-                return Math.min((width - 24) / w, (height - 24) / h)
-            }
-
             Item {
-                id: drawingSurface
+                objectName: "drawingPreviewSurface"
                 visible: root.hasGeometry
-                width: root.hasGeometry ? root.preview.widthMm * canvasFrame.fitScale : 0
-                height: root.hasGeometry ? root.preview.heightMm * canvasFrame.fitScale : 0
+                width: root.surfaceWidth
+                height: root.surfaceHeight
                 anchors.centerIn: parent
 
-                Repeater {
-                    model: root.hasGeometry ? root.preview.layers : []
-                    delegate: Shape {
-                        required property var modelData
-                        anchors.fill: parent
-                        preferredRendererType: Shape.CurveRenderer
+                Shape {
+                    anchors.fill: parent
+                    asynchronous: false
 
-                        Repeater {
-                            model: modelData.contours
-                            delegate: ShapePath {
-                                required property var modelData
-                                strokeColor: root.theme
-                                             ? (modelData.closed ? root.theme.accent : root.theme.warning)
-                                             : "transparent"
-                                strokeWidth: 1
-                                fillColor: "transparent"
-                                // Y is flipped for display only: the IR is Y-up, the scene
-                                // is Y-down. The writers do their own conversion.
-                                startX: (modelData.points[0] - root.preview.minX) * canvasFrame.fitScale
-                                startY: drawingSurface.height
-                                        - (modelData.points[1] - root.preview.minY) * canvasFrame.fitScale
-
-                                PathPolyline {
-                                    path: {
-                                        const result = []
-                                        const points = modelData.points
-                                        for (let index = 0; index + 1 < points.length; index += 2) {
-                                            result.push(Qt.point(
-                                                (points[index] - root.preview.minX) * canvasFrame.fitScale,
-                                                drawingSurface.height
-                                                - (points[index + 1] - root.preview.minY) * canvasFrame.fitScale))
-                                        }
-                                        return result
-                                    }
-                                }
-                            }
-                        }
+                    ShapePath {
+                        objectName: "drawingPreviewClosedPath"
+                        strokeColor: root.theme ? root.theme.accent : "transparent"
+                        strokeWidth: 1
+                        fillColor: "transparent"
+                        PathMultiline { paths: root.closedPaths }
+                    }
+                    ShapePath {
+                        objectName: "drawingPreviewOpenPath"
+                        // An open contour will not cut, so it is drawn in the warning
+                        // colour rather than being indistinguishable from a closed one.
+                        strokeColor: root.theme ? root.theme.warning : "transparent"
+                        strokeWidth: 1
+                        fillColor: "transparent"
+                        PathMultiline { paths: root.openPaths }
                     }
                 }
             }
@@ -189,29 +212,34 @@ Inspect.ElevatedPanel {
             font.pixelSize: root.theme.fontCaption
         }
 
-        Repeater {
-            model: root.hasGeometry ? root.preview.warnings : []
-            delegate: Label {
-                required property var modelData
-                Layout.fillWidth: true
-                text: {
-                    if (modelData.code === "non_solid_bodies_ignored")
-                        return qsTr("Ignored %1 non-solid body(ies): they have no interior to bound.")
-                                   .arg(modelData.count)
-                    if (modelData.code === "silhouette_unavailable")
-                        return qsTr("The outline could not be isolated for this view.")
-                    if (modelData.code === "coarse_curve_fallback")
-                        return qsTr("%1 curve(s) fell back to a coarser approximation.").arg(modelData.count)
-                    if (modelData.code === "open_contour")
-                        return qsTr("%1 contour(s) could not be closed.").arg(modelData.count)
-                    if (modelData.code === "duplicate_edge_removed")
-                        return qsTr("Removed %1 duplicate edge(s).").arg(modelData.count)
-                    return modelData.code
+        // Warnings are joined into one wrapping label rather than a Repeater of labels, so
+        // the panel's implicit height accounts for all of them and none can spill out.
+        Label {
+            Layout.fillWidth: true
+            objectName: "drawingPreviewWarnings"
+            visible: root.hasGeometry && text.length > 0
+            text: {
+                if (!root.hasGeometry) return ""
+                const lines = []
+                for (const warning of root.preview.warnings) {
+                    if (warning.code === "non_solid_bodies_ignored")
+                        lines.push(qsTr("Ignored %1 non-solid body(ies): they have no interior to bound.")
+                                       .arg(warning.count))
+                    else if (warning.code === "silhouette_unavailable")
+                        lines.push(qsTr("The outline could not be isolated for this view."))
+                    else if (warning.code === "coarse_curve_fallback")
+                        lines.push(qsTr("%1 curve(s) fell back to a coarser approximation.").arg(warning.count))
+                    else if (warning.code === "open_contour")
+                        lines.push(qsTr("%1 contour(s) could not be closed.").arg(warning.count))
+                    else if (warning.code === "duplicate_edge_removed")
+                        lines.push(qsTr("Removed %1 duplicate edge(s).").arg(warning.count))
+                    else lines.push(warning.code)
                 }
-                color: root.theme.warning
-                wrapMode: Text.Wrap
-                font.pixelSize: root.theme.fontCaption
+                return lines.join("\n")
             }
+            color: root.theme.warning
+            wrapMode: Text.Wrap
+            font.pixelSize: root.theme.fontCaption
         }
     }
 }

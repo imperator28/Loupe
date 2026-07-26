@@ -75,6 +75,7 @@ private slots:
     void viewportCaptureUsesRequestedRenderResolution();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
+    void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
 };
 
 void QmlSmokeTest::initTestCase()
@@ -634,6 +635,89 @@ void QmlSmokeTest::inspectTreeRevealCallsIntoTheModelWithoutAQmlError()
 
     // And the reveal genuinely resolved the node rather than bailing out at the valid check.
     QVERIFY(treeModel->indexForStableId(QStringLiteral("occ-cover")).isValid());
+}
+
+void QmlSmokeTest::drawingPreviewBuildsDrawablePathsFromProjectedGeometry()
+{
+    // Guards the failure this was shipped with: the preview reported its extents and contour
+    // counts correctly while drawing nothing at all, because the geometry was built with a
+    // Repeater over ShapePath. Repeater requires an Item delegate and ShapePath is not one,
+    // so the Shape stayed empty and no warning was ever emitted. Asserting on the point
+    // lists the Shape consumes is what makes that visible to a test.
+    loupe::app::drawing::DrawingWorkspaceController draft;
+    draft.replaceSnapshot(QStringLiteral(R"({"effectiveUnit":"mm","sourceToMillimeters":1,"nodes":[
+        {"id":"root","name":"Assembly","kind":0,"parentId":""},
+        {"id":"plate","name":"Base plate","kind":2,"parentId":"root"}
+    ]})"));
+    draft.setCandidateNodeId(QStringLiteral("plate"));
+    draft.setCandidateStandardView(QStringLiteral("Top"), 0.0, 0.0, 1.0, 0.0, 1.0, 0.0);
+    QVERIFY(draft.candidateValid());
+    const auto revision = draft.previewRevision();
+    QVERIFY(revision > 0);
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY2(theme != nullptr, qPrintable(themeComponent.errorString()));
+
+    QQmlComponent previewComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/drawing/DrawingPreview2D.qml")));
+    QVERIFY2(previewComponent.isReady(), qPrintable(previewComponent.errorString()));
+    std::unique_ptr<QObject> previewObject(previewComponent.createWithInitialProperties({
+        {QStringLiteral("draft"), QVariant::fromValue(static_cast<QObject*>(&draft))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("width"), 360},
+        {QStringLiteral("height"), 420},
+    }));
+    QVERIFY2(previewObject != nullptr, qPrintable(previewComponent.errorString()));
+    auto* previewItem = qobject_cast<QQuickItem*>(previewObject.get());
+    QVERIFY(previewItem != nullptr);
+
+    QQuickWindow window;
+    window.resize(400, 460);
+    previewItem->setParentItem(window.contentItem());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // One closed 10x20 rectangle and one open two-segment contour, in the shape the worker
+    // sends back.
+    const auto previewJson = QStringLiteral(R"({"schemaVersion":1,"widthMm":10,"heightMm":20,
+        "minX":0,"minY":0,"empty":false,"closedContours":1,"openContours":1,
+        "layers":[{"name":"cut","role":"cut","contours":[
+            {"closed":true,"points":[0,0,10,0,10,20,0,20,0,0]},
+            {"closed":false,"points":[2,2,8,2,8,10]}]}],
+        "warnings":[{"code":"open_contour","count":1}]})");
+    QVERIFY(QMetaObject::invokeMethod(previewObject.get(), "applyPreview",
+                                      Q_ARG(QVariant, previewJson),
+                                      Q_ARG(QVariant, revision),
+                                      Q_ARG(QVariant, false)));
+
+    QTRY_VERIFY(previewObject->property("hasGeometry").toBool());
+    QCOMPARE(previewObject->property("previewRevision").toInt(), revision);
+
+    // The two stroke styles are separate, so an open contour can be drawn as a warning
+    // rather than being indistinguishable from a cuttable one.
+    const auto closedPaths = previewObject->property("closedPaths").toList();
+    const auto openPaths = previewObject->property("openPaths").toList();
+    QCOMPARE(closedPaths.size(), 1);
+    QCOMPARE(openPaths.size(), 1);
+    // Five points for the rectangle, three for the open chain: the polylines actually carry
+    // geometry rather than being empty placeholders.
+    QCOMPARE(closedPaths.at(0).toList().size(), 5);
+    QCOMPARE(openPaths.at(0).toList().size(), 3);
+
+    // Extents are stated, since they are what a user checks a 1:1 drawing against.
+    auto* extents = findItemByObjectName(window.contentItem(), QStringLiteral("drawingPreviewExtents"));
+    QVERIFY(extents != nullptr);
+    QVERIFY(extents->property("text").toString().contains(QStringLiteral("10.00")));
+    QVERIFY(extents->property("text").toString().contains(QStringLiteral("20.00")));
+
+    // A superseded candidate must blank the geometry rather than leave it looking current.
+    draft.setCandidateStandardView(QStringLiteral("Front"), 0.0, -1.0, 0.0, 0.0, 0.0, 1.0);
+    QTRY_VERIFY(!previewObject->property("hasGeometry").toBool());
+    QVERIFY(previewObject->property("closedPaths").toList().isEmpty());
 }
 
 int main(int argc, char* argv[])

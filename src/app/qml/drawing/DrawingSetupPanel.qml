@@ -105,26 +105,63 @@ ColumnLayout {
     Label { text: qsTr("Scale"); color: root.theme.muted }
     Inspect.ThemedComboBox {
         id: scaleMode
-        objectName: "drawingScale"
+        objectName: "drawingScaleMode"
         theme: root.theme
         Layout.fillWidth: true
         enabled: !root.draft || !root.draft.exporting
-        readonly property var ratios: [[1, 1], [1, 2], [1, 5], [1, 10], [2, 1]]
-        model: ["1:1", "1:2", "1:5", "1:10", "2:1"]
-        currentIndex: {
-            if (!root.draft) return 0
-            for (let index = 0; index < ratios.length; ++index) {
-                if (ratios[index][0] === root.draft.candidateScaleNumerator
-                        && ratios[index][1] === root.draft.candidateScaleDenominator) return index
-            }
-            return 0
+        // 1:1 is the point of the feature, so it is the default and the only preset.
+        // Anything else is a deliberate choice, which is what "Custom" says.
+        model: [qsTr("1:1"), qsTr("Custom")]
+        currentIndex: root.draft && (root.draft.candidateScaleNumerator !== 1
+                                     || root.draft.candidateScaleDenominator !== 1) ? 1 : 0
+        onActivated: {
+            if (!root.draft) return
+            if (currentIndex === 0) root.draft.setCandidateScale(1, 1)
+            else root.draft.setCandidateScale(numeratorField.value, denominatorField.value)
         }
-        onActivated: if (root.draft)
-            root.draft.setCandidateScale(ratios[currentIndex][0], ratios[currentIndex][1])
         Inspect.ThemedToolTip {
             theme: root.theme
             visible: parent.hovered
-            text: qsTr("1:1 is exact. Anything else is named in the filename so it cannot be mistaken.")
+            text: qsTr("1:1 is exact. Any other ratio is named in the filename so it cannot be mistaken at the cutter.")
+        }
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        visible: scaleMode.currentIndex === 1
+        spacing: root.theme.spacing1
+
+        Inspect.ThemedSpinBox {
+            id: numeratorField
+            objectName: "drawingScaleNumerator"
+            theme: root.theme
+            Layout.fillWidth: true
+            // Editable, so a ratio can be typed rather than clicked up to.
+            editable: true
+            from: 1
+            to: 1000
+            value: root.draft ? root.draft.candidateScaleNumerator : 1
+            enabled: !root.draft || !root.draft.exporting
+            onValueModified: if (root.draft) root.draft.setCandidateScale(value, denominatorField.value)
+            Accessible.name: qsTr("Scale numerator")
+        }
+        Label {
+            text: ":"
+            color: root.foreground
+            font.bold: true
+        }
+        Inspect.ThemedSpinBox {
+            id: denominatorField
+            objectName: "drawingScaleDenominator"
+            theme: root.theme
+            Layout.fillWidth: true
+            editable: true
+            from: 1
+            to: 1000
+            value: root.draft ? root.draft.candidateScaleDenominator : 1
+            enabled: !root.draft || !root.draft.exporting
+            onValueModified: if (root.draft) root.draft.setCandidateScale(numeratorField.value, value)
+            Accessible.name: qsTr("Scale denominator")
         }
     }
 
