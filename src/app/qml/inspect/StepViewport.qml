@@ -252,8 +252,19 @@ Item {
         // Centring is not optional though. alignToNormal orbits about the pivot, so leaving
         // the pivot wherever the last orbit put it aims the camera at empty space and the part
         // slides off to one side, which reads as the view having gone somewhere wrong.
-        root.centreVisibleGeometry()
+        // Orientation first, then re-centre on the next tick.
+        //
+        // Order is the whole point here. The cube reads navigation.orientation through a
+        // binding, so it turns the instant the property changes; the model's camera is written
+        // imperatively by apply(), so it turns when apply() runs. Doing the centring first
+        // put a second camera write -- and the bounds walk feeding it -- between the click and
+        // the model moving, which is what made the cube visibly lead the model.
+        //
+        // The old code had this ordering by accident, aligning immediately and deferring the
+        // re-fit with callLater. This keeps that structure and drops only the part that reset
+        // the zoom.
         navigation.alignToNormal(normal)
+        Qt.callLater(root.centreVisibleGeometry)
     }
 
     // The bounds of everything currently drawn, or null when nothing is.

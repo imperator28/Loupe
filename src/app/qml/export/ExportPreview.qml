@@ -15,6 +15,12 @@ Inspect.ElevatedPanel {
     property bool loadEnabled: true
     readonly property bool viewportReady: viewportLoader.status === Loader.Ready
 
+    // Assigned rather than bound, because the viewport's own render-mode combo assigns too;
+    // a binding here would be destroyed the first time the combo was used.
+    function setRenderMode(mode) {
+        if (viewportLoader.item) viewportLoader.item.renderMode = mode
+    }
+
     wellSurface: true
 
     Loader {

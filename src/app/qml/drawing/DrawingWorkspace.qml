@@ -33,6 +33,16 @@ Item {
         componentPicker.revealNode(pickerNodeId)
     }
 
+    // Owned here rather than in the viewport, matching Export, so the two workspaces answer
+    // the same keys the same way.
+    function applyRenderMode(mode) {
+        if (viewportLoader.item) viewportLoader.item.renderMode = mode
+    }
+
+    Shortcut { sequences: ["1"]; enabled: root.visible; onActivated: root.applyRenderMode(0) }
+    Shortcut { sequences: ["2"]; enabled: root.visible; onActivated: root.applyRenderMode(1) }
+    Shortcut { sequences: ["3"]; enabled: root.visible; onActivated: root.applyRenderMode(2) }
+
     function activatePreviews() {
         if (!previewsActivated) previewsActivated = true
         Qt.callLater(root.replayGeometryWhenReady)

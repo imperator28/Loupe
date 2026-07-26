@@ -27,6 +27,17 @@ Item {
         componentPicker.revealNode(pickerNodeId)
     }
 
+    // One shortcut per mode for the whole workspace, not one per viewport. Two viewports each
+    // declaring "1" would make the sequence ambiguous, and Qt would fire neither.
+    function applyRenderMode(mode) {
+        masterPreview.setRenderMode(mode)
+        standalonePreview.setRenderMode(mode)
+    }
+
+    Shortcut { sequences: ["1"]; enabled: root.visible; onActivated: root.applyRenderMode(0) }
+    Shortcut { sequences: ["2"]; enabled: root.visible; onActivated: root.applyRenderMode(1) }
+    Shortcut { sequences: ["3"]; enabled: root.visible; onActivated: root.applyRenderMode(2) }
+
     function activatePreviews() {
         if (!previewsActivated) previewsActivated = true
         Qt.callLater(root.replayGeometryWhenReady)
