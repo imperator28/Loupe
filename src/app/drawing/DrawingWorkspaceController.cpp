@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 
 #include <algorithm>
 #include <array>
@@ -473,6 +474,7 @@ void DrawingWorkspaceController::refreshPlan()
             {QStringLiteral("path"), path},
             {QStringLiteral("format"), format_},
             {QStringLiteral("status"), status},
+            {QStringLiteral("autoNumbered"), false},
             {QStringLiteral("error"), error}};
     };
 
@@ -485,11 +487,23 @@ void DrawingWorkspaceController::refreshPlan()
         }
         // Rows follow the queue, not the plan's canonical order: every rowIndex in a
         // worker event has to index what the user is looking at.
+        QSet<QString> autoNumbered;
+        for (const auto& output : plan.outputs()) {
+            if (output.autoNumbered()) autoNumbered.insert(QString::fromStdString(output.drawingId()));
+        }
         for (const auto& drawing : queue_) {
-            planRows_.append(rowFor(drawing, pathByDrawing.value(drawing.drawingId),
-                                    destination_.trimmed().isEmpty() ? tr("Choose destination folder")
-                                                                     : tr("Ready"),
-                                    QString{}));
+            const bool numbered = autoNumbered.contains(drawing.drawingId);
+            auto row = rowFor(drawing, pathByDrawing.value(drawing.drawingId),
+                              destination_.trimmed().isEmpty()
+                                  ? tr("Choose destination folder")
+                                  : numbered
+                                      // The number says which came first, not which is which,
+                                      // so the user is asked to look rather than just told.
+                                      ? tr("Numbered automatically — check this name")
+                                      : tr("Ready"),
+                              QString{});
+            row.insert(QStringLiteral("autoNumbered"), numbered);
+            planRows_.append(row);
         }
         planFingerprint_ = QString::fromStdString(plan.fingerprint());
     } catch (const loupe::drawing::DrawingPlanError& error) {

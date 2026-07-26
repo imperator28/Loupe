@@ -99,6 +99,7 @@ void appendFingerprintNumber(std::string& target, const double value)
         appendFingerprintField(input, row.viewLabel());
         appendFingerprintField(input, std::to_string(static_cast<int>(row.content())));
         appendFingerprintField(input, std::to_string(static_cast<int>(row.format())));
+        appendFingerprintField(input, row.autoNumbered() ? "auto" : "named");
         // Every field that changes the geometry has to be covered, or the worker
         // would accept a plan whose output differs from the one that was reviewed.
         appendFingerprintNumber(input, row.viewDirection().x);
@@ -238,9 +239,9 @@ DrawingPlan buildDrawingPlan(const DrawingPlanRequest& request)
     for (const auto& item : resolved) {
         const auto& selection = *item.selection;
         const auto reviewed = request.outputLeafNames.find(selection.drawingId);
-        const auto leaf = reviewed != request.outputLeafNames.end() && !reviewed->second.empty()
-            ? sanitize(reviewed->second)
-            : sanitize(drawingLeafName(selection, item.hierarchyPath));
+        const bool named = reviewed != request.outputLeafNames.end() && !reviewed->second.empty();
+        const auto leaf = named ? sanitize(reviewed->second)
+                                : sanitize(drawingLeafName(selection, item.hierarchyPath));
 
         DrawingOutputRow row;
         row.drawingId_ = selection.drawingId;
@@ -256,16 +257,49 @@ DrawingPlan buildDrawingPlan(const DrawingPlanRequest& request)
             / static_cast<double>(selection.scaleDenominator);
         row.sourceToMillimeters_ = request.unitDecision.sourceToMillimeters;
 
-        std::u16string comparable;
-        try {
-            comparable = exporting::detail::windowsComparablePath(row.finalPath_);
-        } catch (const exporting::detail::OutputNamingError& error) {
-            throw DrawingPlanError(DrawingPlanError::Code::UnsafeOutputName, error.what());
+        const auto comparableOf = [](const std::string& path) {
+            try {
+                return exporting::detail::windowsComparablePath(path);
+            } catch (const exporting::detail::OutputNamingError& error) {
+                throw DrawingPlanError(DrawingPlanError::Code::UnsafeOutputName, error.what());
+            }
+        };
+
+        auto comparable = comparableOf(row.finalPath_);
+        if (finalPaths.contains(comparable)) {
+            // Two views of one part can legitimately generate the same name -- two picked
+            // faces are both "normal to face" -- and refusing the batch for that would block
+            // the most ordinary use of a multi-drawing queue. So a generated name gets a
+            // sequence number instead, and the row is flagged so the user is asked to check
+            // it: the number says which came first, not which is which.
+            //
+            // A name the user typed is different. Renaming an explicit choice behind their
+            // back would be worse than refusing it, so an override that collides still fails.
+            if (named) {
+                throw DrawingPlanError(DrawingPlanError::Code::OutputPathCollision,
+                                       "two queued drawings would write to the same file");
+            }
+            // Deterministic, because the rows were sorted canonically before naming: the
+            // worker re-deriving this plan assigns exactly the same numbers.
+            constexpr int kMaximumAttempts = 999;
+            bool resolvedCollision = false;
+            for (int attempt = 2; attempt <= kMaximumAttempts; ++attempt) {
+                const auto candidate = destination + "/" + leaf + "-" + std::to_string(attempt)
+                    + std::string(extension);
+                auto candidateComparable = comparableOf(candidate);
+                if (finalPaths.contains(candidateComparable)) continue;
+                row.finalPath_ = candidate;
+                row.autoNumbered_ = true;
+                comparable = std::move(candidateComparable);
+                resolvedCollision = true;
+                break;
+            }
+            if (!resolvedCollision) {
+                throw DrawingPlanError(DrawingPlanError::Code::OutputPathCollision,
+                                       "too many queued drawings share one generated name");
+            }
         }
-        if (!finalPaths.insert(std::move(comparable)).second) {
-            throw DrawingPlanError(DrawingPlanError::Code::OutputPathCollision,
-                                   "two queued drawings would write to the same file");
-        }
+        finalPaths.insert(std::move(comparable));
         plan.outputs_.push_back(std::move(row));
     }
 

@@ -84,6 +84,10 @@ public:
     [[nodiscard]] DrawingFormat format() const noexcept { return format_; }
     [[nodiscard]] double scale() const noexcept { return scale_; }
     [[nodiscard]] double sourceToMillimeters() const noexcept { return sourceToMillimeters_; }
+    // True when the generated name collided and a sequence number was appended. Surfaced so
+    // the workspace can ask the user to check it: an auto-numbered name is a guess about
+    // which drawing is which, and only the user knows if it reads right.
+    [[nodiscard]] bool autoNumbered() const noexcept { return autoNumbered_; }
 
     // Rvalue overloads deleted so a reference cannot outlive a temporary plan.
     [[nodiscard]] const std::string& drawingId() const&& = delete;
@@ -108,6 +112,7 @@ private:
     DrawingFormat format_{};
     double scale_{1.0};
     double sourceToMillimeters_{1.0};
+    bool autoNumbered_{};
 
     // Only the builder may produce a row, so an unvalidated one cannot exist.
     friend DrawingPlan buildDrawingPlan(const DrawingPlanRequest& request);

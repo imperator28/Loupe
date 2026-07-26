@@ -215,13 +215,51 @@ TEST_CASE("a duplicate drawing id is refused", "[drawing-plan]")
     REQUIRE(codeOf(requestWith({first, second})) == DrawingPlanError::Code::DuplicateDrawingId);
 }
 
-TEST_CASE("colliding output paths are refused", "[drawing-plan]")
+TEST_CASE("colliding names the user typed are refused", "[drawing-plan]")
 {
+    // Renaming an explicit choice behind the user's back would be worse than refusing it.
     auto request = requestWith({selectionFor("d1", "plate", "Top"),
                                 selectionFor("d2", "plate", "Front", {0.0, -1.0, 0.0})});
     request.outputLeafNames.emplace("d1", "same-name");
     request.outputLeafNames.emplace("d2", "same-name");
     REQUIRE(codeOf(request) == DrawingPlanError::Code::OutputPathCollision);
+}
+
+TEST_CASE("colliding generated names are numbered instead of refused", "[drawing-plan]")
+{
+    // Two picked faces are both "normal to face", so one part legitimately generates the same
+    // name twice. Refusing the batch would block the most ordinary use of the queue.
+    const auto plan = loupe::drawing::buildDrawingPlan(requestWith({
+        selectionFor("d1", "plate", "Normal to face", {0.0, 0.0, 1.0}),
+        selectionFor("d2", "plate", "Normal to face", {1.0, 0.0, 0.0}),
+        selectionFor("d3", "plate", "Normal to face", {0.0, -1.0, 0.0}),
+    }));
+
+    REQUIRE(plan.outputs().size() == 3);
+    std::vector<std::string> paths;
+    for (const auto& row : plan.outputs()) paths.push_back(row.finalPath());
+    // Compared as a set: sorted lexicographically "-2" precedes ".", which says nothing
+    // about the naming and everything about ASCII.
+    std::ranges::sort(paths);
+    const std::vector<std::string> expected{"/out/plate-normal-to-face-2.dxf",
+                                            "/out/plate-normal-to-face-3.dxf",
+                                            "/out/plate-normal-to-face.dxf"};
+    REQUIRE(paths == expected);
+
+    // Exactly the ones that were renamed are flagged, so the workspace asks the user to check
+    // those and only those.
+    int numbered = 0;
+    for (const auto& row : plan.outputs()) if (row.autoNumbered()) ++numbered;
+    REQUIRE(numbered == 2);
+}
+
+TEST_CASE("auto numbering is deterministic across queue order", "[drawing-plan]")
+{
+    // The worker re-derives the plan independently, so the numbers have to come out the same
+    // whatever order the queue was built in, or the fingerprint would not match.
+    const auto a = selectionFor("d1", "plate", "Normal to face", {0.0, 0.0, 1.0});
+    const auto b = selectionFor("d2", "plate", "Normal to face", {1.0, 0.0, 0.0});
+    REQUIRE(fingerprintOf(requestWith({a, b})) == fingerprintOf(requestWith({b, a})));
 }
 
 TEST_CASE("case-insensitive collisions are caught as Windows would", "[drawing-plan]")

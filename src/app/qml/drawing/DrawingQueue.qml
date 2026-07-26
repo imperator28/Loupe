@@ -206,8 +206,12 @@ Inspect.ElevatedPanel {
                         Label {
                             Layout.fillWidth: true
                             text: root.statusFor(queueRow.modelData.drawingId)
+                            // An auto-numbered name is a guess about which drawing is which,
+                            // so it reads as a prompt rather than as ordinary status.
                             color: root.errorFor(queueRow.modelData.drawingId).length > 0
-                                   ? root.theme.error : root.theme.muted
+                                   ? root.theme.error
+                                   : root.autoNumberedFor(queueRow.modelData.drawingId)
+                                     ? root.theme.warning : root.theme.muted
                             elide: Text.ElideRight
                             font.pixelSize: 11
                         }
@@ -286,6 +290,11 @@ Inspect.ElevatedPanel {
             }
         }
         return result
+    }
+
+    function autoNumberedFor(drawingId) {
+        const row = root.planRowFor(drawingId)
+        return row ? row.autoNumbered === true : false
     }
 
     function extensionFor(drawingId) {
