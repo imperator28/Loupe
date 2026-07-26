@@ -263,8 +263,15 @@ Item {
         // The old code had this ordering by accident, aligning immediately and deferring the
         // re-fit with callLater. This keeps that structure and drops only the part that reset
         // the zoom.
+        // Both in one tick, so the model arrives in its final place in the same frame the cube
+        // turns. Deferring the centring made the model turn and then shift a frame later,
+        // which reads as the model lagging the cube.
+        //
+        // This was too slow to do synchronously until the mesh extents were cached: the bounds
+        // walk asked six accessors per mesh and each scanned the whole vertex buffer, so the
+        // scan itself was the delay. With that fixed, synchronous is both correct and cheap.
+        root.centreVisibleGeometry()
         navigation.alignToNormal(normal)
-        Qt.callLater(root.centreVisibleGeometry)
     }
 
     // The bounds of everything currently drawn, or null when nothing is.
@@ -1613,9 +1620,16 @@ Item {
     Shortcut { sequence: "Meta+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
     Shortcut { sequence: "M"; enabled: !root.presentationOnly; onActivated: root.toolRequested("measure") }
     Shortcut { sequence: "S"; enabled: !root.presentationOnly; onActivated: root.toolRequested("section") }
-    Shortcut { sequences: ["1"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 0 }
-    Shortcut { sequences: ["2"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 1 }
-    Shortcut { sequences: ["3"]; enabled: !root.presentationOnly; onActivated: root.renderMode = 2 }
+    // root.visible matters as much as presentationOnly: every workspace in the stack is
+    // instantiated, so Inspect's viewport kept these enabled while Export was on screen. Two
+    // enabled "1" shortcuts is an ambiguous sequence, and Qt fires neither -- which is why
+    // the Export and Drawing shortcuts appeared to do nothing.
+    Shortcut { sequences: ["1"]; enabled: !root.presentationOnly && root.visible
+               onActivated: root.renderMode = 0 }
+    Shortcut { sequences: ["2"]; enabled: !root.presentationOnly && root.visible
+               onActivated: root.renderMode = 1 }
+    Shortcut { sequences: ["3"]; enabled: !root.presentationOnly && root.visible
+               onActivated: root.renderMode = 2 }
     Shortcut {
         sequences: [StandardKey.Copy]
         enabled: !root.presentationOnly && root.controller && !root.controller.capture.inProgress
