@@ -17,6 +17,8 @@
 #include <QMimeData>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlPropertyMap>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -79,6 +81,7 @@ private slots:
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
     void drawingPreviewOrientationAndScaleSurviveTheScreenTransform();
     void drawingPreviewZoomKeepsThePointUnderTheCursorFixed();
+    void drawingQueueThumbnailFlattensTheCapturedPreview();
 };
 
 void QmlSmokeTest::initTestCase()
@@ -919,6 +922,69 @@ void QmlSmokeTest::drawingPreviewZoomKeepsThePointUnderTheCursorFixed()
     QVERIFY(QMetaObject::invokeMethod(preview, "zoomAt", Q_ARG(QVariant, 3.0),
                                       Q_ARG(QVariant, pointX), Q_ARG(QVariant, pointY)));
     QCOMPARE(preview->property("closedPaths").toList(), pathsBefore);
+}
+
+void QmlSmokeTest::drawingQueueThumbnailFlattensTheCapturedPreview()
+{
+    // The queue thumbnail is fed a preview captured when the drawing was queued. This covers
+    // the consumer: given that data it produces drawable polylines, and given none it produces
+    // an empty list rather than a broken path.
+    loupe::app::drawing::DrawingWorkspaceController draft;
+    draft.replaceSnapshot(QStringLiteral(R"({"effectiveUnit":"mm","sourceToMillimeters":1,"nodes":[
+        {"id":"root","name":"Assembly","kind":0,"parentId":""},
+        {"id":"plate","name":"Base plate","kind":2,"parentId":"root"}
+    ]})"));
+    draft.setDestination(QStringLiteral("/out"));
+    draft.setCandidateNodeId(QStringLiteral("plate"));
+    draft.setCandidateStandardView(QStringLiteral("Top"), 0.0, 0.0, 1.0, 0.0, 1.0, 0.0);
+    const auto drawingId = draft.addCandidateToQueue();
+    QVERIFY(!drawingId.isEmpty());
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY(theme != nullptr);
+
+    QQmlComponent queueComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/drawing/DrawingQueue.qml")));
+    QVERIFY2(queueComponent.isReady(), qPrintable(queueComponent.errorString()));
+    std::unique_ptr<QObject> queueObject(queueComponent.createWithInitialProperties({
+        {QStringLiteral("draft"), QVariant::fromValue(static_cast<QObject*>(&draft))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("width"), 360},
+        {QStringLiteral("height"), 300},
+    }));
+    QVERIFY2(queueObject != nullptr, qPrintable(queueComponent.errorString()));
+
+    // No capture yet: an empty list, not a malformed one.
+    QVariant emptyPaths;
+    QVERIFY(QMetaObject::invokeMethod(queueObject.get(), "thumbnailPaths",
+                                      Q_RETURN_ARG(QVariant, emptyPaths),
+                                      Q_ARG(QVariant, drawingId), Q_ARG(QVariant, 1.0),
+                                      Q_ARG(QVariant, 40.0)));
+    QVERIFY(emptyPaths.toList().isEmpty());
+
+    // A fresh map, exactly as the workspace must assign it: mutating the existing object and
+    // assigning the same reference back emits no change signal, which is what left every
+    // thumbnail on its placeholder.
+    QVariantMap previews;
+    previews.insert(drawingId, QJsonDocument::fromJson(QByteArrayLiteral(
+        R"({"widthMm":10,"heightMm":20,"minX":0,"minY":0,"empty":false,
+            "closedContours":1,"openContours":0,
+            "layers":[{"name":"cut","role":"cut","contours":[
+                {"closed":true,"points":[0,0,10,0,10,20,0,20,0,0]}]}],"warnings":[]})")).object().toVariantMap());
+    queueObject->setProperty("previews", previews);
+
+    QVariant paths;
+    QVERIFY(QMetaObject::invokeMethod(queueObject.get(), "thumbnailPaths",
+                                      Q_RETURN_ARG(QVariant, paths),
+                                      Q_ARG(QVariant, drawingId), Q_ARG(QVariant, 2.0),
+                                      Q_ARG(QVariant, 40.0)));
+    const auto polylines = paths.toList();
+    QCOMPARE(polylines.size(), 1);
+    QCOMPARE(polylines.at(0).toList().size(), 5);
 }
 
 int main(int argc, char* argv[])

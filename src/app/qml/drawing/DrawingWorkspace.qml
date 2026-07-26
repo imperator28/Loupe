@@ -184,7 +184,11 @@ Item {
                         if (drawingId.length === 0) return
                         // Snapshot the preview alongside the drawing, so the queue can show what
                         // was queued without re-running a hidden-line projection per row.
-                        const next = root.queuedPreviews
+                        // A fresh object, not the existing one mutated: assigning the same
+                        // reference back emits no change signal, so the queue never learned
+                        // about it and every thumbnail stayed on its placeholder. The
+                        // surrounding code already avoids this by using slice/filter/concat.
+                        const next = Object.assign({}, root.queuedPreviews)
                         next[drawingId] = preview2d.preview
                         root.queuedPreviews = next
                         queueButton.acknowledge()
