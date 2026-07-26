@@ -84,6 +84,13 @@ struct ProjectionStatistics final {
 struct ProjectionResult final {
     Drawing drawing;
     ProjectionStatistics statistics;
+    // True when the exact algorithm produced nothing for the requested view and the
+    // projection was retaken from a fractionally tilted direction. Carried explicitly rather
+    // than left for the caller to infer from the warning list, because every consumer -- the
+    // preview, the row message, the file -- has to disclose it.
+    bool approximate{};
+    // The direction actually projected from. Equal to the request's unless approximate.
+    gp_Dir viewDirectionUsed{0.0, 0.0, 1.0};
 };
 
 class ProjectionError : public std::runtime_error {

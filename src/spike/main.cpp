@@ -887,6 +887,7 @@ int runDrawingSpike(const std::vector<std::string>& args)
                 written.push_back({{"file", "preview.svg"},
                                    {"widthMm", width},
                                    {"heightMm", height},
+                                   {"approximate", document.at("approximate").get<bool>()},
                                    {"previewPolylines", polylines},
                                    {"previewPoints", points},
                                    {"closedContours", document.at("closedContours").get<int>()},

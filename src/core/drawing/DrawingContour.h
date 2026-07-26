@@ -121,6 +121,10 @@ inline constexpr std::string_view silhouetteUnavailable = "silhouette_unavailabl
 // Silhouette mode ignored one or more non-solid bodies, which have no interior for
 // the region test and would otherwise appear as stray contours.
 inline constexpr std::string_view nonSolidBodiesIgnored = "non_solid_bodies_ignored";
+// The exact algorithm returned nothing for this view, so the projection was retaken from a
+// fractionally tilted direction. The drawing is no longer strictly 1:1 -- by roughly half a
+// micron in 400 mm -- and must say so rather than imply an exactness it no longer has.
+inline constexpr std::string_view approximateProjection = "approximate_projection";
 } // namespace warningCode
 
 struct DrawingWarning final {

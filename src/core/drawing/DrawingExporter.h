@@ -19,6 +19,8 @@ struct DrawingExportResult final {
     double pageHeightMm{};
     int contoursWritten{};
     int openContours{};
+    // The exact algorithm failed for this view and a tilted projection was used instead.
+    bool approximate{};
     // Warning codes from the projection, e.g. non_solid_bodies_ignored. Carried through so
     // the workspace can say what was approximated rather than reporting a clean success.
     std::vector<std::string> warnings;

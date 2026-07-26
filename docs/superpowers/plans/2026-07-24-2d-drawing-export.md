@@ -849,7 +849,25 @@ part is listed separately rather than ticked off on the strength of the code bei
       3. Fall back to `HLRBRep_PolyAlgo`, the polygonal hidden-line algorithm, which is far
          more robust here but works on triangulation and so is approximate by construction.
 
-      Until one is chosen, this gate item stays open.
+      **Chosen: option 2, tilt and disclose.** The projector now retries from a direction
+      tilted 0.001 rad towards the up vector when the exact algorithm returns nothing, and
+      marks the result approximate. Verified on the same assembly: the Z view went from 0
+      edges to 2 closed contours at 358.0000 x 397.9883 mm, with all three formats
+      validating, while the X view still projects exactly and reports `approximate=false`
+      with clean extents of 397.5000 x 506.0000. The flag discriminates rather than being
+      set defensively everywhere.
+
+      Measured cost, exactly as predicted: the foreshortening lands only on the tilted axis,
+      so 397.9885 becomes 397.9883 -- 0.0002 mm over 400 mm, against a 0.01 mm validation
+      tolerance.
+
+      Disclosure is at every level it can be, because an approximate 1:1 drawing that does
+      not say so is the failure this feature exists to avoid: `ProjectionResult.approximate`,
+      an `approximate_projection` warning inside the drawing itself so the written file
+      carries it, an explicit field in the preview JSON, the preview's approximate banner,
+      and the per-row export message ("Written from a tilted view; not strictly 1:1").
+
+      Still open only on the visual re-check of the outline on screen.
 - [x] One part queues at several angles as independent rows with non-colliding names.
 
       Covered three times over: the plan tests, the controller tests, and the QML smoke test

@@ -761,6 +761,11 @@ struct HiddenLineOutput final {
     return transform;
 }
 
+// Enough to break the exact-parallel degeneracy, small enough that the resulting
+// foreshortening is far below any tolerance a cutter can hold: cos(0.001) differs from 1 by
+// about 5e-7.
+constexpr double kDegenerateTiltRadians = 0.001;
+
 [[nodiscard]] int countEdges(const TopoDS_Shape& shape)
 {
     if (shape.IsNull()) return 0;
@@ -860,41 +865,55 @@ ProjectionResult project(const ProjectionRequest& request)
         // No solids at all means there is nothing whose interior could be found, so
         // the whole shape is kept and the silhouette will report itself unavailable.
     }
-    const auto hiddenLine = runHiddenLineRemoval(shape, request);
-
-    // A shape with faces has visible edges from every direction, so an empty hidden-line
-    // result is always a failure of the algorithm rather than a property of the view.
+    // OCCT's exact hidden-line removal returns *nothing* when the view direction is exactly
+    // axis-parallel and a body's faces are all exactly parallel or perpendicular to it --
+    // which is precisely the axis-aligned standard views this feature is built around.
+    // Measured on a real assembly: one 725-face body gave 0 edges along (0,0,1) and 79 along
+    // (0.001,0,1), and that single body blanked the whole assembly's projection.
     //
-    // It has to be caught here because it does not announce itself: HLR returns empty
-    // compounds instead of raising, and the drawing that comes out is a valid, empty,
-    // plausible-looking drawing. Measured on a real assembly, one 725-face body viewed along
-    // exactly (0,0,1) produced no edges at all -- and tilting the view by 0.001 produced 79.
-    // OCCT's exact hidden-line removal degenerates when every face is exactly parallel or
-    // perpendicular to the projection direction, which is precisely the axis-aligned standard
-    // views this feature is built around. Worse, one such body blanks the whole projection,
-    // so an assembly loses its entire outline because of a single part.
+    // A shape with faces has visible edges from every direction, so an empty result is always
+    // an algorithm failure and never a property of the view. It does not announce itself
+    // either: HLR returns empty compounds rather than raising, so the output is a valid,
+    // empty, plausible-looking drawing.
     //
-    // Deliberately not worked around by nudging the direction: a tilt would trade the exact
-    // 1:1 guarantee for a silent approximation, and that is a product decision, not one to
-    // make inside a geometry helper.
-    if (countEdges(hiddenLine.sharp) + countEdges(hiddenLine.outline) + countEdges(hiddenLine.smooth) == 0
-        && countFaces(shape) > 0) {
-        throw ProjectionError(ProjectionError::Code::ProjectionFailed,
-                              "hidden line removal returned no edges for a shape that has faces; "
-                              "this view is degenerate for the exact algorithm");
+    // The recovery is to retake the projection from a fractionally tilted direction and
+    // declare the result approximate. The cost is a cosine error near 5e-7 -- about half a
+    // micron over 400 mm, orders of magnitude inside the 0.01 mm validation tolerance -- and
+    // it is disclosed rather than silent, which is the only reason it is acceptable in a
+    // feature whose promise is exact 1:1.
+    auto effectiveRequest = request;
+    auto hiddenLine = runHiddenLineRemoval(shape, effectiveRequest);
+    bool approximate = false;
+    const auto edgeCount = [](const HiddenLineOutput& output) {
+        return countEdges(output.sharp) + countEdges(output.outline) + countEdges(output.smooth);
+    };
+    if (edgeCount(hiddenLine) == 0 && countFaces(shape) > 0) {
+        // Tilted towards the up direction, so the perturbation is deterministic and the
+        // foreshortening falls on one known axis rather than an arbitrary one.
+        const gp_Vec tilted = gp_Vec(request.viewDirection) + gp_Vec(request.upDirection) * kDegenerateTiltRadians;
+        effectiveRequest.viewDirection = gp_Dir(tilted);
+        hiddenLine = runHiddenLineRemoval(shape, effectiveRequest);
+        approximate = true;
+        if (edgeCount(hiddenLine) == 0) {
+            throw ProjectionError(ProjectionError::Code::ProjectionFailed,
+                                  "hidden line removal returned no edges for a shape that has "
+                                  "faces, even from a tilted direction");
+        }
     }
 
     const double tolerance = request.stitchToleranceMm > 0.0
         ? request.stitchToleranceMm : std::max(1.0e-3, request.deflectionMm);
 
     ProjectionResult result;
+    result.approximate = approximate;
+    result.viewDirectionUsed = effectiveRequest.viewDirection;
     auto& statistics = result.statistics;
 
     // The footprint oracle is only built for the silhouette mode, since meshing
     // costs real time and nothing else needs an inside/outside test.
     std::optional<FootprintOracle> oracle;
     if (request.mode == ContentMode::OuterContourOnly) {
-        oracle.emplace(shape, projectionTransform(request), request.deflectionMm);
+        oracle.emplace(shape, projectionTransform(effectiveRequest), request.deflectionMm);
         if (!oracle->usable()) {
             // No triangulation means no way to tell interior from boundary. Say so
             // instead of quietly emitting the full edge set, which looks similar
@@ -950,6 +969,11 @@ ProjectionResult project(const ProjectionRequest& request)
         // Say so: silently ignoring part of the model would be a surprising way to
         // get a clean-looking drawing.
         result.drawing.warnings.push_back({std::string(warningCode::nonSolidBodiesIgnored), 1});
+    }
+    if (approximate) {
+        // In the drawing itself, not only on the result object: the writers put warnings in
+        // the file, so a drawing that left this process can still say it is not exact.
+        result.drawing.warnings.push_back({std::string(warningCode::approximateProjection), 1});
     }
     addWarning(result.drawing, warningCode::openContour, statistics.openContours);
     addWarning(result.drawing, warningCode::coarseCurveFallback, statistics.coarseFallbackEdges);

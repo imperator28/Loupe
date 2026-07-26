@@ -112,6 +112,8 @@ std::string encodePreview(const ProjectionResult& projected)
         {QStringLiteral("minX"), bounds.valid ? bounds.minX : 0.0},
         {QStringLiteral("minY"), bounds.valid ? bounds.minY : 0.0},
         {QStringLiteral("empty"), !bounds.valid},
+        // Stated as its own field, not left for the UI to detect in the warning list.
+        {QStringLiteral("approximate"), projected.approximate},
         {QStringLiteral("closedContours"), projected.statistics.closedContours},
         {QStringLiteral("openContours"), projected.statistics.openContours},
         {QStringLiteral("layers"), layers},

@@ -91,6 +91,7 @@ DrawingExportResult DrawingExporter::write(const import::ImportResult& imported,
     result.pageHeightMm = written.pageHeightMm;
     result.contoursWritten = written.contoursWritten;
     result.openContours = projected.statistics.openContours;
+    result.approximate = projected.approximate;
     for (const auto& warning : projected.drawing.warnings) result.warnings.push_back(warning.code);
     return result;
 }

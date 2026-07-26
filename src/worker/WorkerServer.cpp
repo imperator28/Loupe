@@ -925,6 +925,11 @@ void WorkerServer::executeDrawingPlan(const std::uint64_t requestId, const QByte
                                                                            includeScaleFiducial);
                 ++succeeded;
                 auto message = QStringLiteral("Written and validated");
+                if (result.approximate) {
+                    // The exact algorithm could not project this view, so the file is not
+                    // strictly 1:1. Said out loud on the row that produced it.
+                    message = QStringLiteral("Written from a tilted view; not strictly 1:1");
+                }
                 if (result.openContours > 0) {
                     // Said out loud rather than passed silently: an open contour will not cut.
                     message = QStringLiteral("Written, but %1 contour(s) are not closed")
@@ -1036,7 +1041,7 @@ void WorkerServer::requestDrawingPreview(const std::uint64_t requestId, const QB
                   {QStringLiteral("revision"), revision},
                   {QStringLiteral("previewBase64"),
                    QString::fromLatin1(QByteArray::fromStdString(loupe::drawing::encodePreview(projected)).toBase64())},
-                  {QStringLiteral("approximate"), false}});
+                  {QStringLiteral("approximate"), projected.approximate}});
         } catch (const std::exception& error) {
             post({{QStringLiteral("type"), QStringLiteral("failed")},
                   {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
