@@ -19,7 +19,7 @@ ColumnLayout {
     readonly property var standardViews: [qsTr("Top"), qsTr("Bottom"), qsTr("Front"),
                                           qsTr("Back"), qsTr("Left"), qsTr("Right")]
 
-    signal addRequested()
+    signal addRequested(string drawingId)
 
     function applyStandardView(label) {
         if (!root.draft) return
@@ -52,7 +52,9 @@ ColumnLayout {
 
     GridLayout {
         Layout.fillWidth: true
-        columns: 3
+        // Two columns, so each row is a pair of opposites: Top/Bottom, Front/Back, Left/Right.
+        // Flowing three across put Front next to Bottom, which reads as no order at all.
+        columns: 2
         columnSpacing: root.theme.spacing1
         rowSpacing: root.theme.spacing1
 
@@ -189,24 +191,4 @@ ColumnLayout {
         font.pixelSize: root.theme.fontCaption
     }
 
-    Inspect.ThemedButton {
-        objectName: "drawingAddToQueue"
-        theme: root.theme
-        primary: true
-        Layout.fillWidth: true
-        text: qsTr("Add to queue")
-        enabled: root.draft && root.draft.candidateValid && !root.draft.exporting
-        onClicked: {
-            if (!root.draft) return
-            root.draft.addCandidateToQueue()
-            root.addRequested()
-        }
-        Inspect.ThemedToolTip {
-            theme: root.theme
-            visible: parent.hovered
-            text: root.draft && root.draft.candidateValid
-                  ? qsTr("Queue this view. The direction is fixed now, so later orbiting will not change it.")
-                  : qsTr("Choose a part and a view first")
-        }
-    }
 }

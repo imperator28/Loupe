@@ -14,6 +14,7 @@ Popup {
 
     property QtObject draft
     property QtObject theme
+    property var previews: ({})
 
     readonly property color foreground: theme ? theme.foreground : "transparent"
 
@@ -60,6 +61,7 @@ Popup {
             Layout.minimumHeight: 200
             draft: root.draft
             theme: root.theme
+            previews: root.previews
         }
 
         DrawingOutputPanel {

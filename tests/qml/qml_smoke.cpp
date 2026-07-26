@@ -522,10 +522,11 @@ void QmlSmokeTest::drawingWorkspaceQueuesOnePartAtSeveralViews()
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, partCenter.toPoint());
     QTRY_COMPARE(draft.candidateNodeId(), QStringLiteral("plate"));
 
-    auto* addButton = findItemByObjectName(window.contentItem(), QStringLiteral("drawingAddToQueue"));
-    QVERIFY(addButton != nullptr);
-    // Nothing can be queued before a view is chosen.
-    QVERIFY(!addButton->property("enabled").toBool());
+    // The add action now lives in the workspace beside the review action, not in this panel,
+    // and the workspace needs a live 3D viewport that the offscreen platform cannot give us.
+    // So the button's own binding is asserted instead: it is enabled on candidateValid, and
+    // nothing can be queued before a view is chosen.
+    QVERIFY(!draft.candidateValid());
 
     auto* topButton = findItemByObjectName(window.contentItem(), QStringLiteral("drawingStandardView-Top"));
     auto* frontButton = findItemByObjectName(window.contentItem(), QStringLiteral("drawingStandardView-Front"));
@@ -537,15 +538,17 @@ void QmlSmokeTest::drawingWorkspaceQueuesOnePartAtSeveralViews()
         QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centre.toPoint());
     };
 
+    // Views are still chosen by real clicks on the real panel; only the add itself is invoked
+    // directly, since its button is in the workspace.
     clickCentre(topButton);
     QTRY_COMPARE(draft.candidateViewLabel(), QStringLiteral("Top"));
-    QTRY_VERIFY(addButton->property("enabled").toBool());
-    clickCentre(addButton);
+    QVERIFY(draft.candidateValid());
+    QVERIFY(!draft.addCandidateToQueue().isEmpty());
     QTRY_COMPARE(draft.queueCount(), 1);
 
     clickCentre(frontButton);
     QTRY_COMPARE(draft.candidateViewLabel(), QStringLiteral("Front"));
-    clickCentre(addButton);
+    QVERIFY(!draft.addCandidateToQueue().isEmpty());
     QTRY_COMPARE(draft.queueCount(), 2);
 
     // Two rows for one part, with different views and non-colliding filenames.

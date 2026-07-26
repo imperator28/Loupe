@@ -239,7 +239,17 @@ Inspect.ElevatedPanel {
                 }
                 onPositionChanged: function(mouse) {
                     if (!pressed) return
-                    if (mouse.modifiers & Qt.AltModifier) {
+                    if ((mouse.modifiers & Qt.AltModifier) && (mouse.modifiers & Qt.ShiftModifier)) {
+                        // Alt+Shift snaps to 45 degrees, for squaring a drawing up against the
+                        // page rather than eyeballing it.
+                        const angle = canvasInput.angleAt(mouse.x, mouse.y)
+                        let delta = angle - lastAngle
+                        if (delta > 180) delta -= 360
+                        else if (delta < -180) delta += 360
+                        const target = root.viewRotation + delta
+                        root.viewRotation = Math.round(target / 45) * 45
+                        lastAngle = angle
+                    } else if (mouse.modifiers & Qt.AltModifier) {
                         // Alt+drag rotates in plane, the same gesture the 3D viewport uses,
                         // rather than a second convention to remember.
                         const angle = canvasInput.angleAt(mouse.x, mouse.y)
@@ -282,7 +292,7 @@ Inspect.ElevatedPanel {
             Layout.fillWidth: true
             objectName: "drawingPreviewNavigationHint"
             visible: root.hasGeometry
-            text: qsTr("Drag to pan · scroll to zoom · Alt+drag to rotate · double-click to fit")
+            text: qsTr("Drag to pan · scroll to zoom · Alt+drag to rotate · Alt+Shift for 45° steps · double-click to fit")
             color: root.theme.muted
             wrapMode: Text.Wrap
             font.pixelSize: root.theme.fontCaption

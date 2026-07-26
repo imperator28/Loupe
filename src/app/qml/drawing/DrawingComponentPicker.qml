@@ -15,6 +15,8 @@ Inspect.ElevatedPanel {
     property QtObject draft
     property var collapsedNodeIds: []
     property var componentsById: ({})
+    // The part under the cursor, so the 3D view can show it without the user committing to it.
+    property string hoveredNodeId: ""
     readonly property color foreground: theme ? theme.foreground : "transparent"
 
     function rebuildComponentIndex() {
@@ -162,6 +164,14 @@ Inspect.ElevatedPanel {
                         anchors.bottom: parent.bottom
                         width: 2
                         color: root.theme.accent
+                    }
+
+                    HoverHandler {
+                        onHoveredChanged: {
+                            if (hovered) root.hoveredNodeId = componentRow.modelData.nodeId
+                            else if (root.hoveredNodeId === componentRow.modelData.nodeId)
+                                root.hoveredNodeId = ""
+                        }
                     }
 
                     RowLayout {

@@ -16,6 +16,12 @@ Item {
     property bool previewsActivated: false
     property bool previewReplayIssued: false
     readonly property QtObject draft: controller ? controller.drawingWorkspace : null
+    // drawingId -> the preview as it was when queued, for the queue thumbnails.
+    property var queuedPreviews: ({})
+    // Hovering a part shows it, so the tree can be browsed without committing a choice.
+    property string hoveredNodeId: ""
+    readonly property string viewportNodeId: hoveredNodeId.length > 0
+        ? hoveredNodeId : (draft ? draft.candidateNodeId : "")
 
     function synchronizeSceneSelection() {
         if (!root.visible || !root.controller || !root.draft) return
@@ -64,6 +70,7 @@ Item {
             controller: root.controller
             draft: root.draft
             theme: root.theme
+            onHoveredNodeIdChanged: root.hoveredNodeId = hoveredNodeId
         }
 
         // 3D on the left, 2D on the right: the view is chosen in one and verified in the
@@ -101,9 +108,7 @@ Item {
                     item.componentHoverEnabled = false
                     item.contextActionsEnabled = false
                     item.requireDisplayFilter = true
-                    item.displayOnlyNodeId = Qt.binding(function() {
-                        return root.draft ? root.draft.candidateNodeId : ""
-                    })
+                    item.displayOnlyNodeId = Qt.binding(function() { return root.viewportNodeId })
                     item.faceFrameSelected.connect(root.applyFaceFrame)
                 }
             }
@@ -155,44 +160,109 @@ Item {
                     draft: root.draft
                     theme: root.theme
                     viewResolver: root.controller
-                    onAddRequested: queueButton.flash()
                 }
             }
 
-            Inspect.ThemedButton {
-                id: queueButton
-                objectName: "drawingQueueButton"
-                theme: root.theme
+            // Add and review side by side: they are the two things done at this point, and
+            // stacking them made the second look like a consequence of the first.
+            RowLayout {
                 Layout.fillWidth: true
-                // Count in the label rather than a floating badge: it has to be readable at a
-                // glance and survive translation without overlapping anything.
-                text: root.draft && root.draft.queueCount > 0
-                      ? qsTr("Queue (%1) — review and export").arg(root.draft.queueCount)
-                      : qsTr("Queue is empty")
-                primary: root.draft && root.draft.queueCount > 0
-                enabled: root.draft && root.draft.queueCount > 0
-                onClicked: exportSheet.open()
+                spacing: root.theme.spacing2
 
-                function flash() {
-                    // A queued drawing goes somewhere the user cannot see, so the button
-                    // acknowledges the add rather than leaving it silent.
-                    flashAnimation.restart()
-                }
-
-                SequentialAnimation {
-                    id: flashAnimation
-                    NumberAnimation { target: queueButton; property: "opacity"; to: 0.45
-                                      duration: root.theme.durInstant }
-                    NumberAnimation { target: queueButton; property: "opacity"; to: 1.0
-                                      duration: root.theme.durFast }
-                }
-
-                Inspect.ThemedToolTip {
+                Inspect.ThemedButton {
+                    id: addButton
+                    objectName: "drawingAddToQueue"
                     theme: root.theme
-                    visible: parent.hovered
-                    text: root.draft && root.draft.queueCount > 0
-                          ? qsTr("Open the queue to set format and destination, then export")
-                          : qsTr("Add a drawing to the queue first")
+                    primary: true
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    text: qsTr("Add to queue")
+                    enabled: root.draft && root.draft.candidateValid && !root.draft.exporting
+                    onClicked: {
+                        if (!root.draft) return
+                        const drawingId = root.draft.addCandidateToQueue()
+                        if (drawingId.length === 0) return
+                        // Snapshot the preview alongside the drawing, so the queue can show what
+                        // was queued without re-running a hidden-line projection per row.
+                        const next = root.queuedPreviews
+                        next[drawingId] = preview2d.preview
+                        root.queuedPreviews = next
+                        queueButton.acknowledge()
+                    }
+                    Inspect.ThemedToolTip {
+                        theme: root.theme
+                        visible: parent.hovered
+                        text: root.draft && root.draft.candidateValid
+                              ? qsTr("Queue this view. The direction is fixed now, so later orbiting will not change it.")
+                              : qsTr("Choose a part and a view first")
+                    }
+                }
+
+                Inspect.ThemedButton {
+                    id: queueButton
+                    objectName: "drawingQueueButton"
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    text: qsTr("Review queue")
+                    enabled: root.draft && root.draft.queueCount > 0
+                    onClicked: exportSheet.open()
+
+                    function acknowledge() {
+                        // A queued drawing goes somewhere the user cannot see, so the count
+                        // bumps and the button pulses. Transform and opacity only, per the
+                        // motion rules -- no colour animation and no layout movement.
+                        acknowledgeAnimation.restart()
+                    }
+
+                    // The count lives inside the button rather than in its label, so it reads
+                    // as a quantity rather than as part of a sentence.
+                    Rectangle {
+                        id: countBadge
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.rightMargin: root.theme.spacing2
+                        visible: root.draft && root.draft.queueCount > 0
+                        width: Math.max(20, countLabel.implicitWidth + 10)
+                        height: 20
+                        radius: height / 2
+                        color: root.theme.accent
+
+                        Label {
+                            id: countLabel
+                            anchors.centerIn: parent
+                            text: root.draft ? root.draft.queueCount : 0
+                            color: root.theme.accentForeground
+                            font.bold: true
+                            font.pixelSize: root.theme.fontCaption
+                        }
+                    }
+
+                    SequentialAnimation {
+                        id: acknowledgeAnimation
+                        ParallelAnimation {
+                            NumberAnimation { target: countBadge; property: "scale"; to: 1.45
+                                              duration: root.theme.durFast
+                                              easing.type: Easing.OutQuad }
+                            NumberAnimation { target: queueButton; property: "opacity"; to: 0.55
+                                              duration: root.theme.durFast }
+                        }
+                        ParallelAnimation {
+                            NumberAnimation { target: countBadge; property: "scale"; to: 1.0
+                                              duration: root.theme.durStandard
+                                              easing.type: Easing.OutBack }
+                            NumberAnimation { target: queueButton; property: "opacity"; to: 1.0
+                                              duration: root.theme.durStandard }
+                        }
+                    }
+
+                    Inspect.ThemedToolTip {
+                        theme: root.theme
+                        visible: parent.hovered
+                        text: root.draft && root.draft.queueCount > 0
+                              ? qsTr("Open the queue to set format and destination, then export")
+                              : qsTr("Add a drawing to the queue first")
+                    }
                 }
             }
         }
@@ -203,6 +273,7 @@ Item {
         objectName: "drawingExportSheet"
         draft: root.draft
         theme: root.theme
+        previews: root.queuedPreviews
     }
 
     function applyFaceFrame(frame) {

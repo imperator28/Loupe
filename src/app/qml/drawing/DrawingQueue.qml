@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import "../inspect" as Inspect
 
 // The drawing queue: several drawings per part, each its own row.
@@ -8,6 +9,10 @@ Inspect.ElevatedPanel {
     id: root
 
     property QtObject draft
+    // drawingId -> the preview object captured when that drawing was queued. Held in the view
+    // because a thumbnail is a view concern, and re-projecting one per row would cost a
+    // hidden-line run apiece.
+    property var previews: ({})
     readonly property color foreground: theme ? theme.foreground : "transparent"
 
     ColumnLayout {
@@ -99,6 +104,51 @@ Inspect.ElevatedPanel {
                         }
                     }
 
+                    // Thumbnail of the drawing as it was queued, so a row is identifiable
+                    // without selecting it and waiting for a re-projection.
+                    Rectangle {
+                        id: thumbnail
+                        Layout.preferredWidth: 72
+                        Layout.preferredHeight: 54
+                        color: root.theme ? root.theme.surface : "transparent"
+                        border.color: root.theme ? root.theme.border : "transparent"
+                        radius: root.theme ? root.theme.radius1 : 4
+                        clip: true
+
+                        readonly property var shot: root.previews
+                            ? root.previews[queueRow.modelData.drawingId] : null
+                        readonly property real shotScale: {
+                            if (!shot || shot.empty || !(shot.widthMm > 0) || !(shot.heightMm > 0)) return 0
+                            return Math.min((width - 8) / shot.widthMm, (height - 8) / shot.heightMm)
+                        }
+
+                        Shape {
+                            id: thumbnailShape
+                            anchors.centerIn: parent
+                            width: thumbnail.shotScale > 0 ? thumbnail.shot.widthMm * thumbnail.shotScale : 0
+                            height: thumbnail.shotScale > 0 ? thumbnail.shot.heightMm * thumbnail.shotScale : 0
+                            visible: thumbnail.shotScale > 0
+
+                            ShapePath {
+                                strokeColor: root.theme ? root.theme.accent : "transparent"
+                                strokeWidth: 1
+                                fillColor: "transparent"
+                                PathMultiline {
+                                    paths: root.thumbnailPaths(queueRow.modelData.drawingId,
+                                                               thumbnail.shotScale,
+                                                               thumbnailShape.height)
+                                }
+                            }
+                        }
+
+                        Label {
+                            anchors.centerIn: parent
+                            visible: thumbnail.shotScale <= 0
+                            text: "—"
+                            color: root.theme ? root.theme.muted : "transparent"
+                        }
+                    }
+
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 2
@@ -143,12 +193,14 @@ Inspect.ElevatedPanel {
                             }
                         }
                         Binding {
-                            // Bound only while unfocused, so a live edit is never clobbered
-                            // by a model refresh mid-typing.
+                            // Keyed on whether the user has actually typed, not on focus.
+                            // Gating on focus meant a field that gained focus before the plan
+                            // row arrived stayed permanently empty -- clicking it looked like
+                            // it had cleared the name.
                             target: filenameEditor
                             property: "text"
                             value: root.baseNameFor(queueRow.modelData.drawingId)
-                            when: !filenameEditor.activeFocus
+                            when: !queueRow.filenameEdited
                         }
 
                         Label {
@@ -214,6 +266,26 @@ Inspect.ElevatedPanel {
         const name = root.filenameFor(drawingId)
         const dot = name.lastIndexOf(".")
         return dot > 0 ? name.substring(0, dot) : name
+    }
+
+    // Same flattening and the same Y flip the main preview uses, so a thumbnail cannot
+    // disagree with the drawing it stands for.
+    function thumbnailPaths(drawingId, scale, height) {
+        const shot = root.previews ? root.previews[drawingId] : null
+        if (!shot || !(scale > 0) || shot.empty) return []
+        const result = []
+        for (const layer of shot.layers) {
+            for (const contour of layer.contours) {
+                const points = contour.points
+                const polyline = []
+                for (let index = 0; index + 1 < points.length; index += 2) {
+                    polyline.push(Qt.point((points[index] - shot.minX) * scale,
+                                           height - (points[index + 1] - shot.minY) * scale))
+                }
+                if (polyline.length > 1) result.push(polyline)
+            }
+        }
+        return result
     }
 
     function extensionFor(drawingId) {
