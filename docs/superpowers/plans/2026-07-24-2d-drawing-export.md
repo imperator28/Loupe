@@ -776,19 +776,50 @@ ctest --preset windows-release --output-on-failure -R "qml"
 Tasks 10-15 are complete. What is machine-verified is marked; what needs eyes on a real
 part is listed separately rather than ticked off on the strength of the code being written.
 
-- [x] The 2D preview renders the candidate before it can be queued, with extents and warnings.
+- [ ] The 2D preview renders the candidate before it can be queued, with extents and warnings.
+
+      **Reopened after a real assembly showed the preview drew nothing at all.** The extents
+      and contour counts were correct, which is exactly why it read as working, but the
+      geometry was built with a `Repeater` over `ShapePath` -- and `Repeater` requires an
+      `Item` delegate, which `ShapePath` is not. Nothing was ever added to the `Shape`, and
+      no warning was emitted. Fixed with two static `ShapePath`s fed by `PathMultiline`.
+
+      The lesson worth keeping: I marked this item "needs a human for the visual" when the
+      honest statement was that the preview was **entirely unverified**. Extents rendering
+      correctly is not evidence that geometry renders at all, and nothing in the suite
+      distinguished the two.
+
+      Now covered by a test that asserts the point lists the `Shape` actually consumes,
+      verified to fail when those lists come back empty -- which is what a blank preview
+      looks like from the outside.
+
+      Also added `preview.svg` to the `drawing-spike` output: the preview's own flattened
+      polylines from `encodePreview`, with the same Y flip the QML applies, so the projection
+      a user is about to trust can be looked at outside the running app. On a corpus bracket,
+      face-on: 40.00 x 40.00 mm, 6 closed contours in silhouette mode and 18 in cut-contours,
+      none open.
 
       Structurally guaranteed rather than merely arranged: the add action sits below the
       preview, and the smoke test asserts it is disabled until a view is chosen. Staleness
       is prevented twice -- a non-newest revision is discarded on arrival, and a candidate
       change blanks the geometry before any reply returns.
 
-      **Needs a human:** that a real part's outline looks right on screen.
+      **Still needs a human, and this is the one blocking item:** confirmation that a real
+      part's outline looks right on screen in the running app. Not claimable from here.
 - [x] One part queues at several angles as independent rows with non-colliding names.
 
       Covered three times over: the plan tests, the controller tests, and the QML smoke test
       that clicks Top then Front on one part and checks two rows with different paths.
 - [x] Selecting a queue row shows that drawing.
+- [x] Four further defects found by using the workspace on a real assembly, none of which
+      any test had caught: no hover highlight while picking a face, so there was no way to
+      tell which surface a click would take; warning text overflowing out from under the
+      preview; the queue cut off and unreachable because four panels do not fit a
+      fixed-height column at 1080p; and a list of preset scale ratios where the product
+      decision is 1:1 or a typed custom ratio. All fixed.
+
+      Every one of these is a thing only looking at the running app on a real file surfaces.
+      Worth remembering when weighing "the suite is green" against "it has been used".
 - [x] Queued drawings are immune to later camera changes.
 
       The sharpest test in the controller suite: it changes the candidate view and scale

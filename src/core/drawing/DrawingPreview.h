@@ -2,7 +2,7 @@
 
 #include "core/drawing/DrawingProjector.h"
 
-#include <QByteArray>
+#include <string>
 
 // Serialises a projected drawing for the on-screen preview.
 //
@@ -18,6 +18,9 @@ namespace loupe::drawing {
 
 // Compact JSON: bounds in millimetres, one polyline per contour, warning codes, and the
 // projection statistics the workspace reports.
-[[nodiscard]] QByteArray encodePreview(const ProjectionResult& projected);
+// Returns UTF-8 JSON as std::string, not QByteArray: loupe-core links Qt privately and its
+// public headers stay Qt-free, so a Qt type here would lock out every consumer that does not
+// itself link Qt -- the spike among them.
+[[nodiscard]] std::string encodePreview(const ProjectionResult& projected);
 
 } // namespace loupe::drawing

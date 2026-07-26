@@ -75,7 +75,7 @@ void flatten(QJsonArray& points, const Primitive& primitive, const bool first)
 
 } // namespace
 
-QByteArray encodePreview(const ProjectionResult& projected)
+std::string encodePreview(const ProjectionResult& projected)
 {
     QJsonArray layers;
     for (const auto& layer : projected.drawing.layers) {
@@ -116,7 +116,7 @@ QByteArray encodePreview(const ProjectionResult& projected)
         {QStringLiteral("openContours"), projected.statistics.openContours},
         {QStringLiteral("layers"), layers},
         {QStringLiteral("warnings"), warnings},
-    }).toJson(QJsonDocument::Compact);
+    }).toJson(QJsonDocument::Compact).toStdString();
 }
 
 } // namespace loupe::drawing

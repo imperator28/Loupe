@@ -1035,7 +1035,7 @@ void WorkerServer::requestDrawingPreview(const std::uint64_t requestId, const QB
                   {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                   {QStringLiteral("revision"), revision},
                   {QStringLiteral("previewBase64"),
-                   QString::fromLatin1(loupe::drawing::encodePreview(projected).toBase64())},
+                   QString::fromLatin1(QByteArray::fromStdString(loupe::drawing::encodePreview(projected)).toBase64())},
                   {QStringLiteral("approximate"), false}});
         } catch (const std::exception& error) {
             post({{QStringLiteral("type"), QStringLiteral("failed")},

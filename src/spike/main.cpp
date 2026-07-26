@@ -1,3 +1,4 @@
+#include "core/drawing/DrawingPreview.h"
 #include "core/drawing/DrawingProjector.h"
 #include "core/drawing/DrawingValidator.h"
 #include "core/drawing/DxfWriter.h"
@@ -52,6 +53,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -764,6 +766,54 @@ int runDrawingSpike(const std::vector<std::string>& args)
                                    {"contours", result.contoursWritten},
                                    {"validated", validation.passed}});
             };
+            // Also render what the on-screen 2D preview draws, from encodePreview's own
+            // flattened polylines rather than from the exact primitives the writers use.
+            // The preview has a separate failure mode -- it once reported correct extents
+            // while drawing nothing -- and only this path exercises it outside the app.
+            {
+                const auto encoded = loupe::drawing::encodePreview(projected);
+                const auto document = nlohmann::json::parse(encoded);
+                const auto width = document.at("widthMm").get<double>();
+                const auto height = document.at("heightMm").get<double>();
+                const auto originX = document.at("minX").get<double>();
+                const auto originY = document.at("minY").get<double>();
+                std::ostringstream svg;
+                svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
+                    << "mm\" height=\"" << height << "mm\" viewBox=\"0 0 " << width << ' ' << height
+                    << "\">\n";
+                int polylines = 0;
+                int points = 0;
+                for (const auto& layer : document.at("layers")) {
+                    for (const auto& contour : layer.at("contours")) {
+                        const auto closed = contour.at("closed").get<bool>();
+                        const auto& coordinates = contour.at("points");
+                        if (coordinates.size() < 4) continue;
+                        svg << "  <polyline fill=\"none\" stroke=\""
+                            << (closed ? "#3b3bd6" : "#c07000") << "\" stroke-width=\"0.2\" points=\"";
+                        for (std::size_t index = 0; index + 1 < coordinates.size(); index += 2) {
+                            // Y flipped exactly as the QML preview flips it, so this image and
+                            // the on-screen preview cannot disagree about orientation.
+                            svg << (coordinates[index].get<double>() - originX) << ','
+                                << (height - (coordinates[index + 1].get<double>() - originY)) << ' ';
+                            ++points;
+                        }
+                        svg << "\"/>\n";
+                        ++polylines;
+                    }
+                }
+                svg << "</svg>\n";
+                const auto previewPath = outputDirectory / "preview.svg";
+                std::ofstream out(previewPath, std::ios::binary);
+                out << svg.str();
+                if (!out) throw std::runtime_error("unable to write preview.svg");
+                written.push_back({{"file", "preview.svg"},
+                                   {"widthMm", width},
+                                   {"heightMm", height},
+                                   {"previewPolylines", polylines},
+                                   {"previewPoints", points},
+                                   {"closedContours", document.at("closedContours").get<int>()},
+                                   {"openContours", document.at("openContours").get<int>()}});
+            }
             emit("drawing.dxf", loupe::drawing::DxfWriter{});
             emit("drawing.svg", loupe::drawing::SvgWriter{});
             emit("drawing.pdf", loupe::drawing::PdfWriter{});
