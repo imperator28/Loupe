@@ -1,0 +1,66 @@
+# Drawing workspace UX audit, and agenda for the final review
+
+Audited against `design.md` (the governing design language) and
+`docs/review/ui-refinement-handoff.md` (the acceptance gate). Written so the final review has a
+list to work through rather than an invitation to look around.
+
+Method: the rules that can be checked mechanically were checked mechanically, because a visual
+pass over three workspaces reliably misses exactly the things a grep does not. What a grep
+cannot judge is listed separately, unresolved, rather than quietly marked done.
+
+## Checked mechanically — clean
+
+| Rule | Check | Result |
+| --- | --- | --- |
+| Motion is transform/opacity only; nothing animates layout in hot paths | animations targeting `width`, `height`, `implicitWidth/Height`, `Layout.*` | none found |
+| No colour or duration literals in production QML | `qml-style-gates` | passes |
+| Token contrast meets WCAG | `qml-theme-contrast` | passes |
+| Tracking is size-specific, never one global value | fixed `letterSpacing` in QML | none found, so the new rule is forward-looking rather than a violation |
+
+## Fixed during the audit
+
+**Pan had no bounds at all.** The 2D canvas could be dragged until the drawing left the frame
+entirely, with nothing to indicate it was still there. Now the drawing resists progressively
+past half a frame and settles back on release, and a drag takes over a settle in flight from
+the value on screen rather than fighting it. This is the `spring.controlled` case: the settle is
+near-critically damped, because an overshoot would suggest the view bounced off something and
+nothing is there.
+
+**Glyph-only buttons had no accessible name.** Fit (`⤢`), the queue reorder arrows and the
+remove `×` carried tooltips only, and a tooltip is hover-only — it cannot serve as a name. The
+review-queue button also states its count, which lives in a badge and so was absent from the
+label a screen reader reads.
+
+**The rubber-band rule itself was too broad** and is now scoped. Resistance needs a continuous
+gesture to resist during; stepped input — a wheel notch, an arrow key, a spin box — has no such
+gesture and clamps outright. What that owes the user instead is that the limit reads as a limit
+and the way back is one action away. The 2D zoom clamp is therefore correct as written, which is
+the opposite of what the previous session's note claimed.
+
+## Open, and needs a human
+
+These cannot be settled by inspection. Listed in the order they are worth spending attention on.
+
+1. **Projection reliability, and it dwarfs everything else here.** Silhouette and cut mode are
+   still producing wrong geometry: an oversized silhouette bounding box on `PCBA_box` Left and
+   Right, up to 80 unclosed contours in cut mode on an edge-on view, and a silhouette that is
+   sometimes *smaller* than the cut outline it filters. `drawing-audit` reproduces all three.
+   No amount of interface refinement matters while the drawing is wrong.
+2. **Whether the 2D preview reads correctly on a real part.** Still the open Gate E item.
+3. **Whether pan resistance feels like resistance** rather than like lag. Half a frame of
+   allowance is a guess; it wants a hand on a trackpad to confirm.
+4. **Empty states.** With no document open the Parts panel is simply blank. The shell's drop
+   overlay covers the first-run case, but a closed document leaves an empty panel with no
+   guidance. Both pickers share this.
+5. **Tab order across the drawing column.** The controls are focusable, but the order through
+   preview, setup, and the two queue buttons has not been walked.
+6. **Inspect and Export** have not been re-audited since the drawing workspace changed the
+   shared `StepViewport` (face-frame picking and the highlight gate) and the shell (a third
+   workspace, one shared `workspaces` list). Neither change should have altered them, and the
+   `171`-case suite agrees, but "should not have" is not a review.
+
+## Note on scope
+
+The audit covered the Drawing workspace and the shared components it touches. Inspect and
+Export were checked only for regression, not reviewed. That is a real gap, not a completed
+item, and item 6 above is what remains of it.

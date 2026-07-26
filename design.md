@@ -240,9 +240,12 @@ offset slider, bucket reorder, and the 2D drawing canvas.
 - **Hand off release velocity.** Where a gesture ends in an animation, that animation begins at
   the velocity the pointer had. A settle that starts from zero after a fast drag shows a seam
   exactly at the moment the user is watching.
-- **Rubber-band at limits; never hard-stop.** Zoom and pan bounds resist progressively and
-  settle back. A hard clamp is indistinguishable from a frozen interface, which is the one
-  thing a hard clamp must not look like.
+- **Rubber-band at limits; never hard-stop.** A bound reached by a *continuous* gesture resists
+  progressively and settles back on release. A hard clamp there is indistinguishable from a
+  frozen interface, which is the one thing a boundary must not look like. Stepped input --
+  a wheel notch, an arrow key, a spin box -- has no gesture to resist during, so it clamps
+  outright; what that owes the user instead is that the limit is obviously a limit and the way
+  back is always one action away (fit, reset, undo).
 
 **Momentum is deliberately refused on precision controls.** Flick-to-throw is right for
 browsing and wrong for anything that sets a number: the section offset, the zoom level, and a

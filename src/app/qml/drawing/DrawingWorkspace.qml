@@ -205,6 +205,10 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredWidth: 1
                     text: qsTr("Review queue")
+                    // The count is a badge, so it is not in the label the reader hears.
+                    Accessible.name: root.draft && root.draft.queueCount > 0
+                                     ? qsTr("Review queue, %1 drawing(s)").arg(root.draft.queueCount)
+                                     : qsTr("Review queue, empty")
                     enabled: root.draft && root.draft.queueCount > 0
                     onClicked: exportSheet.open()
 

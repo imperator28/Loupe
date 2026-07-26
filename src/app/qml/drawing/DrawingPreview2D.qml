@@ -49,11 +49,55 @@ Inspect.ElevatedPanel {
     property real panY: 0
     property real viewRotation: 0
 
+    // How far the drawing may be pushed past the frame before resistance sets in: enough to
+    // inspect an edge against the frame, not enough to lose the drawing off screen.
+    readonly property real panAllowanceX: canvasFrame.width * 0.5
+    readonly property real panAllowanceY: canvasFrame.height * 0.5
+    readonly property bool panBeyondBounds: Math.abs(root.panX) > root.panAllowanceX
+                                            || Math.abs(root.panY) > root.panAllowanceY
+
     function resetView() {
+        settleAnimation.stop()
         root.viewScale = 1.0
         root.panX = 0
         root.panY = 0
         root.viewRotation = 0
+    }
+
+    // Progressive resistance past the allowance, so the drawing slows before it stops instead
+    // of hitting a wall. A hard clamp at this boundary is indistinguishable from a frozen
+    // canvas, which is the one thing a boundary must not look like.
+    function resisted(value, allowance) {
+        if (Math.abs(value) <= allowance) return value
+        const overshoot = Math.abs(value) - allowance
+        // Asymptotic: the further past, the less each pixel of drag moves the drawing.
+        const damped = overshoot * allowance / (allowance + overshoot * 1.8)
+        return (value < 0 ? -1 : 1) * (allowance + damped)
+    }
+
+    // On release the drawing settles back inside the allowance rather than staying where it was
+    // let go, so a boundary is felt but never leaves the canvas parked off centre.
+    function settleWithinBounds() {
+        if (!root.panBeyondBounds) return
+        settleAnimation.toX = Math.max(-root.panAllowanceX, Math.min(root.panAllowanceX, root.panX))
+        settleAnimation.toY = Math.max(-root.panAllowanceY, Math.min(root.panAllowanceY, root.panY))
+        settleAnimation.restart()
+    }
+
+    ParallelAnimation {
+        id: settleAnimation
+        property real toX: 0
+        property real toY: 0
+        // Near-critically damped, per spring.controlled: an overshoot here would suggest the
+        // view bounced off something, and nothing is there.
+        NumberAnimation {
+            target: root; property: "panX"; to: settleAnimation.toX
+            duration: root.theme.durStandard; easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: root; property: "panY"; to: settleAnimation.toY
+            duration: root.theme.durStandard; easing.type: Easing.OutCubic
+        }
     }
 
     function zoomAt(factor, pointX, pointY) {
@@ -151,6 +195,7 @@ Inspect.ElevatedPanel {
                 theme: root.theme
                 visible: root.hasGeometry
                 text: "\u2922"
+                Accessible.name: qsTr("Fit the drawing into the frame")
                 enabled: root.viewScale !== 1.0 || root.panX !== 0 || root.panY !== 0
                          || root.viewRotation !== 0
                 onClicked: root.resetView()
@@ -233,6 +278,9 @@ Inspect.ElevatedPanel {
                 }
 
                 onPressed: function(mouse) {
+                    // Stop mid-settle rather than fighting it: the drag continues from the value
+                    // on screen, which is what makes grabbing a moving canvas feel possible.
+                    settleAnimation.stop()
                     lastX = mouse.x
                     lastY = mouse.y
                     lastAngle = canvasInput.angleAt(mouse.x, mouse.y)
@@ -260,12 +308,13 @@ Inspect.ElevatedPanel {
                         root.viewRotation += delta
                         lastAngle = angle
                     } else {
-                        root.panX += mouse.x - lastX
-                        root.panY += mouse.y - lastY
+                        root.panX = root.resisted(root.panX + mouse.x - lastX, root.panAllowanceX)
+                        root.panY = root.resisted(root.panY + mouse.y - lastY, root.panAllowanceY)
                     }
                     lastX = mouse.x
                     lastY = mouse.y
                 }
+                onReleased: root.settleWithinBounds()
                 onDoubleClicked: root.resetView()
                 onWheel: function(wheel) {
                     const notches = wheel.angleDelta.y / 120
