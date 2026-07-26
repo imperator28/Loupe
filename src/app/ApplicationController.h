@@ -84,6 +84,9 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
     Q_PROPERTY(QObject* exportWorkspace READ exportWorkspaceController CONSTANT)
     Q_PROPERTY(QObject* drawingWorkspace READ drawingWorkspaceController CONSTANT)
+    // Taken from the project version at build time, so the About dialog cannot drift from
+    // the build it is running in -- which it had already done once.
+    Q_PROPERTY(QString applicationVersion READ applicationVersion CONSTANT)
 
 public:
     explicit ApplicationController(QObject* parent = nullptr);
@@ -127,6 +130,7 @@ public:
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
     [[nodiscard]] QObject* drawingWorkspaceController() noexcept { return &drawingWorkspaceController_; }
+    [[nodiscard]] static QString applicationVersion();
 
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);

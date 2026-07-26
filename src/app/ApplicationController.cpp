@@ -1196,6 +1196,16 @@ bool ApplicationController::setUpAxis(const QString& axis)
     return true;
 }
 
+QString ApplicationController::applicationVersion()
+{
+#ifdef LOUPE_VERSION
+    return QStringLiteral(LOUPE_VERSION);
+#else
+    // Only reachable in a target that does not define it, such as a unit test binary.
+    return QStringLiteral("unknown");
+#endif
+}
+
 QVector3D ApplicationController::directionForStandardView(const QString& name) const
 {
     // Direction the camera looks FROM, in model space.

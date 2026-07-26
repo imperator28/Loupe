@@ -7,6 +7,7 @@ Dialog {
 
     objectName: "aboutLoupePopup"
     property QtObject theme
+    property string version: ""
     modal: true
     focus: true
     anchors.centerIn: Overlay.overlay
@@ -44,7 +45,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
-            text: qsTr("Version 0.1.2")
+            text: root.version.length > 0 ? qsTr("Version %1").arg(root.version) : qsTr("Version unknown")
             color: root.theme.muted
             font.pixelSize: root.theme.fontBody
         }

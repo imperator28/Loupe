@@ -189,4 +189,6 @@ target_include_directories(loupe-app PRIVATE "${PROJECT_SOURCE_DIR}/src")
 if(LOUPE_ENABLE_QML_PROFILING)
     target_compile_definitions(loupe-app PRIVATE QT_QML_DEBUG)
 endif()
+target_compile_definitions(loupe-app PRIVATE LOUPE_VERSION="${PROJECT_VERSION}")
+
 loupe_enable_warnings(loupe-app)

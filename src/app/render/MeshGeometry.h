@@ -58,6 +58,8 @@ private:
     friend class CadEdgeGeometry;
 
     void upload();
+    // Recomputed whenever the display mesh changes, so the accessors below are O(1).
+    void refreshBounds();
     void rebuildDisplayMesh();
     void rebuildSourceNormals();
     void rebuildDisplayNormals();
@@ -69,6 +71,12 @@ private:
     QVector<protocol::TopologyRange> sourceTopology_;
     QSharedPointer<const SectionSourceData> sectionSource_;
     QVector<float> vertexData_;
+    // Cached extents of vertexData_. The accessors used to scan the whole buffer on every
+    // call, and callers ask six times per node, which put a full multi-pass scan of every
+    // visible mesh in front of a camera change.
+    float minimumCoordinate_[3]{};
+    float maximumCoordinate_[3]{};
+    bool hasBounds_{};
     QVector<float> normalData_;
     QVector<quint32> indexData_;
     bool sectionEnabled_{false};

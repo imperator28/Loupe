@@ -409,6 +409,7 @@ ApplicationWindow {
     Inspect.AboutLoupeDialog {
         id: aboutLoupe
         theme: appTheme
+        version: root.controller.applicationVersion
     }
 
     Inspect.InteractionGuide {
