@@ -98,7 +98,11 @@ QtObject {
     readonly property int radius4: 10
     // Native window shells use a larger radius than controls. Full-window
     // overlays need this token so their border follows the visible frame.
-    readonly property int windowRadius: 18
+    //
+    // The two platforms genuinely differ, so one value cannot match both: Windows 11
+    // rounds a window at 8px, macOS at roughly twice that. A shared 18 traced the macOS
+    // frame correctly and visibly overshot the Windows one.
+    readonly property int windowRadius: Qt.platform.os === "windows" ? 8 : 18
     readonly property int focusRingWidth: 2
 
     // Density
