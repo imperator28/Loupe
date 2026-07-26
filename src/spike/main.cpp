@@ -677,6 +677,84 @@ nlohmann::json curveTypeJson(const HlrStats& stats)
             {"curveTypes", stats.curveTypes}};
 }
 
+// Per-body hidden-line removal, for isolating a body that poisons a whole-assembly
+// projection. Whole-assembly HLR reports nothing on failure rather than raising, so the only
+// way to find the offender is to project each body on its own and compare.
+int runDrawingBodies(const std::vector<std::string>& args)
+{
+    if (args.size() < 2) fail(invalidArguments, "usage: drawing-bodies <file.step> [axis]");
+    const std::filesystem::path file(args[1]);
+    // Accepts a named axis or "x,y,z", so an exactly-axis-aligned direction can be compared
+    // against one nudged a fraction off it. Hidden-line removal is known to struggle when
+    // every face is exactly parallel or perpendicular to the view, and that hypothesis is
+    // only testable with an off-axis direction.
+    const auto axisArgument = args.size() > 2 ? args[2] : std::string("Z");
+    gp_Dir viewDirection(0.0, 0.0, 1.0);
+    if (axisArgument.find(',') != std::string::npos) {
+        std::istringstream stream(axisArgument);
+        std::string part;
+        std::vector<double> components;
+        while (std::getline(stream, part, ',')) components.push_back(std::stod(part));
+        if (components.size() != 3) fail(invalidArguments, "direction needs three components");
+        viewDirection = gp_Dir(components[0], components[1], components[2]);
+    } else {
+        viewDirection = parseViewAxis(axisArgument);
+    }
+
+    loupe::import::ImportResult imported;
+    try {
+        imported = loupe::import::StepImporter{}.read(file);
+    } catch (const std::exception& error) { fail(importFailure, error.what()); }
+
+    const auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    const auto& native = *imported.native;
+    const auto bodyCount = std::min(native.shapes.size(), native.shapePlacements.size());
+
+    const auto scaled = [&decision](const TopoDS_Shape& input) {
+        if (decision.sourceToMillimeters == 1.0) return input;
+        gp_Trsf scale;
+        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), decision.sourceToMillimeters);
+        return BRepBuilderAPI_Transform(input, scale, true).Shape();
+    };
+
+    nlohmann::json bodies = nlohmann::json::array();
+    for (std::size_t index = 0; index < bodyCount; ++index) {
+        nlohmann::json entry{{"index", index}};
+        if (native.shapes[index].IsNull()) {
+            entry["skipped"] = "null shape";
+            bodies.push_back(entry);
+            continue;
+        }
+        if (index < native.shapeNodeIds.size()) entry["nodeId"] = native.shapeNodeIds[index];
+        const auto located = native.shapes[index].Located(TopLoc_Location(native.shapePlacements[index]));
+        int solids = 0;
+        int faces = 0;
+        for (TopExp_Explorer explorer(located, TopAbs_SOLID); explorer.More(); explorer.Next()) ++solids;
+        for (TopExp_Explorer explorer(located, TopAbs_FACE); explorer.More(); explorer.Next()) ++faces;
+        entry["solids"] = solids;
+        entry["faces"] = faces;
+        try {
+            const auto run = runHiddenLineRemoval(scaled(located), viewDirection);
+            const auto extent = sortedExtent(run.extent);
+            entry["edges"] = run.sharp.edges + run.outline.edges;
+            entry["extentMm"] = {extent[0], extent[1]};
+            entry["milliseconds"] = run.milliseconds;
+        } catch (const CommandError& error) {
+            entry["error"] = error.message;
+        } catch (const std::exception& error) {
+            entry["error"] = error.what();
+        }
+        bodies.push_back(entry);
+    }
+
+    printJson({{"status", "ok"},
+               {"axis", args.size() > 2 ? args[2] : "Z"},
+               {"effectiveUnit", unitName(decision.effectiveUnit)},
+               {"sourceToMillimeters", decision.sourceToMillimeters},
+               {"bodies", bodies}});
+    return success;
+}
+
 int runDrawingSpike(const std::vector<std::string>& args)
 {
     if (args.size() < 2) fail(invalidArguments, "usage: drawing-spike <file.step> [axis]");
@@ -858,9 +936,10 @@ int main(int argc, char* argv[])
 {
     try {
         std::vector<std::string> args; for (int index = 1; index < argc; ++index) args.emplace_back(argv[index]);
-        if (args.empty()) fail(invalidArguments, "choose inspect, export, corpus, benchmark, or drawing-spike");
+        if (args.empty()) fail(invalidArguments, "choose inspect, export, corpus, benchmark, drawing-spike, or drawing-bodies");
         if (args[0] == "inspect") return runInspect(args); if (args[0] == "export") return runExport(args); if (args[0] == "corpus") return runCorpus(args); if (args[0] == "benchmark") return runBenchmark(args);
         if (args[0] == "drawing-spike") return runDrawingSpike(args);
+        if (args[0] == "drawing-bodies") return runDrawingBodies(args);
         fail(invalidArguments, "unknown command");
     } catch (const CommandError& error) { printJson({{"status", "error"}, {"code", error.code}, {"message", error.message}}); return error.code;
     } catch (const std::exception& error) { printJson({{"status", "error"}, {"code", importFailure}, {"message", error.what()}}); return importFailure; }

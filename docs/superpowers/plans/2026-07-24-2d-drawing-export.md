@@ -804,8 +804,52 @@ part is listed separately rather than ticked off on the strength of the code bei
       is prevented twice -- a non-newest revision is discarded on arrival, and a candidate
       change blanks the geometry before any reply returns.
 
-      **Still needs a human, and this is the one blocking item:** confirmation that a real
-      part's outline looks right on screen in the running app. Not claimable from here.
+      **The human check has now happened, and it failed.** Reviewed on a real assembly
+      (a trim ring with bins). The reviewer's verdict: the silhouette "does not seem to be
+      accurate 100%. Bottom and left seems to be wrong ... while other sides are ok."
+
+      So this item is not pending a sign-off; it is failing for a known and now-diagnosed
+      reason. Recorded here rather than as a passing gate with a caveat.
+
+      **Root cause, isolated:** OCCT's exact hidden-line removal returns *nothing* when the
+      view direction is exactly axis-parallel and the body's faces are all exactly parallel
+      or perpendicular to it. Measured with the new `drawing-bodies` probe on that assembly:
+
+      | body | faces | edges along Z | edges along X |
+      | --- | --- | --- | --- |
+      | 0 | 104 | 53 | 28 |
+      | 1 | 104 | 25 | 25 |
+      | 2 | 725 | **0** | 73 |
+      | 3 | 220 | 69 | 84 |
+
+      And decisively, on body 2 alone: direction `(0,0,1)` gives 0 edges; `(0.001,0,1)` gives
+      79. Z is Top and Bottom in a Z-up document, which is exactly the sides the reviewer
+      called wrong.
+
+      Two consequences worth separating. One body failing **blanked the entire assembly**
+      projection, so a whole drawing was lost to a single part. And the failure was silent:
+      HLR returns empty compounds rather than raising, so what came out was a valid,
+      empty-looking drawing.
+
+      **Fixed now:** the projector refuses an empty hidden-line result for a shape that has
+      faces, since a shape with faces has visible edges from every direction. A silent wrong
+      answer is now a reported one.
+
+      **Deliberately not fixed, because it is a product decision:** the degeneracy itself. A
+      tilt of 0.001 makes it work, at a cos error of about 5e-7 -- roughly 0.0002 mm over
+      400 mm, below the 0.01 mm validation tolerance. But this feature's entire promise is
+      exact 1:1, and silently tilting to trade that for robustness is not a call to make
+      inside a geometry helper. The options, for whoever picks this up:
+
+      1. Fail loudly on a degenerate view and tell the user to nudge the camera. Honest,
+         preserves exactness, leaves standard Top/Bottom views broken on such parts.
+      2. Retry with a minimal tilt and mark the drawing approximate, reusing the
+         `approximate` flag the protocol already carries. Keeps standard views working; must
+         be disclosed in the UI and, arguably, in the file.
+      3. Fall back to `HLRBRep_PolyAlgo`, the polygonal hidden-line algorithm, which is far
+         more robust here but works on triangulation and so is approximate by construction.
+
+      Until one is chosen, this gate item stays open.
 - [x] One part queues at several angles as independent rows with non-colliding names.
 
       Covered three times over: the plan tests, the controller tests, and the QML smoke test

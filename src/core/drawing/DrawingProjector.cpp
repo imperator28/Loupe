@@ -761,6 +761,22 @@ struct HiddenLineOutput final {
     return transform;
 }
 
+[[nodiscard]] int countEdges(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull()) return 0;
+    int count = 0;
+    for (TopExp_Explorer explorer(shape, TopAbs_EDGE); explorer.More(); explorer.Next()) ++count;
+    return count;
+}
+
+[[nodiscard]] int countFaces(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull()) return 0;
+    int count = 0;
+    for (TopExp_Explorer explorer(shape, TopAbs_FACE); explorer.More(); explorer.Next()) ++count;
+    return count;
+}
+
 [[nodiscard]] HiddenLineOutput runHiddenLineRemoval(const TopoDS_Shape& shape, const ProjectionRequest& request)
 {
     const auto plane = BRepLib::Plane();
@@ -845,6 +861,29 @@ ProjectionResult project(const ProjectionRequest& request)
         // the whole shape is kept and the silhouette will report itself unavailable.
     }
     const auto hiddenLine = runHiddenLineRemoval(shape, request);
+
+    // A shape with faces has visible edges from every direction, so an empty hidden-line
+    // result is always a failure of the algorithm rather than a property of the view.
+    //
+    // It has to be caught here because it does not announce itself: HLR returns empty
+    // compounds instead of raising, and the drawing that comes out is a valid, empty,
+    // plausible-looking drawing. Measured on a real assembly, one 725-face body viewed along
+    // exactly (0,0,1) produced no edges at all -- and tilting the view by 0.001 produced 79.
+    // OCCT's exact hidden-line removal degenerates when every face is exactly parallel or
+    // perpendicular to the projection direction, which is precisely the axis-aligned standard
+    // views this feature is built around. Worse, one such body blanks the whole projection,
+    // so an assembly loses its entire outline because of a single part.
+    //
+    // Deliberately not worked around by nudging the direction: a tilt would trade the exact
+    // 1:1 guarantee for a silent approximation, and that is a product decision, not one to
+    // make inside a geometry helper.
+    if (countEdges(hiddenLine.sharp) + countEdges(hiddenLine.outline) + countEdges(hiddenLine.smooth) == 0
+        && countFaces(shape) > 0) {
+        throw ProjectionError(ProjectionError::Code::ProjectionFailed,
+                              "hidden line removal returned no edges for a shape that has faces; "
+                              "this view is degenerate for the exact algorithm");
+    }
+
     const double tolerance = request.stitchToleranceMm > 0.0
         ? request.stitchToleranceMm : std::max(1.0e-3, request.deflectionMm);
 
