@@ -126,6 +126,19 @@ Platform system sans-serif: SF Pro (system font) on macOS, Segoe UI Variable on 
 
 Critical values and units never use caption styling. Numeric values right-align with units adjacent but visually secondary.
 
+**Tracking is size-specific; there is no single letter-spacing for the app.** Letters read
+progressively too far apart as type grows, so Display and Title tighten (about `-0.01em` to
+`-0.02em`), Body and Section sit at `0`, and Caption may take a fraction positive for
+legibility at small sizes. A uniform value is wrong at one end of the scale or the other.
+
+**Leading moves inversely to size.** Tight on Display and Title, comfortable on Body, and
+tighter again on dense tabular rows where the row height already does the separating.
+
+**Hierarchy is weight plus size plus leading as a set, never size alone.** Weight adds presence
+without consuming width, which matters in panels that are already narrow. This is why Numeric
+is medium rather than a size larger: a dimension has to stand out without reflowing the row it
+sits in.
+
 ## Density, spacing, and shape
 
 4 px base increment, 8 px primary rhythm.
@@ -208,6 +221,38 @@ Rules:
 - At most two independent UI regions move at once unless the whole workspace changes.
 - Camera motion is interruptible by any input.
 - **Reduced motion** is a single centralized flag: removes travel, scale, and springs; keeps short opacity fades and immediate state changes; camera fit may use a shortened duration when an instant jump would disorient.
+
+### Direct manipulation
+
+Loupe is a precision tool, so the rules below are about removing seams, never about adding
+flourish. They apply to every drag the app owns: orbit, pan, zoom, the section manipulator and
+offset slider, bucket reorder, and the 2D drawing canvas.
+
+- **Acknowledge on press, not on release.** A control shows its pressed state the instant the
+  button goes down. Waiting for the release reads as a dropped input.
+- **Track 1:1, and respect the grab offset.** A dragged thing stays under the pointer from
+  where it was grabbed. Re-centring it on the grab point is an immediate tell that the
+  interface is approximating.
+- **Animate from the presentation value, not the target.** When a drag interrupts a running
+  animation, the new motion starts from the value currently on screen. Starting from the
+  logical target is what produces a visible jump on interrupt, and it is the most common way a
+  nominally interruptible animation still feels broken.
+- **Hand off release velocity.** Where a gesture ends in an animation, that animation begins at
+  the velocity the pointer had. A settle that starts from zero after a fast drag shows a seam
+  exactly at the moment the user is watching.
+- **Rubber-band at limits; never hard-stop.** Zoom and pan bounds resist progressively and
+  settle back. A hard clamp is indistinguishable from a frozen interface, which is the one
+  thing a hard clamp must not look like.
+
+**Momentum is deliberately refused on precision controls.** Flick-to-throw is right for
+browsing and wrong for anything that sets a number: the section offset, the zoom level, and a
+queue reorder all commit a value, and overshooting past it costs the user a correction. Project
+momentum only where the result is a *position* the user is reading, not a *value* they are
+setting — so the 2D canvas may carry a pan, and the section offset slider may not.
+
+This is where **`spring.controlled`** applies. It is near-critically damped because bounce
+would imply the value overshot and came back, which in a dimensioned drawing is a lie about
+what was set.
 
 ## Control specifications (macOS language)
 
