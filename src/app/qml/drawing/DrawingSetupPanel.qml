@@ -63,6 +63,8 @@ ColumnLayout {
                 objectName: "drawingStandardView-" + modelData
                 theme: root.theme
                 Layout.fillWidth: true
+                // Equal share of the row rather than each column sizing to its own label.
+                Layout.preferredWidth: 1
                 text: modelData
                 enabled: root.draft && root.draft.candidateNodeId.length > 0 && !root.draft.exporting
                 primary: root.draft && root.draft.candidateViewLabel === modelData
@@ -80,25 +82,38 @@ ColumnLayout {
     }
 
     Label { text: qsTr("Content"); color: root.theme.muted }
-    Inspect.ThemedComboBox {
-        id: contentMode
-        objectName: "drawingContentMode"
-        theme: root.theme
+    GridLayout {
         Layout.fillWidth: true
-        enabled: !root.draft || !root.draft.exporting
-        // Values, not translations: the controller matches on these strings.
-        readonly property var modes: ["Cut contours", "Outer contour only", "Technical view"]
-        model: [qsTr("Cut contours"), qsTr("Outer contour only"), qsTr("Technical view")]
-        currentIndex: root.draft ? Math.max(0, modes.indexOf(root.draft.candidateContentMode)) : 0
-        onActivated: if (root.draft) root.draft.setCandidateContentMode(modes[currentIndex])
-        Inspect.ThemedToolTip {
-            theme: root.theme
-            visible: parent.hovered
-            text: contentMode.currentIndex === 1
-                  ? qsTr("Only the outline that bounds material. Step and chamfer lines are dropped.")
-                  : contentMode.currentIndex === 2
-                    ? qsTr("Every visible edge, on separate layers. For reference, not cutting.")
-                    : qsTr("Outer profile and through-holes. Closed contours for a cutter.")
+        columns: 3
+        columnSpacing: root.theme.spacing1
+
+        Repeater {
+            // Value first, then the label and the explanation. The value is what the
+            // controller matches on, so it must not be translated.
+            model: [
+                { value: "Cut contours", label: qsTr("Cut"),
+                  detail: qsTr("Outer profile plus through-holes, as closed contours a cutter can follow. The default.") },
+                { value: "Outer contour only", label: qsTr("Silhouette"),
+                  detail: qsTr("Only the outline where material actually ends. Step, chamfer and fillet lines are dropped, so a stepped face does not read as a line across the part.") },
+                { value: "Technical view", label: qsTr("Technical"),
+                  detail: qsTr("Every visible edge, including smooth ones, on separate layers. Reads like a CAD view; for reference rather than cutting.") }
+            ]
+            delegate: Inspect.ThemedButton {
+                required property var modelData
+                objectName: "drawingContentMode-" + modelData.value
+                theme: root.theme
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                text: modelData.label
+                enabled: !root.draft || !root.draft.exporting
+                primary: root.draft && root.draft.candidateContentMode === modelData.value
+                onClicked: if (root.draft) root.draft.setCandidateContentMode(modelData.value)
+                Inspect.ThemedToolTip {
+                    theme: root.theme
+                    visible: parent.hovered
+                    text: modelData.detail
+                }
+            }
         }
     }
 

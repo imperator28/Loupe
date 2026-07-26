@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -76,6 +77,7 @@ private slots:
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
+    void drawingPreviewOrientationAndScaleSurviveTheScreenTransform();
 };
 
 void QmlSmokeTest::initTestCase()
@@ -718,6 +720,132 @@ void QmlSmokeTest::drawingPreviewBuildsDrawablePathsFromProjectedGeometry()
     draft.setCandidateStandardView(QStringLiteral("Front"), 0.0, -1.0, 0.0, 0.0, 0.0, 1.0);
     QTRY_VERIFY(!previewObject->property("hasGeometry").toBool());
     QVERIFY(previewObject->property("closedPaths").toList().isEmpty());
+}
+
+namespace {
+
+// The preview JSON for an L-shaped part: 10 mm wide, 20 mm tall, tall on the left and short
+// on the right. Deliberately asymmetric in both axes, because a symmetric outline cannot
+// detect a flip and a square one cannot detect a transposed scale.
+QString lShapedPreviewJson()
+{
+    return QStringLiteral(R"({"schemaVersion":1,"widthMm":10,"heightMm":20,
+        "minX":0,"minY":0,"empty":false,"closedContours":1,"openContours":0,
+        "layers":[{"name":"cut","role":"cut","contours":[
+            {"closed":true,"points":[0,0,10,0,10,5,4,5,4,20,0,20,0,0]}]}],
+        "warnings":[]})");
+}
+
+// Builds a DrawingPreview2D holding that drawing, parented into `window`.
+// Returns the preview object; the controller and theme are owned by the caller.
+QObject* buildPreviewWithLShape(QQmlEngine& engine, QQuickWindow& window,
+                                loupe::app::drawing::DrawingWorkspaceController& draft,
+                                QObject* theme, std::unique_ptr<QObject>& keepAlive)
+{
+    draft.replaceSnapshot(QStringLiteral(R"({"effectiveUnit":"mm","sourceToMillimeters":1,"nodes":[
+        {"id":"root","name":"Assembly","kind":0,"parentId":""},
+        {"id":"plate","name":"Base plate","kind":2,"parentId":"root"}
+    ]})"));
+    draft.setCandidateNodeId(QStringLiteral("plate"));
+    draft.setCandidateStandardView(QStringLiteral("Top"), 0.0, 0.0, 1.0, 0.0, 1.0, 0.0);
+    if (!draft.candidateValid()) return nullptr;
+
+    QQmlComponent previewComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/drawing/DrawingPreview2D.qml")));
+    if (!previewComponent.isReady()) return nullptr;
+    keepAlive.reset(previewComponent.createWithInitialProperties({
+        {QStringLiteral("draft"), QVariant::fromValue(static_cast<QObject*>(&draft))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme)},
+        {QStringLiteral("width"), 360},
+        {QStringLiteral("height"), 460},
+    }));
+    if (!keepAlive) return nullptr;
+    auto* item = qobject_cast<QQuickItem*>(keepAlive.get());
+    if (!item) return nullptr;
+    item->setParentItem(window.contentItem());
+    window.show();
+    if (!QTest::qWaitForWindowExposed(&window, 3000)) return nullptr;
+
+    if (!QMetaObject::invokeMethod(keepAlive.get(), "applyPreview",
+                                   Q_ARG(QVariant, lShapedPreviewJson()),
+                                   Q_ARG(QVariant, draft.previewRevision()),
+                                   Q_ARG(QVariant, false))) {
+        return nullptr;
+    }
+    return keepAlive.get();
+}
+
+} // namespace
+
+void QmlSmokeTest::drawingPreviewOrientationAndScaleSurviveTheScreenTransform()
+{
+    // Orientation and scale are the two properties of the preview a test can check but a
+    // glance cannot reliably confirm -- an upside-down drawing of a nearly-symmetric part
+    // looks fine. The IR is Y-up and the scene is Y-down, so exactly one flip must happen
+    // here, and the extents must map proportionally.
+    std::unique_ptr<QObject> theme;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    theme.reset(themeComponent.create());
+    QVERIFY(theme != nullptr);
+
+    loupe::app::drawing::DrawingWorkspaceController draft;
+    QQuickWindow window;
+    window.resize(400, 500);
+    std::unique_ptr<QObject> previewKeepAlive;
+    auto* preview = buildPreviewWithLShape(engine, window, draft, theme.get(), previewKeepAlive);
+    QVERIFY(preview != nullptr);
+    QTRY_VERIFY(preview->property("hasGeometry").toBool());
+
+    const auto paths = preview->property("closedPaths").toList();
+    QCOMPARE(paths.size(), 1);
+    const auto polyline = paths.at(0).toList();
+    QCOMPARE(polyline.size(), 7);
+
+    const auto surfaceHeight = preview->property("surfaceHeight").toReal();
+    const auto surfaceWidth = preview->property("surfaceWidth").toReal();
+    QVERIFY(surfaceWidth > 1.0);
+    QVERIFY(surfaceHeight > 1.0);
+    // 10 x 20 mm must stay twice as tall as it is wide. A transposed scale would still fill
+    // the frame and still report the right extents in the label.
+    QVERIFY2(std::abs(surfaceHeight / surfaceWidth - 2.0) < 0.01,
+             qPrintable(QStringLiteral("aspect was %1").arg(surfaceHeight / surfaceWidth)));
+
+    double minY = std::numeric_limits<double>::max();
+    double maxY = std::numeric_limits<double>::lowest();
+    double minX = std::numeric_limits<double>::max();
+    double maxX = std::numeric_limits<double>::lowest();
+    for (const auto& value : polyline) {
+        const auto point = value.toPointF();
+        minX = std::min(minX, point.x());
+        maxX = std::max(maxX, point.x());
+        minY = std::min(minY, point.y());
+        maxY = std::max(maxY, point.y());
+    }
+    // The drawing fills its surface exactly, so the transform neither crops nor pads.
+    QVERIFY(std::abs(maxX - minX - surfaceWidth) < 0.5);
+    QVERIFY(std::abs(maxY - minY - surfaceHeight) < 0.5);
+    QVERIFY(std::abs(minX) < 0.5);
+    QVERIFY(std::abs(minY) < 0.5);
+
+    // The flip itself: mm (0,20) is the top of the part, so it must land at the TOP of the
+    // scene (y near 0), and mm (0,0) at the bottom. Getting this backwards is the classic
+    // mirrored-output failure the requirements call out as highest severity.
+    const auto firstPoint = polyline.at(0).toPointF();   // mm (0,0)   -> bottom-left
+    const auto fifthPoint = polyline.at(4).toPointF();   // mm (4,20)  -> top
+    QVERIFY2(firstPoint.y() > surfaceHeight - 0.5,
+             qPrintable(QStringLiteral("mm y=0 mapped to scene y=%1, expected near %2")
+                            .arg(firstPoint.y()).arg(surfaceHeight)));
+    QVERIFY2(fifthPoint.y() < 0.5,
+             qPrintable(QStringLiteral("mm y=20 mapped to scene y=%1, expected near 0")
+                            .arg(fifthPoint.y())));
+
+    // And the short-on-the-right asymmetry is preserved rather than mirrored in X: mm x=10
+    // is the right edge, and it belongs to the short (lower) part of the L.
+    const auto secondPoint = polyline.at(1).toPointF();  // mm (10,0)
+    QVERIFY(secondPoint.x() > surfaceWidth - 0.5);
 }
 
 int main(int argc, char* argv[])

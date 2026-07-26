@@ -33,7 +33,7 @@ Item {
     }
 
     function replayGeometryWhenReady() {
-        if (previewReplayIssued || !controller || !modelPreview.viewportReady) return
+        if (previewReplayIssued || !controller || !modelPreviewPanel.viewportReady) return
         previewReplayIssued = true
         controller.replayGeometry()
     }
@@ -59,7 +59,7 @@ Item {
 
         DrawingComponentPicker {
             id: componentPicker
-            Layout.preferredWidth: 260
+            Layout.preferredWidth: 290
             Layout.fillHeight: true
             controller: root.controller
             draft: root.draft
@@ -72,11 +72,15 @@ Item {
             id: modelPreviewPanel
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumWidth: 320
+            Layout.minimumWidth: 280
             theme: root.theme
             wellSurface: true
 
             readonly property bool viewportReady: viewportLoader.status === Loader.Ready
+            // The Loader is asynchronous, so it is not ready when activatePreviews() first
+            // asks. Without this the replay never happened and the viewport stayed empty
+            // until some other workspace replayed the geometry for it.
+            onViewportReadyChanged: root.replayGeometryWhenReady()
 
             Loader {
                 id: viewportLoader
@@ -121,7 +125,8 @@ Item {
         // half-width window the queue and the export button would otherwise be pushed off
         // the bottom with no way to reach them.
         ScrollView {
-            Layout.preferredWidth: 380
+            Layout.preferredWidth: 420
+            Layout.minimumWidth: 380
             Layout.fillHeight: true
             clip: true
             contentWidth: availableWidth
