@@ -48,6 +48,10 @@ Inspect.ElevatedPanel {
     property real panX: 0
     property real panY: 0
     property real viewRotation: 0
+    // Continuous rotation the gesture has accumulated, before any snapping. Kept apart from
+    // viewRotation so a snapped drag still tracks the pointer underneath.
+    property real rotationAccumulator: 0
+    readonly property real rotationSnapDegrees: 15
 
     // How far the drawing may be pushed past the frame before resistance sets in: enough to
     // inspect an edge against the frame, not enough to lose the drawing off screen.
@@ -62,6 +66,7 @@ Inspect.ElevatedPanel {
         root.panX = 0
         root.panY = 0
         root.viewRotation = 0
+        root.rotationAccumulator = 0
     }
 
     // Progressive resistance past the allowance, so the drawing slows before it stops instead
@@ -281,6 +286,9 @@ Inspect.ElevatedPanel {
                     // Stop mid-settle rather than fighting it: the drag continues from the value
                     // on screen, which is what makes grabbing a moving canvas feel possible.
                     settleAnimation.stop()
+                    // Start the accumulator from what is on screen, so a snapped drag begins
+                    // where the drawing actually is.
+                    root.rotationAccumulator = root.viewRotation
                     lastX = mouse.x
                     lastY = mouse.y
                     lastAngle = canvasInput.angleAt(mouse.x, mouse.y)
@@ -288,14 +296,18 @@ Inspect.ElevatedPanel {
                 onPositionChanged: function(mouse) {
                     if (!pressed) return
                     if ((mouse.modifiers & Qt.AltModifier) && (mouse.modifiers & Qt.ShiftModifier)) {
-                        // Alt+Shift snaps to 45 degrees, for squaring a drawing up against the
-                        // page rather than eyeballing it.
+                        // Snapped rotation tracks a continuous accumulator and quantises only
+                        // what is applied. Quantising the accumulator itself -- which is what
+                        // this did at 45 degrees -- means small drags round to zero and change
+                        // nothing, so the gesture feels stuck until it suddenly jumps. 15
+                        // degrees also lands on the angles people actually want.
                         const angle = canvasInput.angleAt(mouse.x, mouse.y)
                         let delta = angle - lastAngle
                         if (delta > 180) delta -= 360
                         else if (delta < -180) delta += 360
-                        const target = root.viewRotation + delta
-                        root.viewRotation = Math.round(target / 45) * 45
+                        root.rotationAccumulator += delta
+                        const snap = root.rotationSnapDegrees
+                        root.viewRotation = Math.round(root.rotationAccumulator / snap) * snap
                         lastAngle = angle
                     } else if (mouse.modifiers & Qt.AltModifier) {
                         // Alt+drag rotates in plane, the same gesture the 3D viewport uses,
@@ -306,6 +318,7 @@ Inspect.ElevatedPanel {
                         if (delta > 180) delta -= 360
                         else if (delta < -180) delta += 360
                         root.viewRotation += delta
+                        root.rotationAccumulator = root.viewRotation
                         lastAngle = angle
                     } else {
                         root.panX = root.resisted(root.panX + mouse.x - lastX, root.panAllowanceX)
@@ -341,7 +354,7 @@ Inspect.ElevatedPanel {
             Layout.fillWidth: true
             objectName: "drawingPreviewNavigationHint"
             visible: root.hasGeometry
-            text: qsTr("Drag to pan · scroll to zoom · Alt+drag to rotate · Alt+Shift for 45° steps · double-click to fit")
+            text: qsTr("Drag to pan · scroll to zoom · Alt+drag to rotate · Alt+Shift for 15° steps · double-click to fit")
             color: root.theme.muted
             wrapMode: Text.Wrap
             font.pixelSize: root.theme.fontCaption

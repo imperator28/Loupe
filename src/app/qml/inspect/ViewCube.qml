@@ -219,6 +219,36 @@ Item {
             // Deliberately NOT Texture.sourceItem, which is the obvious way to draw
             // text onto a face: it needs a live render context and segfaults under
             // the offscreen platform the QML smoke test runs on.
+            // Hover highlight. The cube body is one watertight model with a single material,
+            // so a face cannot be tinted directly; this lays a tinted panel on the hovered
+            // face using the same placement the labels use, which is why it cannot drift from
+            // them.
+            Repeater3D {
+                model: root.viewNames
+
+                Model {
+                    required property var modelData
+                    readonly property vector3d direction: root.directionFor(modelData)
+
+                    source: "#Rectangle"
+                    visible: root.hoveredView === modelData
+                    // Just under the label decal, so the label still reads over it.
+                    position: Qt.vector3d(direction.x * root.halfSize * 1.002,
+                                          direction.y * root.halfSize * 1.002,
+                                          direction.z * root.halfSize * 1.002)
+                    rotation: root.rotationOntoDirection(direction)
+                    scale: Qt.vector3d(root.unitScale, root.unitScale, root.unitScale)
+                    pickable: false
+
+                    materials: PrincipledMaterial {
+                        baseColor: root.theme ? root.theme.accent : "transparent"
+                        lighting: PrincipledMaterial.NoLighting
+                        alphaMode: PrincipledMaterial.Blend
+                        opacity: 0.42
+                    }
+                }
+            }
+
             Repeater3D {
                 model: root.viewNames
 

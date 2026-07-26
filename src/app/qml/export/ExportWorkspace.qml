@@ -81,9 +81,18 @@ Item {
             onViewportReadyChanged: root.replayGeometryWhenReady()
         }
 
-        ColumnLayout {
+        // Scrollable, because at a small window height the destination, format, naming and
+        // export button fall off the bottom with no way to reach them.
+        ScrollView {
             Layout.preferredWidth: 360
             Layout.fillHeight: true
+            clip: true
+            contentWidth: availableWidth
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+        ColumnLayout {
+            width: parent.width
             spacing: root.theme.spacing3
 
             ExportPreview {
@@ -116,6 +125,7 @@ Item {
                 draft: root.draft
                 theme: root.theme
             }
+        }
         }
     }
 }

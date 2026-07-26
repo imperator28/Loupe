@@ -106,7 +106,10 @@ Item {
                     item.selectionEnabled = false
                     item.faceFrameSelectionEnabled = true
                     item.componentHoverEnabled = false
-                    item.contextActionsEnabled = false
+                    // Right-click offers Fit. Component actions are export-specific, so they
+                    // stay off here.
+                    item.contextActionsEnabled = true
+                    item.componentContextActionsEnabled = false
                     item.requireDisplayFilter = true
                     item.displayOnlyNodeId = Qt.binding(function() { return root.viewportNodeId })
                     item.faceFrameSelected.connect(root.applyFaceFrame)

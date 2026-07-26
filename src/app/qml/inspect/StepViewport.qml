@@ -26,6 +26,9 @@ Item {
     property bool faceFrameSelectionEnabled: false
     property bool componentHoverEnabled: true
     property bool contextActionsEnabled: !presentationOnly
+    // Component actions are export-specific. A presentation viewport can still want the
+    // viewport menu for Fit without offering them.
+    property bool componentContextActionsEnabled: true
     property bool requireDisplayFilter: false
     property string displayOnlyNodeId: ""
     property string externalHighlightNodeId: ""
@@ -242,8 +245,11 @@ Item {
     }
 
     function setStandardView(normal) {
+        // Orientation only. Re-fitting here also reset distance and magnification, so
+        // clicking a cube face zoomed the part back out to the whole assembly -- the user
+        // asked to look from a different side, not to change how close they were. Fit stays
+        // an explicit action: the Fit tool, or the viewport context menu.
         navigation.alignToNormal(normal)
-        Qt.callLater(fitVisibleGeometry)
     }
 
     function fitVisibleGeometry() {
@@ -1129,6 +1135,11 @@ Item {
         property bool dragging: false
         property bool rolling: false
         property real lastRollAngle: 0
+        // Continuous roll the gesture has accumulated, and how much of it has been
+        // applied. Snapping needs both: the pointer moves continuously while the model
+        // only moves in steps.
+        property real rollAccumulator: 0
+        property real rollApplied: 0
         hoverEnabled: true
 
         onPressed: function(mouse) {
@@ -1160,12 +1171,29 @@ Item {
                 if (!rolling) {
                     // Latch the starting angle so engaging the gesture cannot jump.
                     rolling = true
+                    rollAccumulator = 0
+                    rollApplied = 0
                 } else {
                     let step = angle - lastRollAngle
                     // Crossing the +/-180 seam would otherwise read as a full turn.
                     while (step > 180) step -= 360
                     while (step < -180) step += 360
-                    navigation.roll(step)
+                    if (mouse.modifiers & Qt.ShiftModifier) {
+                        // Alt+Shift steps the roll, matching the 2D canvas so the gesture means
+                        // the same thing in both. The accumulator stays continuous and only the
+                        // applied value is quantised -- rounding the accumulator makes small
+                        // drags round to zero, which reads as a stuck gesture.
+                        rollAccumulator += step
+                        const snapped = Math.round(rollAccumulator / 15) * 15
+                        if (snapped !== rollApplied) {
+                            navigation.roll(snapped - rollApplied)
+                            rollApplied = snapped
+                        }
+                    } else {
+                        navigation.roll(step)
+                        rollAccumulator += step
+                        rollApplied = rollAccumulator
+                    }
                 }
                 lastRollAngle = angle
                 pressX = mouse.x
@@ -1191,7 +1219,7 @@ Item {
                 root.pickAt(mouse.x, mouse.y, additive)
             }
             if (!dragging && pressButton === Qt.RightButton && root.contextActionsEnabled) {
-                if (root.pickAt(mouse.x, mouse.y, false)) {
+                if (root.componentContextActionsEnabled && root.pickAt(mouse.x, mouse.y, false)) {
                     if (root.presentationOnly) exportComponentContextMenu.popup(mouse.x, mouse.y)
                     else componentContextMenu.popup(mouse.x, mouse.y)
                 }
@@ -1465,7 +1493,8 @@ Item {
     ThemedMenu {
         id: viewportContextMenu
         theme: root.theme
-        ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Fit assembly"); onTriggered: root.fitCamera() }
+        ThemedMenuItem { theme: viewportContextMenu.theme; text: root.requireDisplayFilter ? qsTr("Fit part") : qsTr("Fit assembly")
+                                     onTriggered: root.fitCamera() }
         ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuSeparator { theme: viewportContextMenu.theme }
         ThemedMenuItem {
