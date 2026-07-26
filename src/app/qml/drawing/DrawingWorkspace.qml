@@ -121,55 +121,86 @@ Item {
             }
         }
 
-        // Scrollable, because this column holds four panels and at 1080p or in a
-        // half-width window the queue and the export button would otherwise be pushed off
-        // the bottom with no way to reach them.
-        ScrollView {
+        // The preview stays put and only the configuration scrolls. Everything to do with
+        // exporting has moved into a sheet behind the queue button, so the drawing being
+        // configured is what is on screen, and the preview never scrolls out from under the
+        // controls that change it.
+        ColumnLayout {
             Layout.preferredWidth: 420
             Layout.minimumWidth: 380
             Layout.fillHeight: true
-            clip: true
-            contentWidth: availableWidth
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            spacing: root.theme.spacing3
 
-            ColumnLayout {
-                width: parent.width
-                spacing: root.theme.spacing3
+            DrawingPreview2D {
+                id: preview2d
+                Layout.fillWidth: true
+                // Sticky: outside the scroll area, sized to its own content.
+                Layout.preferredHeight: implicitHeight
+                draft: root.draft
+                theme: root.theme
+            }
 
-                DrawingPreview2D {
-                    id: preview2d
-                    Layout.fillWidth: true
-                    // Sizes to its own content so the extents and warnings below the canvas
-                    // cannot spill out over the panel beneath it.
-                    Layout.preferredHeight: implicitHeight
-                    draft: root.draft
-                    theme: root.theme
-                }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                contentWidth: availableWidth
+                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 DrawingSetupPanel {
-                    Layout.fillWidth: true
+                    width: parent.width
                     draft: root.draft
                     theme: root.theme
                     viewResolver: root.controller
+                    onAddRequested: queueButton.flash()
+                }
+            }
+
+            Inspect.ThemedButton {
+                id: queueButton
+                objectName: "drawingQueueButton"
+                theme: root.theme
+                Layout.fillWidth: true
+                // Count in the label rather than a floating badge: it has to be readable at a
+                // glance and survive translation without overlapping anything.
+                text: root.draft && root.draft.queueCount > 0
+                      ? qsTr("Queue (%1) — review and export").arg(root.draft.queueCount)
+                      : qsTr("Queue is empty")
+                primary: root.draft && root.draft.queueCount > 0
+                enabled: root.draft && root.draft.queueCount > 0
+                onClicked: exportSheet.open()
+
+                function flash() {
+                    // A queued drawing goes somewhere the user cannot see, so the button
+                    // acknowledges the add rather than leaving it silent.
+                    flashAnimation.restart()
                 }
 
-                DrawingQueue {
-                    Layout.fillWidth: true
-                    // A real height rather than fillHeight: inside a scroll view fillHeight
-                    // collapses to the content height, which for an empty queue is nothing.
-                    Layout.preferredHeight: 260
-                    draft: root.draft
-                    theme: root.theme
+                SequentialAnimation {
+                    id: flashAnimation
+                    NumberAnimation { target: queueButton; property: "opacity"; to: 0.45
+                                      duration: root.theme.durInstant }
+                    NumberAnimation { target: queueButton; property: "opacity"; to: 1.0
+                                      duration: root.theme.durFast }
                 }
 
-                DrawingOutputPanel {
-                    Layout.fillWidth: true
-                    draft: root.draft
+                Inspect.ThemedToolTip {
                     theme: root.theme
+                    visible: parent.hovered
+                    text: root.draft && root.draft.queueCount > 0
+                          ? qsTr("Open the queue to set format and destination, then export")
+                          : qsTr("Add a drawing to the queue first")
                 }
             }
         }
+    }
+
+    DrawingExportSheet {
+        id: exportSheet
+        objectName: "drawingExportSheet"
+        draft: root.draft
+        theme: root.theme
     }
 
     function applyFaceFrame(frame) {

@@ -41,6 +41,33 @@ Inspect.ElevatedPanel {
     readonly property real surfaceWidth: hasGeometry ? preview.widthMm * fitScale : 0
     readonly property real surfaceHeight: hasGeometry ? preview.heightMm * fitScale : 0
 
+    // Display-only navigation. None of it reaches the drawing: the exported file is built
+    // from the projection, never from what the canvas happens to be showing, so zooming in to
+    // inspect a corner cannot change what gets cut.
+    property real viewScale: 1.0
+    property real panX: 0
+    property real panY: 0
+    property real viewRotation: 0
+
+    function resetView() {
+        root.viewScale = 1.0
+        root.panX = 0
+        root.panY = 0
+        root.viewRotation = 0
+    }
+
+    function zoomAt(factor, pointX, pointY) {
+        const next = Math.max(0.2, Math.min(40.0, root.viewScale * factor))
+        const applied = next / root.viewScale
+        // Keep the point under the cursor fixed, measured from the frame centre, so zooming
+        // magnifies what is being looked at rather than the middle of the panel.
+        const centreX = pointX - canvasFrame.width / 2
+        const centreY = pointY - canvasFrame.height / 2
+        root.panX = centreX - applied * (centreX - root.panX)
+        root.panY = centreY - applied * (centreY - root.panY)
+        root.viewScale = next
+    }
+
     // One polyline list per stroke style rather than one object per contour.
     //
     // This is not a micro-optimisation, it is the only thing that works: Repeater requires
@@ -84,6 +111,8 @@ Inspect.ElevatedPanel {
         }
         root.previewRevision = revision
         root.approximate = isApproximate
+        // A different drawing at the previous pan and zoom would open somewhere arbitrary.
+        root.resetView()
     }
 
     function clearPreview() {
@@ -117,6 +146,20 @@ Inspect.ElevatedPanel {
                 font.pixelSize: root.theme.fontTitle
                 elide: Text.ElideRight
             }
+            Inspect.ThemedToolButton {
+                objectName: "drawingPreviewFit"
+                theme: root.theme
+                visible: root.hasGeometry
+                text: "\u2922"
+                enabled: root.viewScale !== 1.0 || root.panX !== 0 || root.panY !== 0
+                         || root.viewRotation !== 0
+                onClicked: root.resetView()
+                Inspect.ThemedToolTip {
+                    theme: root.theme
+                    visible: parent.hovered
+                    text: qsTr("Fit the drawing back into the frame")
+                }
+            }
             Label {
                 objectName: "drawingPreviewExtents"
                 visible: root.hasGeometry
@@ -145,7 +188,12 @@ Inspect.ElevatedPanel {
                 visible: root.hasGeometry
                 width: root.surfaceWidth
                 height: root.surfaceHeight
-                anchors.centerIn: parent
+                // Positioned rather than anchored, since panning moves it off centre.
+                x: (canvasFrame.width - width) / 2 + root.panX
+                y: (canvasFrame.height - height) / 2 + root.panY
+                scale: root.viewScale
+                rotation: root.viewRotation
+                transformOrigin: Item.Center
 
                 Shape {
                     anchors.fill: parent
@@ -170,6 +218,52 @@ Inspect.ElevatedPanel {
                 }
             }
 
+            MouseArea {
+                id: canvasInput
+                anchors.fill: parent
+                enabled: root.hasGeometry
+                acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                cursorShape: pressed ? Qt.ClosedHandCursor : Qt.ArrowCursor
+                property real lastX: 0
+                property real lastY: 0
+                property real lastAngle: 0
+
+                function angleAt(x, y) {
+                    return Math.atan2(y - height / 2, x - width / 2) * 180 / Math.PI
+                }
+
+                onPressed: function(mouse) {
+                    lastX = mouse.x
+                    lastY = mouse.y
+                    lastAngle = canvasInput.angleAt(mouse.x, mouse.y)
+                }
+                onPositionChanged: function(mouse) {
+                    if (!pressed) return
+                    if (mouse.modifiers & Qt.AltModifier) {
+                        // Alt+drag rotates in plane, the same gesture the 3D viewport uses,
+                        // rather than a second convention to remember.
+                        const angle = canvasInput.angleAt(mouse.x, mouse.y)
+                        let delta = angle - lastAngle
+                        // Normalise across the +/-180 seam, or a drag past it would spin.
+                        if (delta > 180) delta -= 360
+                        else if (delta < -180) delta += 360
+                        root.viewRotation += delta
+                        lastAngle = angle
+                    } else {
+                        root.panX += mouse.x - lastX
+                        root.panY += mouse.y - lastY
+                    }
+                    lastX = mouse.x
+                    lastY = mouse.y
+                }
+                onDoubleClicked: root.resetView()
+                onWheel: function(wheel) {
+                    const notches = wheel.angleDelta.y / 120
+                    if (notches === 0) return
+                    root.zoomAt(Math.pow(1.15, notches), wheel.x, wheel.y)
+                }
+            }
+
             Label {
                 anchors.centerIn: parent
                 visible: !root.hasGeometry
@@ -182,6 +276,16 @@ Inspect.ElevatedPanel {
                         ? qsTr("Choose a part and a view to preview the drawing")
                         : qsTr("This view produced no outline")
             }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            objectName: "drawingPreviewNavigationHint"
+            visible: root.hasGeometry
+            text: qsTr("Drag to pan · scroll to zoom · Alt+drag to rotate · double-click to fit")
+            color: root.theme.muted
+            wrapMode: Text.Wrap
+            font.pixelSize: root.theme.fontCaption
         }
 
         Label {

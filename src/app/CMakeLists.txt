@@ -126,6 +126,7 @@ qt_add_qml_module(loupe-app
         qml/export/ExportSettings.qml
         qml/export/ExportWorkspace.qml
         qml/drawing/DrawingComponentPicker.qml
+        qml/drawing/DrawingExportSheet.qml
         qml/drawing/DrawingOutputPanel.qml
         qml/drawing/DrawingPreview2D.qml
         qml/drawing/DrawingQueue.qml

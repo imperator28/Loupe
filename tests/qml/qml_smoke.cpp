@@ -78,6 +78,7 @@ private slots:
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
     void drawingPreviewOrientationAndScaleSurviveTheScreenTransform();
+    void drawingPreviewZoomKeepsThePointUnderTheCursorFixed();
 };
 
 void QmlSmokeTest::initTestCase()
@@ -846,6 +847,75 @@ void QmlSmokeTest::drawingPreviewOrientationAndScaleSurviveTheScreenTransform()
     // is the right edge, and it belongs to the short (lower) part of the L.
     const auto secondPoint = polyline.at(1).toPointF();  // mm (10,0)
     QVERIFY(secondPoint.x() > surfaceWidth - 0.5);
+}
+
+void QmlSmokeTest::drawingPreviewZoomKeepsThePointUnderTheCursorFixed()
+{
+    // Zoom-to-cursor is the one bit of the canvas navigation with real arithmetic in it, and
+    // getting it wrong is not obviously wrong -- the drawing still zooms, it just drifts.
+    std::unique_ptr<QObject> theme;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    theme.reset(themeComponent.create());
+    QVERIFY(theme != nullptr);
+
+    loupe::app::drawing::DrawingWorkspaceController draft;
+    QQuickWindow window;
+    window.resize(400, 500);
+    std::unique_ptr<QObject> previewKeepAlive;
+    auto* preview = buildPreviewWithLShape(engine, window, draft, theme.get(), previewKeepAlive);
+    QVERIFY(preview != nullptr);
+    QTRY_VERIFY(preview->property("hasGeometry").toBool());
+
+    auto* frame = findItemByObjectName(window.contentItem(), QStringLiteral("drawingPreviewSurface"));
+    QVERIFY(frame != nullptr);
+    auto* canvas = frame->parentItem();
+    QVERIFY(canvas != nullptr);
+
+    // A drawing opens fitted.
+    QCOMPARE(preview->property("viewScale").toReal(), 1.0);
+    QCOMPARE(preview->property("panX").toReal(), 0.0);
+
+    // Where a given canvas point sits in surface-local space, before and after zooming.
+    const auto surfaceLocalOf = [&](double canvasX, double canvasY) {
+        const auto scale = preview->property("viewScale").toReal();
+        const auto panX = preview->property("panX").toReal();
+        const auto panY = preview->property("panY").toReal();
+        const auto centreX = canvasX - canvas->width() / 2.0;
+        const auto centreY = canvasY - canvas->height() / 2.0;
+        return QPointF((centreX - panX) / scale, (centreY - panY) / scale);
+    };
+
+    const double pointX = canvas->width() * 0.72;
+    const double pointY = canvas->height() * 0.31;
+    const auto before = surfaceLocalOf(pointX, pointY);
+
+    QVERIFY(QMetaObject::invokeMethod(preview, "zoomAt", Q_ARG(QVariant, 2.5),
+                                      Q_ARG(QVariant, pointX), Q_ARG(QVariant, pointY)));
+    QCOMPARE(preview->property("viewScale").toReal(), 2.5);
+    const auto after = surfaceLocalOf(pointX, pointY);
+    QVERIFY2(std::abs(after.x() - before.x()) < 0.01 && std::abs(after.y() - before.y()) < 0.01,
+             qPrintable(QStringLiteral("cursor point moved from (%1,%2) to (%3,%4) in the drawing")
+                            .arg(before.x()).arg(before.y()).arg(after.x()).arg(after.y())));
+
+    // Zoom is clamped, so a wheel held down cannot leave the drawing unreachable.
+    QVERIFY(QMetaObject::invokeMethod(preview, "zoomAt", Q_ARG(QVariant, 1000.0),
+                                      Q_ARG(QVariant, pointX), Q_ARG(QVariant, pointY)));
+    QVERIFY(preview->property("viewScale").toReal() <= 40.0);
+
+    QVERIFY(QMetaObject::invokeMethod(preview, "resetView"));
+    QCOMPARE(preview->property("viewScale").toReal(), 1.0);
+    QCOMPARE(preview->property("panX").toReal(), 0.0);
+    QCOMPARE(preview->property("panY").toReal(), 0.0);
+    QCOMPARE(preview->property("viewRotation").toReal(), 0.0);
+
+    // And navigation is display-only: the geometry handed to the Shape is unchanged by it.
+    const auto pathsBefore = preview->property("closedPaths").toList();
+    QVERIFY(QMetaObject::invokeMethod(preview, "zoomAt", Q_ARG(QVariant, 3.0),
+                                      Q_ARG(QVariant, pointX), Q_ARG(QVariant, pointY)));
+    QCOMPARE(preview->property("closedPaths").toList(), pathsBefore);
 }
 
 int main(int argc, char* argv[])
