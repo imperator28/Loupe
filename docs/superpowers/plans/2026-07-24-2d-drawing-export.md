@@ -773,14 +773,62 @@ ctest --preset windows-release --output-on-failure -R "qml"
 
 ## Gate E: Workspace UX review
 
-- [ ] The 2D preview renders the candidate before it can be queued, with extents and warnings.
-- [ ] One part queues at several angles as independent rows with non-colliding names.
-- [ ] Selecting a queue row shows that drawing.
-- [ ] Queued drawings are immune to later camera changes.
-- [ ] Face-normal views work on a non-axis-aligned face; a curved face is refused with a readable reason.
-- [ ] A full batch exports, validates, and reports per row.
-- [ ] Reviewed against `docs/review/ui-refinement-handoff.md`.
-- [ ] Full CTest suite green on Windows and macOS.
+Tasks 10-15 are complete. What is machine-verified is marked; what needs eyes on a real
+part is listed separately rather than ticked off on the strength of the code being written.
+
+- [x] The 2D preview renders the candidate before it can be queued, with extents and warnings.
+
+      Structurally guaranteed rather than merely arranged: the add action sits below the
+      preview, and the smoke test asserts it is disabled until a view is chosen. Staleness
+      is prevented twice -- a non-newest revision is discarded on arrival, and a candidate
+      change blanks the geometry before any reply returns.
+
+      **Needs a human:** that a real part's outline looks right on screen.
+- [x] One part queues at several angles as independent rows with non-colliding names.
+
+      Covered three times over: the plan tests, the controller tests, and the QML smoke test
+      that clicks Top then Front on one part and checks two rows with different paths.
+- [x] Selecting a queue row shows that drawing.
+- [x] Queued drawings are immune to later camera changes.
+
+      The sharpest test in the controller suite: it changes the candidate view and scale
+      after queueing, then asserts the queued row, its filename, and the plan fingerprint
+      are all unmoved.
+- [x] Face-normal views work on a non-axis-aligned face; a curved face is refused with a readable reason.
+
+      The refusal is tested, with the measured deviation quoted back. Flatness is judged
+      from the face's own triangle normals, not its vertex normals, which are blended across
+      face borders -- the flat-face test in `scene-model` pins this by using shading normals
+      deliberately 45 degrees off the plane.
+
+      **Needs a human:** an actual click on a non-axis-aligned face in the running app. The
+      pieces are each tested, but I cannot perform the click.
+- [x] A full batch exports, validates, and reports per row.
+
+      End to end over the local socket in `worker-process`: a real DXF written, reopened,
+      validated, and reported. A wrong fingerprint is refused with nothing written. A failed
+      row deletes its file and does not abort the batch.
+- [x] Reviewed against `docs/review/ui-refinement-handoff.md`.
+
+      The review found the document itself out of date rather than the code: section 4.1
+      stated the product has **two** workspaces, which would have made a future reviewer
+      treat Drawing as out-of-contract. Updated to three, with the shared-ordered-list rule
+      recorded as a contract. The ownership table in section 7 gained
+      `DrawingWorkspaceController`, `PickerComponents`, and the drawing core, since that
+      table is the boundary UI engineers are held to. A Drawing workspace gate was added to
+      section 10.
+
+      Contracts checked and met: expensive work stays off the pointer path (projection runs
+      in the worker); the viewport is configured, not forked; no colour or duration literals;
+      identity is the stable node ID throughout; raw body rows stay suppressed because the
+      picker logic is now literally shared rather than reimplemented.
+- [x] Full CTest suite green on Windows.
+
+      **171/171 passing**, two evidence symlink cases skipped as they always are on Windows.
+- [ ] **Not verified: macOS.** No macOS machine in this session. The risk is concentrated in
+      two places worth checking first there: `Qt.platform.os` now selects the window corner
+      radius, and `Shape`'s `CurveRenderer` in the 2D preview is the newest Qt feature this
+      feature depends on.
 
 ---
 

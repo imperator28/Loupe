@@ -68,9 +68,10 @@ The design should favor scanability, direct manipulation, restrained visual styl
 
 ### 4.1 Workspaces
 
-- The top-level product has two workspaces: **Inspect** and **Export**.
+- The top-level product has three workspaces: **Inspect**, **Export**, and **Drawing**.
 - Switching workspaces must feel immediate. Expensive geometry replay remains asynchronous and must not freeze navigation.
-- Inspect and Export share the same viewport navigation and rendering behavior. Export configures that viewport for presentation-only use rather than forking its camera logic.
+- All three share the same viewport navigation and rendering behavior. Export and Drawing configure that viewport for presentation-only use rather than forking its camera logic.
+- The switcher, the View menu, and the workspace stack read one ordered list of workspaces. A workspace added to one and not the others is a defect, not a partial feature.
 
 ### 4.2 Theme
 
@@ -368,7 +369,10 @@ The UI consumes controller properties, models, invokables, and signals. It must 
 | `SectionController` | Section plane, offset, flip, interaction lifecycle, preview, and final section request |
 | `MeasurementController` | Mode eligibility, topology picks, persistent pick identity, calculations, and results |
 | `ExportWorkspaceController` | Picker state, hover/focus/check separation, bucket order, naming, destination, validation, and export execution |
+| `DrawingWorkspaceController` | Candidate view state, face-planarity judgement, queue membership and order, per-drawing naming, and drawing execution |
+| `PickerComponents` | The component list both pickers show, including raw-body suppression and hierarchy paths |
 | `ExportPlan` and validation core | Immutable export intent, collision checks, output validity, and deterministic execution contract |
+| `DrawingPlan`, projector, and writers | Immutable drawing intent, exact 1:1 projection, and per-format page conventions |
 | Worker protocol | Imported BRep ownership, asynchronous geometry/refinement, exact section work, and export writers |
 
 Important implementation rules:
@@ -424,6 +428,17 @@ A redesign is ready for user review only when all of the following remain true:
 - Measurement point, edge, face, and body highlights match the selected topology and follow the camera.
 - Export bucket reorder works by grip, insertion indicator, and button fallback while preserving filenames and tree scroll.
 
+### Drawing workspace gate
+
+- A 2D preview of the candidate is on screen, with its measured extents stated, before the add action can be reached.
+- A superseded preview never remains on screen as though it were current.
+- One part queues at several views as independent rows with non-colliding filenames.
+- Selecting a queue row shows that drawing.
+- A queued drawing is unaffected by later camera movement.
+- A curved face is refused with its measured deviation quoted, not projected from an averaged normal.
+- A batch exports, each file is reopened and validated, and each row reports its own outcome.
+- An open contour is reported rather than passed off as a clean success.
+
 ### Visual gate
 
 - Light and dark themes include the viewport and all popup/control text remains readable.
@@ -447,6 +462,8 @@ A redesign is ready for user review only when all of the following remain true:
 - Section UI: `src/app/qml/inspect/SectionPanel.qml`, `src/app/qml/inspect/SectionManipulator.qml`, `src/app/qml/inspect/SectionOffsetSlider.qml`
 - Measurement highlighting: `src/app/qml/inspect/MeasurementFaceHighlight.qml`, `src/app/tools/MeasurementController.*`
 - Export workspace: `src/app/qml/export/`, `src/app/export/ExportWorkspaceController.*`
+- Drawing workspace: `src/app/qml/drawing/`, `src/app/drawing/DrawingWorkspaceController.*`
+- Drawing contract: `src/core/drawing/`
 - Theme controls: `src/app/qml/Theme.qml`, `src/app/qml/inspect/Themed*.qml`
 - Export contract: `src/core/export/ExportPlan.*`, `src/core/validation/OutputValidator.*`
 - Worker boundary: `src/app/worker/`, `src/worker/`, `src/protocol/`
