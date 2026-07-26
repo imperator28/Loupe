@@ -219,33 +219,31 @@ Item {
             // Deliberately NOT Texture.sourceItem, which is the obvious way to draw
             // text onto a face: it needs a live render context and segfaults under
             // the offscreen platform the QML smoke test runs on.
-            // Hover highlight. The cube body is one watertight model with a single material,
-            // so a face cannot be tinted directly; this lays a tinted panel on the hovered
-            // face using the same placement the labels use, which is why it cannot drift from
-            // them.
-            Repeater3D {
-                model: root.viewNames
+            // Hover highlight: one model that moves to the hovered face, not one per face.
+            //
+            // It was six, each with a blended material. Blended geometry forces depth sorting
+            // for the whole view, and the cube's View3D redraws every frame, so six of them
+            // cost frame time continuously -- visible as the model lagging behind a camera
+            // change even though nothing about the camera had changed. One, hidden unless a
+            // face is hovered, costs nothing when it is not.
+            Model {
+                readonly property vector3d direction: root.hoveredView.length > 0
+                    ? root.directionFor(root.hoveredView) : Qt.vector3d(0, 0, 1)
 
-                Model {
-                    required property var modelData
-                    readonly property vector3d direction: root.directionFor(modelData)
+                source: "#Rectangle"
+                visible: root.hoveredView.length > 0
+                position: Qt.vector3d(direction.x * root.halfSize * 1.002,
+                                      direction.y * root.halfSize * 1.002,
+                                      direction.z * root.halfSize * 1.002)
+                rotation: root.rotationOntoDirection(direction)
+                scale: Qt.vector3d(root.unitScale, root.unitScale, root.unitScale)
+                pickable: false
 
-                    source: "#Rectangle"
-                    visible: root.hoveredView === modelData
-                    // Just under the label decal, so the label still reads over it.
-                    position: Qt.vector3d(direction.x * root.halfSize * 1.002,
-                                          direction.y * root.halfSize * 1.002,
-                                          direction.z * root.halfSize * 1.002)
-                    rotation: root.rotationOntoDirection(direction)
-                    scale: Qt.vector3d(root.unitScale, root.unitScale, root.unitScale)
-                    pickable: false
-
-                    materials: PrincipledMaterial {
-                        baseColor: root.theme ? root.theme.accent : "transparent"
-                        lighting: PrincipledMaterial.NoLighting
-                        alphaMode: PrincipledMaterial.Blend
-                        opacity: 0.42
-                    }
+                materials: PrincipledMaterial {
+                    baseColor: root.theme ? root.theme.accent : "transparent"
+                    lighting: PrincipledMaterial.NoLighting
+                    alphaMode: PrincipledMaterial.Blend
+                    opacity: 0.42
                 }
             }
 
