@@ -1,6 +1,7 @@
 #include "app/ApplicationController.h"
 #include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
+#include "app/models/AssemblyTreeModel.h"
 #include "app/models/ThemePreference.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
@@ -73,6 +74,7 @@ private slots:
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
+    void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
 };
 
 void QmlSmokeTest::initTestCase()
@@ -549,6 +551,89 @@ void QmlSmokeTest::drawingWorkspaceQueuesOnePartAtSeveralViews()
     const auto secondPath = draft.planRows().at(1).toMap().value(QStringLiteral("path")).toString();
     QVERIFY(firstPath != secondPath);
     QVERIFY(draft.planError().isEmpty());
+}
+
+namespace {
+
+// Collects QML warnings so a test can assert a specific one is absent.
+//
+// Needed because the defect this guards against is invisible by construction: a call to a
+// non-Q_INVOKABLE method fails as a caught QML TypeError. Nothing crashes, nothing returns
+// an error, and the only evidence is a warning on stderr that no assertion was reading.
+QStringList g_capturedMessages;
+QtMessageHandler g_previousHandler = nullptr;
+
+void capturingMessageHandler(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+    g_capturedMessages.append(message);
+    if (g_previousHandler) g_previousHandler(type, context, message);
+}
+
+} // namespace
+
+void QmlSmokeTest::inspectTreeRevealCallsIntoTheModelWithoutAQmlError()
+{
+    // Exercises the real reveal path: InspectWorkspace.revealActiveNode() calls
+    // assemblyTree.indexForStableId(), then hands the result to TreeView.expandToIndex and
+    // TableView.positionViewAtIndex. All three have to accept a QModelIndex from QML.
+    loupe::app::ApplicationController controller;
+    auto* treeModel = qobject_cast<loupe::app::models::AssemblyTreeModel*>(
+        controller.property("assemblyTree").value<QObject*>());
+    QVERIFY(treeModel != nullptr);
+    treeModel->replaceSnapshot({
+        {QStringLiteral("occ-root"), {}, QStringLiteral("assembly"), QStringLiteral("Housing"), 1},
+        {QStringLiteral("occ-carrier"), QStringLiteral("occ-root"), QStringLiteral("assembly"), QStringLiteral("Carrier"), 1},
+        {QStringLiteral("occ-cover"), QStringLiteral("occ-carrier"), QStringLiteral("part"), QStringLiteral("Cover"), 1},
+    });
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY2(theme != nullptr, qPrintable(themeComponent.errorString()));
+
+    QQmlComponent workspaceComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/InspectWorkspace.qml")));
+    QVERIFY2(workspaceComponent.isReady(), qPrintable(workspaceComponent.errorString()));
+    std::unique_ptr<QObject> workspaceObject(workspaceComponent.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("width"), 900},
+        {QStringLiteral("height"), 600},
+    }));
+    QVERIFY2(workspaceObject != nullptr, qPrintable(workspaceComponent.errorString()));
+    auto* workspace = qobject_cast<QQuickItem*>(workspaceObject.get());
+    QVERIFY(workspace != nullptr);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    workspace->setParentItem(window.contentItem());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // Capture only around the reveal, so unrelated Quick3D warnings from construction under
+    // the offscreen platform are not in scope.
+    g_capturedMessages.clear();
+    g_previousHandler = qInstallMessageHandler(capturingMessageHandler);
+
+    // The workspace reveals on activeNodeIdChanged, via Qt.callLater.
+    controller.setActiveNodeId(QStringLiteral("occ-cover"));
+    QTest::qWait(200);
+    // Called directly as well, so the assertion does not depend on callLater having fired.
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "revealActiveNode"));
+    QTest::qWait(50);
+
+    qInstallMessageHandler(g_previousHandler);
+    g_previousHandler = nullptr;
+
+    const auto offending = g_capturedMessages.filter(QStringLiteral("is not a function"))
+        + g_capturedMessages.filter(QStringLiteral("indexForStableId"));
+    QVERIFY2(offending.isEmpty(), qPrintable(QStringLiteral("QML reveal path reported: ")
+                                             + offending.join(QStringLiteral(" | "))));
+
+    // And the reveal genuinely resolved the node rather than bailing out at the valid check.
+    QVERIFY(treeModel->indexForStableId(QStringLiteral("occ-cover")).isValid());
 }
 
 int main(int argc, char* argv[])

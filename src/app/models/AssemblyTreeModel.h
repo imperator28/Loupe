@@ -30,7 +30,11 @@ public:
     explicit AssemblyTreeModel(QObject* parent = nullptr);
 
     void replaceSnapshot(const std::vector<SnapshotNode>& nodes);
-    [[nodiscard]] QModelIndex indexForStableId(const QString& stableId) const;
+    // Invokable because the Inspect workspace calls it to reveal the selected node in the
+    // tree. Returning a QModelIndex is deliberate rather than a row number: QML exposes it
+    // as a value type with a `valid` property, and both TreeView.expandToIndex and
+    // TableView.positionViewAtIndex take one, so a row would have to be converted back.
+    Q_INVOKABLE [[nodiscard]] QModelIndex indexForStableId(const QString& stableId) const;
 
     [[nodiscard]] QModelIndex index(int row, int column, const QModelIndex& parent = {}) const override;
     [[nodiscard]] QModelIndex parent(const QModelIndex& child) const override;
