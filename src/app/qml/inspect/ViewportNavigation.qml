@@ -102,6 +102,22 @@ QtObject {
         apply()
     }
 
+    // Re-centre on some bounds without changing how close the camera is.
+    //
+    // Standard views need this: alignToNormal orbits about activePivot, so if the pivot is
+    // still at the origin (or wherever the last orbit left it) while the part sits elsewhere,
+    // the camera ends up aimed at empty space and the part slides off to one side. Splitting
+    // this out of fitBounds is what lets a named view re-frame without also resetting the
+    // zoom, which is the whole reason a cube click stopped preserving magnification.
+    function centreOn(minimum, maximum) {
+        activePivot = Qt.vector3d((minimum.x + maximum.x) * 0.5,
+                                  (minimum.y + maximum.y) * 0.5,
+                                  (minimum.z + maximum.z) * 0.5)
+        cameraPosition = add(activePivot, orientation.times(Qt.vector3d(0, 0, distance)))
+        hasPendingPivot = false
+        apply()
+    }
+
     function setPendingOrbitPivot(pivot) {
         if (!pivot || !isFinite(pivot.x) || !isFinite(pivot.y) || !isFinite(pivot.z)) {
             hasPendingPivot = false

@@ -245,11 +245,47 @@ Item {
     }
 
     function setStandardView(normal) {
-        // Orientation only. Re-fitting here also reset distance and magnification, so
-        // clicking a cube face zoomed the part back out to the whole assembly -- the user
-        // asked to look from a different side, not to change how close they were. Fit stays
-        // an explicit action: the Fit tool, or the viewport context menu.
+        // Re-centre, then orient. Not a fit: distance and magnification are left alone, so
+        // looking from another side does not also change how close you are -- which is what
+        // re-fitting here used to do.
+        //
+        // Centring is not optional though. alignToNormal orbits about the pivot, so leaving
+        // the pivot wherever the last orbit put it aims the camera at empty space and the part
+        // slides off to one side, which reads as the view having gone somewhere wrong.
+        root.centreVisibleGeometry()
         navigation.alignToNormal(normal)
+    }
+
+    // The bounds of everything currently drawn, or null when nothing is.
+    function visibleGeometryBounds() {
+        let minimum = Qt.vector3d(0, 0, 0)
+        let maximum = Qt.vector3d(0, 0, 0)
+        let found = false
+        for (let id in geometryByNode) {
+            const geometry = geometryByNode[id]
+            const low = Qt.vector3d(geometry.minimumCoordinate(0), geometry.minimumCoordinate(1),
+                                    geometry.minimumCoordinate(2))
+            const high = Qt.vector3d(geometry.maximumCoordinate(0), geometry.maximumCoordinate(1),
+                                     geometry.maximumCoordinate(2))
+            if (!isFinite(low.x) || !isFinite(low.y) || !isFinite(low.z)
+                    || !isFinite(high.x) || !isFinite(high.y) || !isFinite(high.z)) continue
+            if (!found) {
+                minimum = low
+                maximum = high
+                found = true
+            } else {
+                minimum = Qt.vector3d(Math.min(minimum.x, low.x), Math.min(minimum.y, low.y),
+                                      Math.min(minimum.z, low.z))
+                maximum = Qt.vector3d(Math.max(maximum.x, high.x), Math.max(maximum.y, high.y),
+                                      Math.max(maximum.z, high.z))
+            }
+        }
+        return found ? { minimum: minimum, maximum: maximum } : null
+    }
+
+    function centreVisibleGeometry() {
+        const bounds = root.visibleGeometryBounds()
+        if (bounds) navigation.centreOn(bounds.minimum, bounds.maximum)
     }
 
     function fitVisibleGeometry() {
