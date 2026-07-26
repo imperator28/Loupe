@@ -373,9 +373,9 @@ void MeshGeometry::setSectionOptions(const bool capEnabled, const bool sliceOnly
                      sectionOffset_, sectionFlipped_, capEnabled, sliceOnly, sliceFill, sliceOutline, false);
 }
 
-void MeshGeometry::refreshBounds()
+void MeshGeometry::ensureBounds() const
 {
-    hasBounds_ = false;
+    if (boundsValid_) return;
     if (vertexData_.size() < 3) return;
     for (int axis = 0; axis < 3; ++axis) {
         minimumCoordinate_[axis] = std::numeric_limits<float>::max();
@@ -391,18 +391,20 @@ void MeshGeometry::refreshBounds()
             maximumCoordinate_[axis] = std::max(maximumCoordinate_[axis], value);
         }
     }
-    hasBounds_ = true;
+    boundsValid_ = true;
 }
 
 float MeshGeometry::minimumCoordinate(const int axis) const noexcept
 {
-    if (!hasBounds_) return std::numeric_limits<float>::quiet_NaN();
+    ensureBounds();
+    if (!boundsValid_) return std::numeric_limits<float>::quiet_NaN();
     return minimumCoordinate_[std::clamp(axis, 0, 2)];
 }
 
 float MeshGeometry::maximumCoordinate(const int axis) const noexcept
 {
-    if (!hasBounds_) return std::numeric_limits<float>::quiet_NaN();
+    ensureBounds();
+    if (!boundsValid_) return std::numeric_limits<float>::quiet_NaN();
     return maximumCoordinate_[std::clamp(axis, 0, 2)];
 }
 
@@ -641,7 +643,10 @@ void MeshGeometry::startSectionOverlayBuild()
 
 void MeshGeometry::upload()
 {
-    refreshBounds();
+    // Invalidate only. Computing here would charge every section rebuild -- and so every
+    // camera move, since the section's outline width follows the camera -- for a scan that
+    // most of those rebuilds never need.
+    boundsValid_ = false;
     QVector<float> interleaved;
     interleaved.reserve(vertexData_.size() * 2);
     for (qsizetype index = 0; index + 2 < vertexData_.size(); index += 3) {
