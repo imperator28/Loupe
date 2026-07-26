@@ -116,25 +116,38 @@ Inspect.ElevatedPanel {
                             font.pixelSize: 12
                         }
 
-                        Inspect.ThemedTextField {
-                            id: filenameEditor
-                            theme: root.theme
+                        RowLayout {
                             Layout.fillWidth: true
-                            enabled: !root.draft || !root.draft.exporting
-                            onTextEdited: queueRow.filenameEdited = true
-                            onEditingFinished: {
-                                if (!queueRow.filenameEdited) return
-                                root.draft.setFilenameOverride(queueRow.modelData.drawingId, text)
-                                queueRow.filenameEdited = false
+                            spacing: 2
+
+                            Inspect.ThemedTextField {
+                                id: filenameEditor
+                                theme: root.theme
+                                Layout.fillWidth: true
+                                enabled: !root.draft || !root.draft.exporting
+                                onTextEdited: queueRow.filenameEdited = true
+                                onEditingFinished: {
+                                    if (!queueRow.filenameEdited) return
+                                    root.draft.setFilenameOverride(queueRow.modelData.drawingId, text)
+                                    queueRow.filenameEdited = false
+                                }
+                                Accessible.name: qsTr("Output name for %1").arg(queueRow.modelData.name)
                             }
-                            Accessible.name: qsTr("Output filename for %1").arg(queueRow.modelData.name)
+                            // The extension belongs to the chosen format, not to the name. It
+                            // was previously inside the editable text, so editing the name and
+                            // leaving the extension in place produced "part-top.dxf.dxf".
+                            Label {
+                                text: root.extensionFor(queueRow.modelData.drawingId)
+                                color: root.theme ? root.theme.muted : "transparent"
+                                font.pixelSize: 11
+                            }
                         }
                         Binding {
                             // Bound only while unfocused, so a live edit is never clobbered
                             // by a model refresh mid-typing.
                             target: filenameEditor
                             property: "text"
-                            value: root.filenameFor(queueRow.modelData.drawingId)
+                            value: root.baseNameFor(queueRow.modelData.drawingId)
                             when: !filenameEditor.activeFocus
                         }
 
@@ -193,6 +206,20 @@ Inspect.ElevatedPanel {
     function filenameFor(drawingId) {
         const row = root.planRowFor(drawingId)
         return row ? row.filename : ""
+    }
+
+    // Split on the last dot only: a part legitimately named "590421-00-01" is full of dots
+    // that are not an extension.
+    function baseNameFor(drawingId) {
+        const name = root.filenameFor(drawingId)
+        const dot = name.lastIndexOf(".")
+        return dot > 0 ? name.substring(0, dot) : name
+    }
+
+    function extensionFor(drawingId) {
+        const name = root.filenameFor(drawingId)
+        const dot = name.lastIndexOf(".")
+        return dot > 0 ? name.substring(dot) : ""
     }
 
     function statusFor(drawingId) {

@@ -755,6 +755,100 @@ int runDrawingBodies(const std::vector<std::string>& args)
     return success;
 }
 
+// Sweeps every standard view in both content modes and cross-checks them against each other.
+//
+// The invariant that makes this worth automating: a silhouette is a *filter over the same
+// projection* as the cut outline, so its bounding box can never exceed the cut outline's. Any
+// view where it does is a defect, and eyeballing previews one at a time will not find them all.
+int runDrawingAudit(const std::vector<std::string>& args)
+{
+    if (args.size() < 2) fail(invalidArguments, "usage: drawing-audit <file.step>");
+    const std::filesystem::path file(args[1]);
+
+    loupe::import::ImportResult imported;
+    try {
+        imported = loupe::import::StepImporter{}.read(file);
+    } catch (const std::exception& error) { fail(importFailure, error.what()); }
+
+    const auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    const auto& native = *imported.native;
+    const auto bodyCount = std::min(native.shapes.size(), native.shapePlacements.size());
+
+    BRep_Builder builder;
+    TopoDS_Compound assembly;
+    builder.MakeCompound(assembly);
+    for (std::size_t index = 0; index < bodyCount; ++index) {
+        if (native.shapes[index].IsNull()) continue;
+        builder.Add(assembly, native.shapes[index].Located(TopLoc_Location(native.shapePlacements[index])));
+    }
+    TopoDS_Shape shape = assembly;
+    if (decision.sourceToMillimeters != 1.0) {
+        gp_Trsf scale;
+        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), decision.sourceToMillimeters);
+        shape = BRepBuilderAPI_Transform(assembly, scale, true).Shape();
+    }
+
+    const std::vector<std::pair<std::string, gp_Dir>> views{
+        {"Top", {0.0, 0.0, 1.0}},   {"Bottom", {0.0, 0.0, -1.0}},
+        {"Front", {0.0, -1.0, 0.0}}, {"Back", {0.0, 1.0, 0.0}},
+        {"Right", {1.0, 0.0, 0.0}}, {"Left", {-1.0, 0.0, 0.0}},
+    };
+
+    nlohmann::json rows = nlohmann::json::array();
+    int oversizedSilhouettes = 0;
+    for (const auto& [name, direction] : views) {
+        const gp_Dir up = std::abs(direction.Z()) > 0.9 ? gp_Dir(0.0, 1.0, 0.0) : gp_Dir(0.0, 0.0, 1.0);
+        nlohmann::json row{{"view", name}};
+        const auto run = [&](const loupe::drawing::ContentMode mode) {
+            loupe::drawing::ProjectionRequest request;
+            request.shape = shape;
+            request.viewDirection = direction;
+            request.upDirection = up;
+            request.mode = mode;
+            request.sourceToMillimeters = 1.0;
+            return loupe::drawing::project(request);
+        };
+        double cutWidth = 0.0;
+        double cutHeight = 0.0;
+        bool cutOk = false;
+        try {
+            const auto cut = run(loupe::drawing::ContentMode::CutContours);
+            const auto bounds = cut.drawing.bounds();
+            cutWidth = bounds.width();
+            cutHeight = bounds.height();
+            cutOk = true;
+            row["cut"] = {{"widthMm", cutWidth}, {"heightMm", cutHeight},
+                          {"closed", cut.statistics.closedContours},
+                          {"open", cut.statistics.openContours},
+                          {"approximate", cut.approximate}};
+        } catch (const std::exception& error) { row["cut"] = {{"error", error.what()}}; }
+        try {
+            const auto silhouette = run(loupe::drawing::ContentMode::OuterContourOnly);
+            const auto bounds = silhouette.drawing.bounds();
+            row["silhouette"] = {{"widthMm", bounds.width()}, {"heightMm", bounds.height()},
+                                 {"closed", silhouette.statistics.closedContours},
+                                 {"open", silhouette.statistics.openContours},
+                                 {"approximate", silhouette.approximate}};
+            if (cutOk) {
+                // A tolerance, not equality: the two modes tessellate curves independently.
+                const double slack = 0.05;
+                const bool oversized = bounds.width() > cutWidth + slack
+                    || bounds.height() > cutHeight + slack;
+                row["silhouetteOversized"] = oversized;
+                if (oversized) ++oversizedSilhouettes;
+            }
+        } catch (const std::exception& error) { row["silhouette"] = {{"error", error.what()}}; }
+        rows.push_back(row);
+    }
+
+    printJson({{"status", "ok"},
+               {"bodies", bodyCount},
+               {"effectiveUnit", unitName(decision.effectiveUnit)},
+               {"oversizedSilhouettes", oversizedSilhouettes},
+               {"views", rows}});
+    return oversizedSilhouettes == 0 ? success : validationFailure;
+}
+
 int runDrawingSpike(const std::vector<std::string>& args)
 {
     if (args.size() < 2) fail(invalidArguments, "usage: drawing-spike <file.step> [axis]");
@@ -941,6 +1035,7 @@ int main(int argc, char* argv[])
         if (args[0] == "inspect") return runInspect(args); if (args[0] == "export") return runExport(args); if (args[0] == "corpus") return runCorpus(args); if (args[0] == "benchmark") return runBenchmark(args);
         if (args[0] == "drawing-spike") return runDrawingSpike(args);
         if (args[0] == "drawing-bodies") return runDrawingBodies(args);
+        if (args[0] == "drawing-audit") return runDrawingAudit(args);
         fail(invalidArguments, "unknown command");
     } catch (const CommandError& error) { printJson({{"status", "error"}, {"code", error.code}, {"message", error.message}}); return error.code;
     } catch (const std::exception& error) { printJson({{"status", "error"}, {"code", importFailure}, {"message", error.what()}}); return importFailure; }

@@ -72,7 +72,7 @@ Item {
             id: modelPreviewPanel
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumWidth: 280
+            Layout.minimumWidth: 420
             theme: root.theme
             wellSurface: true
 
@@ -126,8 +126,10 @@ Item {
         // configured is what is on screen, and the preview never scrolls out from under the
         // controls that change it.
         ColumnLayout {
-            Layout.preferredWidth: 420
-            Layout.minimumWidth: 380
+            // The same split as the Export workspace: 290 for the picker, 360 here, and the
+            // 3D view takes what is left with a 420 minimum. Matching it rather than picking
+            // new numbers means the two workspaces do not feel like different products.
+            Layout.preferredWidth: 360
             Layout.fillHeight: true
             spacing: root.theme.spacing3
 

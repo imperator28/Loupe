@@ -1088,3 +1088,56 @@ ctest --preset windows-release --output-on-failure -R "drawing"
 ## Deferred
 
 In likely order, once this ships: custom-plane and arbitrary-angle views; cross-section drawings; DXF R2000 with an explicit millimetre units header, native splines, and ellipses; combined-sheet output; corner and edge clicks on the view cube for isometric views; dragging the cube to orbit; sheet-metal flat-pattern unfold.
+
+---
+
+## Projection reliability: measured defects, not yet fixed
+
+Reviewing the workspace on real parts produced "missing line, random rectangle, random
+geometries" in both content modes. Rather than chase individual previews, `drawing-audit`
+sweeps all six standard views in both modes and cross-checks them, keyed on an invariant
+worth stating: **a silhouette is a filter over the same projection as the cut outline, so its
+bounding box can never exceed the cut outline's.** Two defects fall straight out.
+
+**1. The silhouette bounding box exceeds the cut outline's.** Reproduced exactly, including
+the number seen on screen. `PCBA_box.stp`:
+
+| view | cut W x H | silhouette W x H | oversized |
+| --- | --- | --- | --- |
+| Right | 55.35 x 53.10 | **66.42 x 60.57** | yes |
+| Left | 55.35 x 53.10 | **66.42 x 60.57** | yes |
+
+Left and Right are identical, and the excess is not uniform: +11.07 in width is twice 10% of
+55.35, while +7.47 in height is 10% of 74.70 -- a dimension belonging to a *different* axis.
+Both point the same way: a padding computed from the wrong extent, i.e. the silhouette's
+canvas rectangle leaking into the output as a contour. That also explains the "random
+rectangle": on such a view the single closed contour reported is the canvas, not the part.
+
+**2. Cut mode does not close its contours,** worst on edge-on views. `590662-00-01_23.stp`:
+
+| view | cut closed/open | silhouette closed/open |
+| --- | --- | --- |
+| Bottom | 33 / **80** | 19 / 0 |
+| Back | 13 / **67** | 28 / 0 |
+| Front | 6 / **58** | 25 / 2 |
+| Left | 11 / 47 | 23 / 1 |
+
+And `mount.stp` viewed edge-on gives 0 closed / 4 open. An open contour will not cut, so this
+is the "missing line" report. Note the silhouette closes cleanly on the same views, so the
+projection has the geometry; the cut path's stitching is what fails. Leading hypothesis: in an
+edge-on view the sharp edges and the silhouette outline land on the same locus, and
+`duplicatesRemoved` is 0, so those collinear overlaps survive and leave vertices where three
+or more edges meet -- which the wire stitcher cannot resolve into a loop.
+
+**3. The silhouette bounding box is also sometimes smaller than the cut outline's**, e.g.
+`590662` Front: cut 184.06 x 6.50 against silhouette 183.35 x 4.13, a 36% loss of height. For a
+solid the outer boundary is the same in both modes, so this is dropping genuine boundary
+edges. The audit does not yet flag this direction; it should, with a tolerance.
+
+Repro for all of it:
+
+```bash
+./build/windows-release/loupe-spike.exe drawing-audit corpus/private/PCBA_box.stp
+```
+
+The command exits non-zero when any silhouette is oversized, so it can gate a fix.
