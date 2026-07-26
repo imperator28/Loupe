@@ -64,3 +64,33 @@ These cannot be settled by inspection. Listed in the order they are worth spendi
 The audit covered the Drawing workspace and the shared components it touches. Inspect and
 Export were checked only for regression, not reviewed. That is a real gap, not a completed
 item, and item 6 above is what remains of it.
+
+## Unresolved: standard-view lag, and what is actually established
+
+Five attempts failed to preserve the zoom on a cube-face click without introducing a visible
+lag between the cube turning and the model turning. `setStandardView` is reverted to its
+pre-session form: it re-fits, so the zoom resets, but the model turns in step with the cube. A
+known imperfect behaviour beats an intermittent one.
+
+**Established, so the next attempt need not re-derive it:**
+
+- The cube renders from `navigation.orientation` through a **binding**, so it turns the instant
+  the property changes.
+- The main camera rig (`StepViewport.qml`, `id: cameraRig`) has **no bindings** and is written
+  **imperatively** by `ViewportNavigation.apply()`.
+- The overlay view's camera node has its **own bindings** on the same properties.
+- Three sources for one camera state is the shape of the problem.
+- A cube rendering as a flat square while the model is oblique proves those sources disagree:
+  flat means axis-aligned, oblique means not.
+- There are **no camera animations anywhere** in the viewport, so "lag" was never a transition.
+- `minimumCoordinate`/`maximumCoordinate` used to scan the whole vertex buffer per call, six
+  calls per mesh. Now cached. That was a genuine cost and worth keeping, but it was not this.
+
+**Ruled out:** camera transitions, cube-versus-camera divergence via a second orientation
+source, the vertex scan, and ordering alone (both orders were tried, synchronous and deferred).
+
+**The next step is measurement, not another hypothesis.** Drive `setStandardView` from a test
+under the offscreen platform and compare, frame by frame, the cube's `cameraOrientation`
+against `cameraRig.rotation` and the camera's derived forward vector. That distinguishes "the
+camera never received the value" from "it received it a frame late" from "something overwrote
+it", which is exactly what guessing could not.

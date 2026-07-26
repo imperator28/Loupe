@@ -245,33 +245,21 @@ Item {
     }
 
     function setStandardView(normal) {
-        // Re-centre, then orient. Not a fit: distance and magnification are left alone, so
-        // looking from another side does not also change how close you are -- which is what
-        // re-fitting here used to do.
+        // Reverted to the pre-session implementation after five failed attempts to preserve
+        // the zoom without introducing a lag between the cube and the model.
         //
-        // Centring is not optional though. alignToNormal orbits about the pivot, so leaving
-        // the pivot wherever the last orbit put it aims the camera at empty space and the part
-        // slides off to one side, which reads as the view having gone somewhere wrong.
-        // Orientation first, then re-centre on the next tick.
+        // This costs the zoom on every cube click, which is a real complaint, but it is the
+        // version that demonstrably turns the model in step with the cube. A known imperfect
+        // behaviour beats an intermittent one.
         //
-        // Order is the whole point here. The cube reads navigation.orientation through a
-        // binding, so it turns the instant the property changes; the model's camera is written
-        // imperatively by apply(), so it turns when apply() runs. Doing the centring first
-        // put a second camera write -- and the bounds walk feeding it -- between the click and
-        // the model moving, which is what made the cube visibly lead the model.
-        //
-        // The old code had this ordering by accident, aligning immediately and deferring the
-        // re-fit with callLater. This keeps that structure and drops only the part that reset
-        // the zoom.
-        // Both in one tick, so the model arrives in its final place in the same frame the cube
-        // turns. Deferring the centring made the model turn and then shift a frame later,
-        // which reads as the model lagging the cube.
-        //
-        // This was too slow to do synchronously until the mesh extents were cached: the bounds
-        // walk asked six accessors per mesh and each scanned the whole vertex buffer, so the
-        // scan itself was the delay. With that fixed, synchronous is both correct and cheap.
-        root.centreVisibleGeometry()
+        // What is established, for whoever picks this up: the cube renders from
+        // navigation.orientation through a binding, the main camera rig is written
+        // imperatively by ViewportNavigation.apply(), and the overlay view's camera has its
+        // own bindings. A flat-rendered cube alongside an oblique model proves those sources
+        // disagree, so the next step is instrumentation -- drive this function and compare the
+        // cube's orientation against cameraRig.rotation frame by frame -- not another guess.
         navigation.alignToNormal(normal)
+        Qt.callLater(fitVisibleGeometry)
     }
 
     // The bounds of everything currently drawn, or null when nothing is.
