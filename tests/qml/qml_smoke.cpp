@@ -114,11 +114,21 @@ void QmlSmokeTest::mainLoads()
     QVERIFY(object->findChild<QObject*>(QStringLiteral("interactionGuidePopup")) != nullptr);
     auto* dropOverlay = findItemByObjectName(window->contentItem(), QStringLiteral("stepFileDropOverlay"));
     QVERIFY(dropOverlay != nullptr);
-    QCOMPARE(dropOverlay->property("cornerRadius").toReal(), 18.0);
+    // The point is that the overlay traces the window frame, and the two platforms round
+    // their frames differently, so a literal here would only be right on one of them.
+    // Assert the platform's own expected value, and that the surface really carries it.
+    const qreal expectedWindowRadius =
+#if defined(Q_OS_WIN)
+        8.0;
+#else
+        18.0;
+#endif
+    QCOMPARE(dropOverlay->property("cornerRadius").toReal(), expectedWindowRadius);
     auto* dropOverlaySurface = findItemByObjectName(window->contentItem(),
                                                      QStringLiteral("stepFileDropOverlaySurface"));
     QVERIFY(dropOverlaySurface != nullptr);
     QVERIFY(dropOverlaySurface->y() < 0);
+    QCOMPARE(dropOverlaySurface->property("radius").toReal(), expectedWindowRadius);
     auto* controller = qobject_cast<loupe::app::ApplicationController*>(
         object->property("controller").value<QObject*>());
     QVERIFY(controller != nullptr);

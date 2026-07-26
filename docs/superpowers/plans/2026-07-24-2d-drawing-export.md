@@ -566,7 +566,11 @@ ctest --preset windows-release --output-on-failure -R "drawing-workspace"
 
 ---
 
-## Task 13: Extend the protocol and worker for drawing execution
+## Task 13: Extend the protocol and worker for drawing execution — DONE 2026-07-25
+
+A reviewed batch now crosses the process boundary, is re-derived and fingerprint-checked on
+the far side, and comes back per row. Two extractions were needed first, plus one real
+defect fixed at the root.
 
 **Files:**
 
@@ -578,14 +582,78 @@ ctest --preset windows-release --output-on-failure -R "drawing-workspace"
 - Modify: `tests/protocol/test_protocol.cpp`
 - Modify: `tests/worker/test_worker_process.cpp`
 
-- [ ] Add `ExecuteDrawingPlan` to `Command` and `DrawingProgress`, `DrawingRowResult`, `DrawingCompleted` to `Event`, alongside a `DrawingPreviewReady` event for the candidate preview.
-- [ ] Add JSON codec entries with the same per-field validation discipline as the export messages, and bump the protocol version.
-- [ ] In `WorkerServer`, decode the plan, **independently re-run `buildDrawingPlan`, and refuse on fingerprint mismatch** — the review contract. Verify the destination exists, is a directory, and is writable.
-- [ ] Reconcile plan order against reviewed queue order the way the export path does, so every `rowIndex` in an event indexes the controller's own rows.
-- [ ] Run projection and writing on a worker thread with progress per row and cooperative cancellation. Serialise HLR jobs — `BRepLib::Plane()` is a mutable global static and is not thread-safe.
-- [ ] Validate each output with `DrawingValidator` before reporting success; on failure delete the file and report the row as failed. A failed row must not abort the batch.
-- [ ] Handle the preview request separately: bounded, cancellable, and always superseded by a newer request. If Gate A showed exact projection is too slow for interactive use, use the mesh-based algorithm here **and** mark the response approximate so the UI can label it; the export path must always use the exact algorithm.
-- [ ] Tests: codec round-trip for every new message; fingerprint mismatch is refused; a full drawing export runs end-to-end over the local socket; cancellation is honoured.
+- [x] Add `ExecuteDrawingPlan` to `Command` and `DrawingProgress`, `DrawingRowResult`, `DrawingCompleted` to `Event`, alongside a `DrawingPreviewReady` event for the candidate preview.
+
+      Plus `RequestDrawingPreview`, which the sketch left implicit. It carries a monotonic
+      revision, because supersession has to be expressible in the message itself: a late
+      reply can still arrive and the revision is the only thing that lets it be dropped.
+- [x] Add JSON codec entries with the same per-field validation discipline as the export messages, and bump the protocol version.
+
+      Bumped to 2.1. Only the major version is validated, so this stays compatible.
+
+      Two refusals worth naming, both tested: a preview revision below 1, because a zero
+      would make every reply look like the newest one; and a row result with an empty
+      drawing ID, because the app reconciles results by ID and path and an empty ID cannot
+      be reconciled at all.
+- [x] In `WorkerServer`, decode the plan, **independently re-run `buildDrawingPlan`, and refuse on fingerprint mismatch** — the review contract. Verify the destination exists, is a directory, and is writable.
+
+      Tested end to end over the socket: a plan sent with a wrong fingerprint is refused
+      with `drawing_gate_failed` and nothing is written.
+- [x] Reconcile plan order against reviewed queue order the way the export path does, so every `rowIndex` in an event indexes the controller's own rows.
+- [x] Run projection and writing on a worker thread with progress per row and cooperative cancellation. Serialise HLR jobs — `BRepLib::Plane()` is a mutable global static and is not thread-safe.
+
+      One thread, rows projected one at a time on it. Not a performance compromise but a
+      correctness requirement, recorded in Task 1: hidden-line removal reads a mutable
+      global, so a pool would corrupt concurrent jobs.
+- [x] Validate each output with `DrawingValidator` before reporting success; on failure delete the file and report the row as failed. A failed row must not abort the batch.
+
+      Validation lives in the new `DrawingExporter`, so it cannot be skipped by a second
+      caller; the worker deletes the file on any throw. A half-written drawing is worse
+      than none, because it still looks cuttable.
+
+      A row that succeeds with open contours reports that in its message rather than a
+      bare success. An open contour will not cut, and silence there is the failure mode
+      the requirements forbid.
+- [x] Handle the preview request separately: bounded, cancellable, and always superseded by a newer request. If Gate A showed exact projection is too slow for interactive use, use the mesh-based algorithm here **and** mark the response approximate so the UI can label it; the export path must always use the exact algorithm.
+
+      **The preview uses the exact projection**, so what is reviewed is what is written --
+      Gate A measured it fast enough. The `approximate` flag exists on the event and is
+      reported as false, rather than being omitted: if a future part turns out to be too
+      slow and the mesh path is needed, the UI already has somewhere to read the truth
+      from.
+
+      Supersession is enforced twice, deliberately. The worker drops a request whose
+      revision is below the highest seen, so a stale candidate is never projected at all;
+      the app then gates the reply on both request ID and revision, so a reply that raced
+      a newer candidate cannot paint over it.
+- [x] Tests: codec round-trip for every new message; fingerprint mismatch is refused; a full drawing export runs end-to-end over the local socket; cancellation is honoured.
+
+      **Protocol: 16 cases. Worker process: 10 cases**, including a real DXF written and
+      validated through the socket, and the fingerprint refusal.
+
+      **Not done, and not silently:** there is no drawing-specific cancellation test. The
+      drawing path reuses the export path's `ExportJob` cancellation flag and its
+      `activeExports_` registry, which `readyThenCancel` and the export tests already
+      cover, and the cooperative check is the same code. A drawing-specific test would
+      have to cancel inside a single row's projection, which races completion and would be
+      flaky; a flaky test here is worse than a documented gap.
+
+**Groundwork this task needed, recorded because none of it was in the plan:**
+
+- `export/ShapeSelection` — resolving a node ID to its shape was already duplicated between
+  the STEP and STL exporters, and the drawing path would have made three copies of a unit
+  rebase. Extracted; the 7 export cases are unchanged.
+- `drawing/DrawingExporter` — the one place the four stages meet (resolve, scale, project,
+  write, validate), so the worker holds no geometry logic and the writers stay format-only.
+- `drawing/DrawingPreview` — flattens arcs and cubics to polylines for the on-screen
+  preview. Deliberately not a file format: a preview drawing straight polylines cannot
+  disagree with the writers about arc direction or sweep sign, which is one of the two
+  highest-severity risks in this feature. The written file always comes from the exact
+  primitives.
+- **Defect fixed at the root:** `loupe::drawing::DrawingFormat` was declared identically in
+  both `DrawingPlan.h` (Task 10, mine) and `DrawingValidator.h`. Harmless while each header
+  was used alone, and a redefinition the moment one translation unit needed both -- which
+  the worker does, since it plans, writes and validates. Moved to `drawing/DrawingFormat.h`.
 
 **Focused verification:**
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/drawing/DrawingFormat.h"
 #include "core/units/UnitPolicy.h"
 
 #include <optional>
@@ -29,8 +30,6 @@ struct Vector3 final {
 
     bool operator==(const Vector3&) const = default;
 };
-
-enum class DrawingFormat { Dxf, Svg, Pdf };
 
 // Mirrors the projector's ContentMode. Duplicated deliberately: the projector's
 // header pulls in OpenCASCADE, and the plan layer stays free of it.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/drawing/DrawingFormat.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -13,8 +15,6 @@
 // rather than trusting the writer's own return value, because a writer that
 // miscomputed its page would also miscompute its report.
 namespace loupe::drawing {
-
-enum class DrawingFormat { Dxf, Svg, Pdf };
 
 struct DrawingValidationIssue final {
     std::string code;

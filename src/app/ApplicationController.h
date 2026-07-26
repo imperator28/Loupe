@@ -182,6 +182,9 @@ signals:
     void upAxisChanged();
     void meshReady(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson);
     void edgeReady(const QString& nodeId, const QByteArray& edgeJson);
+    // approximate is carried through rather than dropped, so the preview can say when it
+    // is not the exact projection instead of implying a fidelity it does not have.
+    void drawingPreviewReady(const QString& previewJson, int revision, bool approximate);
 
 private:
     void connectWorker();
@@ -230,6 +233,11 @@ private:
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
     std::uint64_t activeExportRequestId_{};
+    std::uint64_t activeDrawingRequestId_{};
+    // Only the newest preview may reach the UI; a late reply for an older revision is
+    // dropped rather than shown over a newer one.
+    std::uint64_t activeDrawingPreviewRequestId_{};
+    int activeDrawingPreviewRevision_{};
     models::AssemblyTreeModel assemblyTreeModel_{this};
     models::MaterialLibraryModel materialLibrary_{this};
     models::VisibilityModel visibilityModel_{this};

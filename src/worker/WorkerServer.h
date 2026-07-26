@@ -41,6 +41,8 @@ private:
     void fail(std::uint64_t requestId, const QString& code, const QString& message);
     void open(std::uint64_t requestId, const QString& path, const std::optional<protocol::UnitOverride>& unitOverride);
     void executeExportPlan(std::uint64_t requestId, const QByteArray& planJson, const QString& fingerprint);
+    void executeDrawingPlan(std::uint64_t requestId, const QByteArray& planJson, const QString& fingerprint);
+    void requestDrawingPreview(std::uint64_t requestId, const QByteArray& requestJson, int revision);
     void cancel(std::uint64_t requestId);
 
     QLocalServer server_;
@@ -49,6 +51,9 @@ private:
     QHash<std::uint64_t, std::shared_ptr<ImportJob>> activeSessions_;
     QHash<std::uint64_t, std::shared_ptr<ExportJob>> activeExports_;
     std::shared_ptr<DocumentSession> documentSession_;
+    // Highest preview revision seen. A request older than this is dropped rather than
+    // projected and discarded: only the newest candidate is worth the cost.
+    int latestPreviewRevision_{};
 };
 
 } // namespace loupe::worker

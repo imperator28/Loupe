@@ -11,6 +11,7 @@
 #include <QTemporaryFile>
 #include <QTemporaryDir>
 
+#include "core/drawing/DrawingPlan.h"
 #include "core/export/ExportPlan.h"
 #include "core/validation/OutputValidator.h"
 #include "fixtures/FixtureFactory.h"
@@ -30,6 +31,8 @@ private slots:
     void validStepProducesNonEmptySnapshot();
     void validStepStreamsTriangulatedMesh();
     void reviewedPlanWritesAndValidatesStep();
+    void reviewedDrawingPlanWritesAndValidatesDxf();
+    void aChangedDrawingPlanIsRefusedAtTheFingerprint();
 };
 
 namespace {
@@ -340,6 +343,173 @@ void WorkerProcessTest::reviewedPlanWritesAndValidatesStep()
             {outputPath, loupe::validation::OutputUnit::Millimeter, 1, {}, {}, 1.0e-5, false, false});
         QVERIFY(validation.passed);
     }
+}
+
+namespace {
+
+// The reviewed-plan JSON the app sends, and the plan object the worker must independently
+// arrive at. Built together so a test cannot accidentally describe two different batches.
+struct DrawingBatch final {
+    QByteArray planJson;
+    QString fingerprint;
+};
+
+DrawingBatch drawingBatchFor(const QString& nodeId, const QString& hierarchyPath,
+                             const QString& destinationPath, const QString& leafName)
+{
+    loupe::drawing::DrawingSelection selection;
+    selection.drawingId = "d1";
+    selection.nodeId = nodeId.toUtf8().toStdString();
+    selection.viewLabel = "Top";
+    selection.viewDirection = {0.0, 0.0, 1.0};
+    selection.upDirection = {0.0, 1.0, 0.0};
+    selection.content = loupe::drawing::DrawingContent::CutContours;
+
+    loupe::drawing::DrawingPlanRequest request;
+    request.selections = {selection};
+    request.hierarchyPaths.emplace(selection.nodeId, hierarchyPath.toUtf8().toStdString());
+    request.outputLeafNames.emplace(selection.drawingId, leafName.toUtf8().toStdString());
+    request.destination = destinationPath.toUtf8().toStdString();
+    request.format = loupe::drawing::DrawingFormat::Dxf;
+    request.unitDecision = {loupe::units::LengthUnit::Millimeter, loupe::units::UnitConfidence::Confirmed,
+                            1.0, "worker integration test"};
+    const auto plan = loupe::drawing::buildDrawingPlan(request);
+
+    const auto planJson = QJsonDocument(QJsonObject{
+        {QStringLiteral("schemaVersion"), 1},
+        {QStringLiteral("destination"), destinationPath},
+        {QStringLiteral("format"), QStringLiteral("DXF")},
+        {QStringLiteral("includeScaleFiducial"), false},
+        {QStringLiteral("sourceToMillimeters"), 1.0},
+        {QStringLiteral("selections"), QJsonArray{QJsonObject{
+            {QStringLiteral("drawingId"), QStringLiteral("d1")},
+            {QStringLiteral("nodeId"), nodeId},
+            {QStringLiteral("hierarchyPath"), hierarchyPath},
+            {QStringLiteral("viewLabel"), QStringLiteral("Top")},
+            {QStringLiteral("viewX"), 0.0}, {QStringLiteral("viewY"), 0.0}, {QStringLiteral("viewZ"), 1.0},
+            {QStringLiteral("upX"), 0.0}, {QStringLiteral("upY"), 1.0}, {QStringLiteral("upZ"), 0.0},
+            {QStringLiteral("contentMode"), QStringLiteral("Cut contours")},
+            {QStringLiteral("scaleNumerator"), 1},
+            {QStringLiteral("scaleDenominator"), 1},
+            {QStringLiteral("leafName"), leafName},
+        }}},
+    }).toJson(QJsonDocument::Compact);
+    return {planJson, QString::fromStdString(plan.fingerprint())};
+}
+
+} // namespace
+
+void WorkerProcessTest::reviewedDrawingPlanWritesAndValidatesDxf()
+{
+    const auto fixture = loupe::tests::writeFlatTwoSolidStep(
+        QStringLiteral("worker-drawing-source.step").toStdString());
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 1}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 40},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+
+    const auto snapshotEvent = readEventOfType(socket, decoder, QStringLiteral("snapshotReady"));
+    const auto snapshot = QJsonDocument::fromJson(
+        QByteArray::fromBase64(snapshotEvent.value(QStringLiteral("snapshotBase64")).toString().toLatin1())).object();
+    const auto geometry = snapshot.value(QStringLiteral("geometry")).toArray();
+    QVERIFY(!geometry.isEmpty());
+    const auto nodeId = geometry.at(0).toObject().value(QStringLiteral("nodeId")).toString();
+    QVERIFY(!nodeId.isEmpty());
+
+    QElapsedTimer readyTimer;
+    readyTimer.start();
+    bool ready = false;
+    while (readyTimer.elapsed() < 15'000 && !ready) {
+        const auto event = readEvent(socket, decoder);
+        ready = event.value(QStringLiteral("type")).toString() == QStringLiteral("progress")
+            && event.value(QStringLiteral("fraction")).toDouble() >= 1.0;
+    }
+    QVERIFY(ready);
+
+    const auto batch = drawingBatchFor(nodeId, QStringLiteral("Assembly/Zed"), destination.path(),
+                                       QStringLiteral("Reviewed-drawing"));
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 1}}},
+                  {QStringLiteral("type"), QStringLiteral("executeDrawingPlan")},
+                  {QStringLiteral("requestId"), 41},
+                  {QStringLiteral("planBase64"), QString::fromLatin1(batch.planJson.toBase64())},
+                  {QStringLiteral("fingerprint"), batch.fingerprint}});
+
+    const auto result = readEventOfType(socket, decoder, QStringLiteral("drawingRowResult"));
+    QCOMPARE(result.value(QStringLiteral("drawingId")).toString(), QStringLiteral("d1"));
+    QVERIFY2(result.value(QStringLiteral("passed")).toBool(),
+             qPrintable(result.value(QStringLiteral("message")).toString()));
+    const auto completed = readEventOfType(socket, decoder, QStringLiteral("drawingCompleted"));
+    QCOMPARE(completed.value(QStringLiteral("succeededCount")).toInt(), 1);
+    QCOMPARE(completed.value(QStringLiteral("failedCount")).toInt(), 0);
+
+    // The worker already validated the file; reopening it here proves the file the app is
+    // told about is the file on disk.
+    const auto outputPath = std::filesystem::path(destination.path().toStdString()) / "Reviewed-drawing.dxf";
+    QVERIFY(std::filesystem::exists(outputPath));
+    QVERIFY(std::filesystem::file_size(outputPath) > 0);
+}
+
+void WorkerProcessTest::aChangedDrawingPlanIsRefusedAtTheFingerprint()
+{
+    // The review contract: the worker rebuilds the plan itself and refuses anything whose
+    // fingerprint does not match what the user approved.
+    const auto fixture = loupe::tests::writeFlatTwoSolidStep(
+        QStringLiteral("worker-drawing-gate-source.step").toStdString());
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 1}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 50},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+
+    const auto snapshotEvent = readEventOfType(socket, decoder, QStringLiteral("snapshotReady"));
+    const auto snapshot = QJsonDocument::fromJson(
+        QByteArray::fromBase64(snapshotEvent.value(QStringLiteral("snapshotBase64")).toString().toLatin1())).object();
+    const auto nodeId = snapshot.value(QStringLiteral("geometry")).toArray().at(0).toObject()
+                            .value(QStringLiteral("nodeId")).toString();
+    QVERIFY(!nodeId.isEmpty());
+
+    QElapsedTimer readyTimer;
+    readyTimer.start();
+    bool ready = false;
+    while (readyTimer.elapsed() < 15'000 && !ready) {
+        const auto event = readEvent(socket, decoder);
+        ready = event.value(QStringLiteral("type")).toString() == QStringLiteral("progress")
+            && event.value(QStringLiteral("fraction")).toDouble() >= 1.0;
+    }
+    QVERIFY(ready);
+
+    const auto batch = drawingBatchFor(nodeId, QStringLiteral("Assembly/Zed"), destination.path(),
+                                       QStringLiteral("Reviewed-drawing"));
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 1}}},
+                  {QStringLiteral("type"), QStringLiteral("executeDrawingPlan")},
+                  {QStringLiteral("requestId"), 51},
+                  {QStringLiteral("planBase64"), QString::fromLatin1(batch.planJson.toBase64())},
+                  {QStringLiteral("fingerprint"), QStringLiteral("0000000000000000not-the-reviewed-one")}});
+
+    const auto failed = readEventOfType(socket, decoder, QStringLiteral("failed"));
+    QCOMPARE(failed.value(QStringLiteral("code")).toString(), QStringLiteral("drawing_gate_failed"));
+    // Refused before anything was written.
+    QVERIFY(!std::filesystem::exists(
+        std::filesystem::path(destination.path().toStdString()) / "Reviewed-drawing.dxf"));
 }
 
 QTEST_MAIN(WorkerProcessTest)

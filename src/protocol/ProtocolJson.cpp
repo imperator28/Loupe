@@ -102,6 +102,16 @@ QByteArray encode(const Command& command)
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
                               {QStringLiteral("planBase64"), QString::fromLatin1(value.planJson.toBase64())},
                               {QStringLiteral("fingerprint"), value.fingerprint}});
+        } else if constexpr (std::is_same_v<Value, ExecuteDrawingPlan>) {
+            return serialize({{QStringLiteral("type"), QStringLiteral("executeDrawingPlan")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
+                              {QStringLiteral("planBase64"), QString::fromLatin1(value.planJson.toBase64())},
+                              {QStringLiteral("fingerprint"), value.fingerprint}});
+        } else if constexpr (std::is_same_v<Value, RequestDrawingPreview>) {
+            return serialize({{QStringLiteral("type"), QStringLiteral("requestDrawingPreview")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
+                              {QStringLiteral("requestBase64"), QString::fromLatin1(value.requestJson.toBase64())},
+                              {QStringLiteral("revision"), value.revision}});
         } else if constexpr (std::is_same_v<Value, MeasureAtPoint>) {
             return serialize({{QStringLiteral("type"), QStringLiteral("measureAtPoint")},
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
@@ -147,6 +157,21 @@ Command decodeCommand(const QByteArray& bytes)
         const auto fingerprint = stringField(object, QStringLiteral("fingerprint"));
         if (fingerprint.isEmpty()) fail("Protocol export fingerprint invalid");
         return ExecuteExportPlan{requestId(object), planJson, fingerprint};
+    }
+    if (type == QStringLiteral("executeDrawingPlan")) {
+        const auto planJson = QByteArray::fromBase64(stringField(object, QStringLiteral("planBase64")).toLatin1());
+        if (planJson.isEmpty()) fail("Protocol drawing plan payload invalid");
+        const auto fingerprint = stringField(object, QStringLiteral("fingerprint"));
+        if (fingerprint.isEmpty()) fail("Protocol drawing fingerprint invalid");
+        return ExecuteDrawingPlan{requestId(object), planJson, fingerprint};
+    }
+    if (type == QStringLiteral("requestDrawingPreview")) {
+        const auto requestJson = QByteArray::fromBase64(stringField(object, QStringLiteral("requestBase64")).toLatin1());
+        if (requestJson.isEmpty()) fail("Protocol drawing preview payload invalid");
+        const auto revision = object.value(QStringLiteral("revision"));
+        // A zero revision would make every reply look like the newest one.
+        if (!revision.isDouble() || revision.toInt(-1) < 1) fail("Protocol drawing preview revision invalid");
+        return RequestDrawingPreview{requestId(object), requestJson, revision.toInt()};
     }
     if (type == QStringLiteral("measureAtPoint")) {
         const auto x = object.value(QStringLiteral("x")); const auto y = object.value(QStringLiteral("y")); const auto z = object.value(QStringLiteral("z"));
@@ -248,6 +273,50 @@ Event decodeEvent(const QByteArray& bytes)
             fail("Protocol export completion invalid");
         }
         return ExportCompleted{requestId(object), succeeded.toInt(), failed.toInt()};
+    }
+    if (type == QStringLiteral("drawingProgress")) {
+        const auto rowIndex = object.value(QStringLiteral("rowIndex"));
+        const auto rowCount = object.value(QStringLiteral("rowCount"));
+        const auto fraction = object.value(QStringLiteral("fraction"));
+        if (!rowIndex.isDouble() || !rowCount.isDouble() || !fraction.isDouble()
+            || rowIndex.toInt(-1) < 0 || rowCount.toInt(-1) < 1
+            || !std::isfinite(fraction.toDouble())) {
+            fail("Protocol drawing progress invalid");
+        }
+        return DrawingProgress{requestId(object), rowIndex.toInt(), rowCount.toInt(),
+                               stringField(object, QStringLiteral("stage")), fraction.toDouble()};
+    }
+    if (type == QStringLiteral("drawingRowResult")) {
+        const auto rowIndex = object.value(QStringLiteral("rowIndex"));
+        const auto passed = object.value(QStringLiteral("passed"));
+        if (!rowIndex.isDouble() || rowIndex.toInt(-1) < 0 || !passed.isBool()) {
+            fail("Protocol drawing row result invalid");
+        }
+        const auto drawingId = stringField(object, QStringLiteral("drawingId"));
+        // The app reconciles a result against the reviewed row by ID and path, so an empty
+        // ID cannot be reconciled at all.
+        if (drawingId.isEmpty()) fail("Protocol drawing row result has no drawing id");
+        return DrawingRowResult{requestId(object), rowIndex.toInt(), drawingId,
+                                stringField(object, QStringLiteral("path")), passed.toBool(),
+                                stringField(object, QStringLiteral("message"))};
+    }
+    if (type == QStringLiteral("drawingCompleted")) {
+        const auto succeeded = object.value(QStringLiteral("succeededCount"));
+        const auto failed = object.value(QStringLiteral("failedCount"));
+        if (!succeeded.isDouble() || !failed.isDouble() || succeeded.toInt(-1) < 0 || failed.toInt(-1) < 0) {
+            fail("Protocol drawing completion invalid");
+        }
+        return DrawingCompleted{requestId(object), succeeded.toInt(), failed.toInt()};
+    }
+    if (type == QStringLiteral("drawingPreviewReady")) {
+        const auto revision = object.value(QStringLiteral("revision"));
+        const auto approximate = object.value(QStringLiteral("approximate"));
+        if (!revision.isDouble() || revision.toInt(-1) < 1 || !approximate.isBool()) {
+            fail("Protocol drawing preview invalid");
+        }
+        return DrawingPreviewReady{requestId(object), revision.toInt(),
+                                   QByteArray::fromBase64(stringField(object, QStringLiteral("previewBase64")).toLatin1()),
+                                   approximate.toBool()};
     }
     if (type == QStringLiteral("failed")) {
         const auto recoverable = object.value(QStringLiteral("recoverable"));

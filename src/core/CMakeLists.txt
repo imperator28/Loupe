@@ -1,7 +1,9 @@
 add_library(loupe-core STATIC
     domain/StableId.cpp
     drawing/DrawingContour.cpp
+    drawing/DrawingExporter.cpp
     drawing/DrawingPlan.cpp
+    drawing/DrawingPreview.cpp
     drawing/DrawingProjector.cpp
     drawing/DrawingValidator.cpp
     drawing/DrawingWriter.cpp

@@ -195,6 +195,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/PickerComponents.h"

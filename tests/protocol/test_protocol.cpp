@@ -17,6 +17,10 @@ private slots:
     void measureAtPointRoundTrips();
     void exportPlanRoundTrips();
     void exportEventsDecode();
+    void drawingPlanRoundTrips();
+    void drawingPreviewRequestRoundTrips();
+    void drawingEventsDecode();
+    void malformedDrawingMessagesAreRefused();
 };
 
 void ProtocolTest::openFileRoundTrips()
@@ -121,6 +125,76 @@ void ProtocolTest::exportEventsDecode()
     const auto completed = loupe::protocol::decodeEvent(QByteArrayLiteral(
         "{\"version\":{\"major\":2,\"minor\":0},\"type\":\"exportCompleted\",\"requestId\":8,\"succeededCount\":2,\"failedCount\":0}\n"));
     QCOMPARE(std::get<loupe::protocol::ExportCompleted>(completed).succeededCount, 2);
+}
+
+void ProtocolTest::drawingPlanRoundTrips()
+{
+    const loupe::protocol::ExecuteDrawingPlan command{31, QByteArrayLiteral("{\"schemaVersion\":1}"),
+                                                      QStringLiteral("fed321")};
+
+    const auto decoded = loupe::protocol::decodeCommand(
+        loupe::protocol::encode(loupe::protocol::Command{command}));
+    const auto& plan = std::get<loupe::protocol::ExecuteDrawingPlan>(decoded);
+    QCOMPARE(plan.requestId, 31ULL);
+    QCOMPARE(plan.planJson, command.planJson);
+    QCOMPARE(plan.fingerprint, QStringLiteral("fed321"));
+}
+
+void ProtocolTest::drawingPreviewRequestRoundTrips()
+{
+    const loupe::protocol::RequestDrawingPreview command{32, QByteArrayLiteral("{\"nodeId\":\"plate\"}"), 7};
+
+    const auto decoded = loupe::protocol::decodeCommand(
+        loupe::protocol::encode(loupe::protocol::Command{command}));
+    const auto& preview = std::get<loupe::protocol::RequestDrawingPreview>(decoded);
+    QCOMPARE(preview.requestId, 32ULL);
+    QCOMPARE(preview.requestJson, command.requestJson);
+    // The revision is what lets a late reply be dropped, so it has to survive the trip.
+    QCOMPARE(preview.revision, 7);
+}
+
+void ProtocolTest::drawingEventsDecode()
+{
+    const auto progress = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":1},\"type\":\"drawingProgress\",\"requestId\":9,\"rowIndex\":1,\"rowCount\":3,\"stage\":\"Projecting plate-top.dxf\",\"fraction\":0.5}\n"));
+    QCOMPARE(std::get<loupe::protocol::DrawingProgress>(progress).rowIndex, 1);
+
+    const auto row = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":1},\"type\":\"drawingRowResult\",\"requestId\":9,\"rowIndex\":1,\"drawingId\":\"d2\",\"path\":\"/out/plate-top.dxf\",\"passed\":false,\"message\":\"empty outline\"}\n"));
+    const auto& rowResult = std::get<loupe::protocol::DrawingRowResult>(row);
+    QVERIFY(!rowResult.passed);
+    QCOMPARE(rowResult.drawingId, QStringLiteral("d2"));
+    QCOMPARE(rowResult.message, QStringLiteral("empty outline"));
+
+    const auto completed = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":1},\"type\":\"drawingCompleted\",\"requestId\":9,\"succeededCount\":2,\"failedCount\":1}\n"));
+    QCOMPARE(std::get<loupe::protocol::DrawingCompleted>(completed).failedCount, 1);
+
+    const auto preview = loupe::protocol::decodeEvent(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":1},\"type\":\"drawingPreviewReady\",\"requestId\":9,\"revision\":4,\"previewBase64\":\"e30=\",\"approximate\":true}\n"));
+    const auto& ready = std::get<loupe::protocol::DrawingPreviewReady>(preview);
+    QCOMPARE(ready.revision, 4);
+    QCOMPARE(ready.previewJson, QByteArrayLiteral("{}"));
+    // Carried rather than dropped, so the UI can label an approximate preview.
+    QVERIFY(ready.approximate);
+}
+
+void ProtocolTest::malformedDrawingMessagesAreRefused()
+{
+    // A zero revision would make every reply look like the newest one, so it is refused
+    // rather than accepted and reasoned about later.
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::decodeCommand(
+        QByteArrayLiteral("{\"version\":{\"major\":2,\"minor\":1},\"type\":\"requestDrawingPreview\",\"requestId\":1,\"requestBase64\":\"e30=\",\"revision\":0}\n")));
+
+    // A result with no drawing ID cannot be reconciled against a reviewed row at all.
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::decodeEvent(
+        QByteArrayLiteral("{\"version\":{\"major\":2,\"minor\":1},\"type\":\"drawingRowResult\",\"requestId\":1,\"rowIndex\":0,\"drawingId\":\"\",\"path\":\"/out/a.dxf\",\"passed\":true}\n")));
+
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::decodeEvent(
+        QByteArrayLiteral("{\"version\":{\"major\":2,\"minor\":1},\"type\":\"drawingProgress\",\"requestId\":1,\"rowIndex\":-1,\"rowCount\":1,\"stage\":\"x\",\"fraction\":0.0}\n")));
+
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::decodeCommand(
+        QByteArrayLiteral("{\"version\":{\"major\":2,\"minor\":1},\"type\":\"executeDrawingPlan\",\"requestId\":1,\"planBase64\":\"e30=\",\"fingerprint\":\"\"}\n")));
 }
 
 QTEST_MAIN(ProtocolTest)

@@ -1,7 +1,12 @@
 #include "worker/WorkerServer.h"
 
 #include "core/import/StepImporter.h"
+#include "core/drawing/DrawingExporter.h"
+#include "core/drawing/DrawingPlan.h"
+#include "core/drawing/DrawingPreview.h"
+#include "core/drawing/DrawingProjector.h"
 #include "core/export/ExportPlan.h"
+#include "core/export/ShapeSelection.h"
 #include "core/export/StepExporter.h"
 #include "core/export/StlExporter.h"
 #include "core/inspection/GeometryAnalysis.h"
@@ -390,6 +395,10 @@ void WorkerServer::readCommands()
                     cancel(value.requestId);
                 } else if constexpr (std::is_same_v<Value, protocol::ExecuteExportPlan>) {
                     executeExportPlan(value.requestId, value.planJson, value.fingerprint);
+                } else if constexpr (std::is_same_v<Value, protocol::ExecuteDrawingPlan>) {
+                    executeDrawingPlan(value.requestId, value.planJson, value.fingerprint);
+                } else if constexpr (std::is_same_v<Value, protocol::RequestDrawingPreview>) {
+                    requestDrawingPreview(value.requestId, value.requestJson, value.revision);
                 }
             }, command);
         } catch (const protocol::ProtocolError&) {
@@ -724,6 +733,317 @@ void WorkerServer::executeExportPlan(const std::uint64_t requestId, const QByteA
               {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
               {QStringLiteral("succeededCount"), succeeded}, {QStringLiteral("failedCount"), failed}});
         finish();
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+namespace {
+
+struct DecodedDrawingPlan final {
+    loupe::drawing::DrawingPlanRequest request;
+    // Reviewed queue order, so every rowIndex reported back indexes the row the user is
+    // looking at rather than the plan's canonical order.
+    std::vector<std::string> reviewedDrawingOrder;
+    bool includeScaleFiducial{};
+};
+
+[[nodiscard]] loupe::drawing::DrawingContent drawingContentFor(const QString& mode)
+{
+    if (mode == QStringLiteral("Outer contour only")) return loupe::drawing::DrawingContent::OuterContourOnly;
+    if (mode == QStringLiteral("Technical view")) return loupe::drawing::DrawingContent::TechnicalView;
+    if (mode == QStringLiteral("Cut contours")) return loupe::drawing::DrawingContent::CutContours;
+    throw std::runtime_error("reviewed drawing content mode is not recognised");
+}
+
+[[nodiscard]] loupe::drawing::DrawingFormat drawingFormatFor(const QString& format)
+{
+    if (format == QStringLiteral("DXF")) return loupe::drawing::DrawingFormat::Dxf;
+    if (format == QStringLiteral("SVG")) return loupe::drawing::DrawingFormat::Svg;
+    if (format == QStringLiteral("PDF")) return loupe::drawing::DrawingFormat::Pdf;
+    throw std::runtime_error("reviewed drawing format is not recognised");
+}
+
+[[nodiscard]] double finiteNumber(const QJsonObject& object, const QString& name)
+{
+    const auto value = object.value(name);
+    if (!value.isDouble() || !std::isfinite(value.toDouble())) {
+        throw std::runtime_error("reviewed drawing selection has a non-numeric field");
+    }
+    return value.toDouble();
+}
+
+DecodedDrawingPlan decodeDrawingPlan(const QByteArray& bytes)
+{
+    const auto document = QJsonDocument::fromJson(bytes);
+    if (!document.isObject()) throw std::runtime_error("reviewed drawing plan is not valid JSON");
+    const auto object = document.object();
+    if (object.value(QStringLiteral("schemaVersion")).toInt() != 1) {
+        throw std::runtime_error("reviewed drawing plan version is not supported");
+    }
+
+    DecodedDrawingPlan decoded;
+    auto& request = decoded.request;
+    request.destination = object.value(QStringLiteral("destination")).toString().toUtf8().toStdString();
+    request.format = drawingFormatFor(object.value(QStringLiteral("format")).toString());
+    decoded.includeScaleFiducial = object.value(QStringLiteral("includeScaleFiducial")).toBool();
+    request.includeScaleFiducial = decoded.includeScaleFiducial;
+    const auto sourceScale = object.value(QStringLiteral("sourceToMillimeters")).toDouble(0.0);
+    request.unitDecision = {loupe::units::LengthUnit::Millimeter, loupe::units::UnitConfidence::Confirmed,
+                            sourceScale, "reviewed in Loupe"};
+
+    const auto selections = object.value(QStringLiteral("selections"));
+    if (!selections.isArray()) throw std::runtime_error("reviewed drawing selections are missing");
+    for (const auto& value : selections.toArray()) {
+        const auto selection = value.toObject();
+        const auto drawingId = selection.value(QStringLiteral("drawingId")).toString().toUtf8().toStdString();
+        const auto nodeId = selection.value(QStringLiteral("nodeId")).toString().toUtf8().toStdString();
+        const auto hierarchyPath = selection.value(QStringLiteral("hierarchyPath")).toString().toUtf8().toStdString();
+        if (drawingId.empty() || nodeId.empty() || hierarchyPath.empty()) {
+            throw std::runtime_error("reviewed drawing selection is incomplete");
+        }
+        const auto numerator = selection.value(QStringLiteral("scaleNumerator"));
+        const auto denominator = selection.value(QStringLiteral("scaleDenominator"));
+        if (!numerator.isDouble() || !denominator.isDouble()) {
+            throw std::runtime_error("reviewed drawing scale is missing");
+        }
+        loupe::drawing::DrawingSelection decodedSelection;
+        decodedSelection.drawingId = drawingId;
+        decodedSelection.nodeId = nodeId;
+        decodedSelection.viewLabel = selection.value(QStringLiteral("viewLabel")).toString().toUtf8().toStdString();
+        decodedSelection.viewDirection = {finiteNumber(selection, QStringLiteral("viewX")),
+                                          finiteNumber(selection, QStringLiteral("viewY")),
+                                          finiteNumber(selection, QStringLiteral("viewZ"))};
+        decodedSelection.upDirection = {finiteNumber(selection, QStringLiteral("upX")),
+                                        finiteNumber(selection, QStringLiteral("upY")),
+                                        finiteNumber(selection, QStringLiteral("upZ"))};
+        decodedSelection.content = drawingContentFor(selection.value(QStringLiteral("contentMode")).toString());
+        decodedSelection.scaleNumerator = numerator.toInt();
+        decodedSelection.scaleDenominator = denominator.toInt();
+        request.selections.push_back(std::move(decodedSelection));
+        request.hierarchyPaths.emplace(nodeId, hierarchyPath);
+        const auto leafName = selection.value(QStringLiteral("leafName")).toString();
+        if (!leafName.isEmpty()) request.outputLeafNames.emplace(drawingId, leafName.toUtf8().toStdString());
+        decoded.reviewedDrawingOrder.push_back(drawingId);
+    }
+    return decoded;
+}
+
+} // namespace
+
+void WorkerServer::executeDrawingPlan(const std::uint64_t requestId, const QByteArray& planJson,
+                                      const QString& fingerprint)
+{
+    if (!documentSession_) {
+        fail(requestId, QStringLiteral("document_not_ready"),
+             QStringLiteral("Wait for geometry refinement to finish before exporting drawings"));
+        return;
+    }
+    if (!activeSessions_.isEmpty() || !activeExports_.isEmpty()) {
+        fail(requestId, QStringLiteral("busy"), QStringLiteral("Another worker request is already active"));
+        return;
+    }
+
+    std::optional<loupe::drawing::DrawingPlan> reviewedPlan;
+    std::vector<std::string> reviewedDrawingOrder;
+    bool includeScaleFiducial{};
+    try {
+        auto decoded = decodeDrawingPlan(planJson);
+        reviewedDrawingOrder = std::move(decoded.reviewedDrawingOrder);
+        includeScaleFiducial = decoded.includeScaleFiducial;
+        // Rebuilt here rather than trusted: the plan the worker executes has to be the one
+        // the user reviewed, and the fingerprint is the only thing that can prove it.
+        reviewedPlan.emplace(loupe::drawing::buildDrawingPlan(decoded.request));
+        if (QString::fromStdString(reviewedPlan->fingerprint()) != fingerprint) {
+            throw std::runtime_error("reviewed drawing plan changed before execution");
+        }
+        const QFileInfo destination(QString::fromStdString(decoded.request.destination));
+        if (!destination.exists() || !destination.isDir() || !destination.isWritable()) {
+            throw std::runtime_error("drawing destination is not a writable folder");
+        }
+    } catch (const std::exception& error) {
+        fail(requestId, QStringLiteral("drawing_gate_failed"), QString::fromUtf8(error.what()));
+        return;
+    }
+
+    std::vector<int> reviewedRowIndexes;
+    reviewedRowIndexes.reserve(reviewedPlan->outputs().size());
+    for (const auto& output : reviewedPlan->outputs()) {
+        const auto found = std::ranges::find(reviewedDrawingOrder, output.drawingId());
+        if (found == reviewedDrawingOrder.end()) {
+            fail(requestId, QStringLiteral("drawing_gate_failed"),
+                 QStringLiteral("reviewed drawing order is incomplete"));
+            return;
+        }
+        reviewedRowIndexes.push_back(static_cast<int>(std::distance(reviewedDrawingOrder.begin(), found)));
+    }
+
+    const auto document = documentSession_;
+    const auto job = std::make_shared<ExportJob>();
+    activeExports_.insert(requestId, job);
+    QPointer<WorkerServer> server(this);
+    auto post = [server](QJsonObject event) {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, event = std::move(event)] {
+            if (server) server->send(event);
+        }, Qt::QueuedConnection);
+    };
+    auto finish = [server, requestId, job] {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, requestId, job] {
+            if (server && server->activeExports_.value(requestId) == job) server->activeExports_.remove(requestId);
+        }, Qt::QueuedConnection);
+    };
+
+    // One thread, and rows are projected one at a time on it. BRepLib::Plane() is a mutable
+    // global static that hidden-line removal reads, so HLR jobs cannot be parallelised.
+    auto* thread = QThread::create([requestId, plan = std::move(*reviewedPlan),
+                                    reviewedRowIndexes = std::move(reviewedRowIndexes), document, job,
+                                    includeScaleFiducial, post, finish] {
+        int succeeded{};
+        int failed{};
+        const auto& outputs = plan.outputs();
+        const int rowCount = static_cast<int>(outputs.size());
+        for (int outputIndex = 0; outputIndex < rowCount; ++outputIndex) {
+            if (job->canceled.load()) {
+                post({{QStringLiteral("type"), QStringLiteral("canceled")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)}});
+                finish();
+                return;
+            }
+            const auto& output = outputs.at(static_cast<std::size_t>(outputIndex));
+            const auto rowIndex = reviewedRowIndexes.at(static_cast<std::size_t>(outputIndex));
+            const auto drawingId = QString::fromStdString(output.drawingId());
+            const auto path = QString::fromStdString(output.finalPath());
+            post({{QStringLiteral("type"), QStringLiteral("drawingProgress")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("rowCount"), rowCount},
+                  {QStringLiteral("stage"), QStringLiteral("Projecting %1").arg(QFileInfo(path).fileName())},
+                  {QStringLiteral("fraction"), static_cast<double>(outputIndex) / static_cast<double>(rowCount)}});
+            try {
+                const auto result = loupe::drawing::DrawingExporter{}.write(document->imported, output,
+                                                                           includeScaleFiducial);
+                ++succeeded;
+                auto message = QStringLiteral("Written and validated");
+                if (result.openContours > 0) {
+                    // Said out loud rather than passed silently: an open contour will not cut.
+                    message = QStringLiteral("Written, but %1 contour(s) are not closed")
+                                  .arg(result.openContours);
+                }
+                post({{QStringLiteral("type"), QStringLiteral("drawingRowResult")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                      {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("drawingId"), drawingId},
+                      {QStringLiteral("path"), path}, {QStringLiteral("passed"), true},
+                      {QStringLiteral("message"), message}});
+            } catch (const std::exception& error) {
+                ++failed;
+                // A half-written file is worse than no file: it looks cuttable.
+                std::error_code ignored;
+                std::filesystem::remove(std::filesystem::path(output.finalPath()), ignored);
+                post({{QStringLiteral("type"), QStringLiteral("drawingRowResult")},
+                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                      {QStringLiteral("rowIndex"), rowIndex}, {QStringLiteral("drawingId"), drawingId},
+                      {QStringLiteral("path"), path}, {QStringLiteral("passed"), false},
+                      {QStringLiteral("message"), QString::fromUtf8(error.what())}});
+            }
+        }
+        post({{QStringLiteral("type"), QStringLiteral("drawingCompleted")},
+              {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+              {QStringLiteral("succeededCount"), succeeded}, {QStringLiteral("failedCount"), failed}});
+        finish();
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+void WorkerServer::requestDrawingPreview(const std::uint64_t requestId, const QByteArray& requestJson,
+                                         const int revision)
+{
+    if (!documentSession_) {
+        fail(requestId, QStringLiteral("document_not_ready"),
+             QStringLiteral("Wait for geometry refinement to finish before previewing a drawing"));
+        return;
+    }
+    const auto document = QJsonDocument::fromJson(requestJson);
+    if (!document.isObject()) {
+        fail(requestId, QStringLiteral("drawing_preview_failed"),
+             QStringLiteral("drawing preview request is not valid JSON"));
+        return;
+    }
+    const auto object = document.object();
+    const auto nodeId = object.value(QStringLiteral("nodeId")).toString();
+    if (nodeId.isEmpty()) {
+        fail(requestId, QStringLiteral("drawing_preview_failed"),
+             QStringLiteral("drawing preview request names no part"));
+        return;
+    }
+
+    // A superseded preview is dropped here rather than computed and thrown away: the
+    // newest revision is the only one worth the projection cost.
+    if (revision < latestPreviewRevision_) {
+        send({{QStringLiteral("type"), QStringLiteral("canceled")},
+              {QStringLiteral("requestId"), static_cast<qint64>(requestId)}});
+        return;
+    }
+    latestPreviewRevision_ = revision;
+
+    const auto session = documentSession_;
+    const auto contentMode = object.value(QStringLiteral("contentMode")).toString();
+    const auto numerator = object.value(QStringLiteral("scaleNumerator")).toInt(1);
+    const auto denominator = object.value(QStringLiteral("scaleDenominator")).toInt(1);
+    const auto sourceToMillimeters = object.value(QStringLiteral("sourceToMillimeters")).toDouble(1.0);
+    const auto view = std::array<double, 3>{object.value(QStringLiteral("viewX")).toDouble(),
+                                            object.value(QStringLiteral("viewY")).toDouble(),
+                                            object.value(QStringLiteral("viewZ")).toDouble()};
+    const auto up = std::array<double, 3>{object.value(QStringLiteral("upX")).toDouble(),
+                                          object.value(QStringLiteral("upY")).toDouble(),
+                                          object.value(QStringLiteral("upZ")).toDouble()};
+
+    QPointer<WorkerServer> server(this);
+    auto post = [server](QJsonObject event) {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, event = std::move(event)] {
+            if (server) server->send(event);
+        }, Qt::QueuedConnection);
+    };
+
+    auto* thread = QThread::create([requestId, revision, nodeId, contentMode, numerator, denominator,
+                                    sourceToMillimeters, view, up, session, post, server] {
+        try {
+            const auto& node = loupe::exporting::detail::selectedNode(session->imported,
+                                                                     nodeId.toUtf8().toStdString());
+            auto shape = loupe::exporting::detail::localShape(session->imported, node);
+            shape = loupe::exporting::detail::placedInAssembly(shape, node);
+
+            loupe::drawing::ProjectionRequest projection;
+            projection.shape = shape;
+            projection.viewDirection = gp_Dir(view[0], view[1], view[2]);
+            projection.upDirection = gp_Dir(up[0], up[1], up[2]);
+            projection.mode = contentMode == QStringLiteral("Outer contour only")
+                ? loupe::drawing::ContentMode::OuterContourOnly
+                : contentMode == QStringLiteral("Technical view")
+                    ? loupe::drawing::ContentMode::TechnicalView
+                    : loupe::drawing::ContentMode::CutContours;
+            projection.sourceToMillimeters = sourceToMillimeters
+                * loupe::exporting::detail::nativeUnitRebase(session->imported)
+                * (static_cast<double>(numerator) / static_cast<double>(denominator));
+            const auto projected = loupe::drawing::project(projection);
+
+            // The preview is the exact projection, so what is reviewed is what is written.
+            // Gate A measured this fast enough to stay interactive on the corpus.
+            post({{QStringLiteral("type"), QStringLiteral("drawingPreviewReady")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("revision"), revision},
+                  {QStringLiteral("previewBase64"),
+                   QString::fromLatin1(loupe::drawing::encodePreview(projected).toBase64())},
+                  {QStringLiteral("approximate"), false}});
+        } catch (const std::exception& error) {
+            post({{QStringLiteral("type"), QStringLiteral("failed")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("code"), QStringLiteral("drawing_preview_failed")},
+                  {QStringLiteral("message"), QString::fromUtf8(error.what())},
+                  {QStringLiteral("recoverable"), true}});
+        }
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();

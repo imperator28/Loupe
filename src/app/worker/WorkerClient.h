@@ -22,6 +22,8 @@ public:
     [[nodiscard]] bool connectToServer(const QString& serverName, int timeoutMs = 3'000);
     [[nodiscard]] std::uint64_t openFile(const QString& path, const std::optional<QString>& unitOverride = std::nullopt);
     [[nodiscard]] std::uint64_t executeExportPlan(const QByteArray& planJson, const QString& fingerprint);
+    [[nodiscard]] std::uint64_t executeDrawingPlan(const QByteArray& planJson, const QString& fingerprint);
+    [[nodiscard]] std::uint64_t requestDrawingPreview(const QByteArray& requestJson, int revision);
     void cancel(std::uint64_t requestId);
 
 signals:
@@ -40,6 +42,11 @@ signals:
     void exportRowResult(quint64 requestId, int rowIndex, const QString& nodeId, const QString& path,
                          bool passed, const QString& message);
     void exportCompleted(quint64 requestId, int succeededCount, int failedCount);
+    void drawingProgress(quint64 requestId, int rowIndex, int rowCount, const QString& stage, double fraction);
+    void drawingRowResult(quint64 requestId, int rowIndex, const QString& drawingId, const QString& path,
+                          bool passed, const QString& message);
+    void drawingCompleted(quint64 requestId, int succeededCount, int failedCount);
+    void drawingPreviewReady(quint64 requestId, int revision, const QByteArray& previewJson, bool approximate);
     void requestFailed(quint64 requestId, const QString& code, const QString& message, bool recoverable);
     void requestCanceled(quint64 requestId);
     void protocolError(const QString& message);

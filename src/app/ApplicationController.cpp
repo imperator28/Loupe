@@ -190,6 +190,16 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         }
     });
     connect(&workerClient_, &worker::WorkerClient::requestCanceled, this, [this](quint64 requestId) {
+        if (requestId == activeDrawingRequestId_) {
+            activeDrawingRequestId_ = 0;
+            drawingWorkspaceController_.handleDrawingCanceled();
+            return;
+        }
+        if (requestId == activeDrawingPreviewRequestId_) {
+            // A superseded preview, not a user-visible failure.
+            activeDrawingPreviewRequestId_ = 0;
+            return;
+        }
         if (requestId == activeExportRequestId_) {
             activeExportRequestId_ = 0;
             exportWorkspaceController_.handleExportCanceled();
@@ -208,6 +218,17 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         preservePreviewOnCancel_ = false;
     });
     connect(&workerClient_, &worker::WorkerClient::requestFailed, this, [this](quint64 requestId, const QString& code, const QString& message, bool) {
+        if (requestId == activeDrawingRequestId_) {
+            activeDrawingRequestId_ = 0;
+            drawingWorkspaceController_.handleDrawingFailed(message.isEmpty() ? code : message);
+            return;
+        }
+        if (requestId == activeDrawingPreviewRequestId_) {
+            // A preview that could not be produced leaves the candidate's status alone; the
+            // add action is already gated on the candidate, not on the preview.
+            activeDrawingPreviewRequestId_ = 0;
+            return;
+        }
         if (requestId == activeExportRequestId_) {
             activeExportRequestId_ = 0;
             exportWorkspaceController_.handleExportFailed(message.isEmpty() ? code : message);
@@ -247,14 +268,71 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         exportWorkspaceController_.handleExportCompleted(succeededCount, failedCount);
     });
     connect(&workerClient_, &worker::WorkerClient::protocolError, this, [this](const QString& message) {
+        if (activeDrawingRequestId_ != 0) {
+            activeDrawingRequestId_ = 0;
+            drawingWorkspaceController_.handleDrawingFailed(message);
+        }
         if (activeExportRequestId_ == 0) return;
         activeExportRequestId_ = 0;
         exportWorkspaceController_.handleExportFailed(message);
     });
     connect(&workerClient_, &worker::WorkerClient::connectionLost, this, [this] {
+        if (activeDrawingRequestId_ != 0) {
+            activeDrawingRequestId_ = 0;
+            drawingWorkspaceController_.handleDrawingFailed(tr("Connection to the export worker was lost"));
+        }
         if (activeExportRequestId_ == 0) return;
         activeExportRequestId_ = 0;
         exportWorkspaceController_.handleExportFailed(tr("Connection to the export worker was lost"));
+    });
+    connect(&drawingWorkspaceController_, &drawing::DrawingWorkspaceController::executeRequested,
+            this, [this](const QByteArray& planJson, const QString& fingerprint) {
+        activeDrawingRequestId_ = workerClient_.executeDrawingPlan(planJson, fingerprint);
+        drawingWorkspaceController_.setExportRequestId(activeDrawingRequestId_);
+    });
+    connect(&drawingWorkspaceController_, &drawing::DrawingWorkspaceController::cancelRequested,
+            this, [this](const quint64 requestId) { workerClient_.cancel(requestId); });
+    connect(&drawingWorkspaceController_, &drawing::DrawingWorkspaceController::previewRequested,
+            this, [this](const QByteArray& requestJson, const int revision) {
+        activeDrawingPreviewRevision_ = revision;
+        activeDrawingPreviewRequestId_ = workerClient_.requestDrawingPreview(requestJson, revision);
+    });
+    connect(&drawingWorkspaceController_, &drawing::DrawingWorkspaceController::previewCanceled,
+            this, [this](const int revision) {
+        // Only cancel the in-flight request if it is the one being superseded; a newer
+        // request may already have replaced it.
+        if (revision != activeDrawingPreviewRevision_ || activeDrawingPreviewRequestId_ == 0) return;
+        workerClient_.cancel(activeDrawingPreviewRequestId_);
+        activeDrawingPreviewRequestId_ = 0;
+    });
+    connect(&workerClient_, &worker::WorkerClient::drawingProgress, this,
+            [this](const quint64 requestId, const int rowIndex, const int rowCount,
+                   const QString& stage, const double fraction) {
+        if (requestId == activeDrawingRequestId_) {
+            drawingWorkspaceController_.handleDrawingProgress(rowIndex, rowCount, stage, fraction);
+        }
+    });
+    connect(&workerClient_, &worker::WorkerClient::drawingRowResult, this,
+            [this](const quint64 requestId, const int rowIndex, const QString& drawingId,
+                   const QString& path, const bool passed, const QString& message) {
+        if (requestId == activeDrawingRequestId_) {
+            drawingWorkspaceController_.handleDrawingRowResult(rowIndex, drawingId, path, passed, message);
+        }
+    });
+    connect(&workerClient_, &worker::WorkerClient::drawingCompleted, this,
+            [this](const quint64 requestId, const int succeededCount, const int failedCount) {
+        if (requestId != activeDrawingRequestId_) return;
+        activeDrawingRequestId_ = 0;
+        drawingWorkspaceController_.handleDrawingCompleted(succeededCount, failedCount);
+    });
+    connect(&workerClient_, &worker::WorkerClient::drawingPreviewReady, this,
+            [this](const quint64 requestId, const int revision, const QByteArray& previewJson,
+                   const bool approximate) {
+        // Two gates rather than one: the request ID rules out a reply for a different
+        // request, the revision rules out a reply that raced a newer candidate.
+        if (requestId != activeDrawingPreviewRequestId_ || revision != activeDrawingPreviewRevision_) return;
+        activeDrawingPreviewRequestId_ = 0;
+        emit drawingPreviewReady(QString::fromUtf8(previewJson), revision, approximate);
     });
     connect(&visibilityModel_, &models::VisibilityModel::presentationChanged, this, [this] {
         emit visibilityChanged();

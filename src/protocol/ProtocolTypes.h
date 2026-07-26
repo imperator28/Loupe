@@ -10,11 +10,15 @@
 
 namespace loupe::protocol {
 
-struct Version { std::uint16_t major{2}; std::uint16_t minor{0}; };
+struct Version { std::uint16_t major{2}; std::uint16_t minor{1}; };
 struct UnitOverride { QString unit; double customFactor{1.0}; QString reason; };
 struct OpenFile { std::uint64_t requestId{}; QString path; std::optional<UnitOverride> unitOverride; };
 struct Cancel { std::uint64_t requestId{}; };
 struct ExecuteExportPlan { std::uint64_t requestId{}; QByteArray planJson; QString fingerprint; };
+struct ExecuteDrawingPlan { std::uint64_t requestId{}; QByteArray planJson; QString fingerprint; };
+// A candidate preview. Superseded by revision rather than by cancellation, because a late
+// reply can still arrive and only the revision can tell the app to drop it.
+struct RequestDrawingPreview { std::uint64_t requestId{}; QByteArray requestJson; int revision{}; };
 struct MeasureAtPoint { std::uint64_t requestId{}; QString nodeId; double x{}; double y{}; double z{}; QString mode; };
 struct SetVisible { QString nodeId; bool visible{}; };
 struct Ready { Version version; };
@@ -65,12 +69,38 @@ struct ExportRowResult {
     QString message;
 };
 struct ExportCompleted { std::uint64_t requestId{}; int succeededCount{}; int failedCount{}; };
+struct DrawingProgress {
+    std::uint64_t requestId{};
+    int rowIndex{};
+    int rowCount{};
+    QString stage;
+    double fraction{};
+};
+struct DrawingRowResult {
+    std::uint64_t requestId{};
+    int rowIndex{};
+    QString drawingId;
+    QString path;
+    bool passed{};
+    QString message;
+};
+struct DrawingCompleted { std::uint64_t requestId{}; int succeededCount{}; int failedCount{}; };
+// approximate says the preview came from the mesh rather than exact projection, so the UI
+// can label it instead of implying a fidelity it does not have.
+struct DrawingPreviewReady {
+    std::uint64_t requestId{};
+    int revision{};
+    QByteArray previewJson;
+    bool approximate{};
+};
 struct Failed { std::uint64_t requestId{}; QString code; QString message; bool recoverable{}; };
 struct Canceled { std::uint64_t requestId{}; };
 
-using Command = std::variant<OpenFile, Cancel, ExecuteExportPlan, MeasureAtPoint, SetVisible>;
+using Command = std::variant<OpenFile, Cancel, ExecuteExportPlan, ExecuteDrawingPlan,
+                             RequestDrawingPreview, MeasureAtPoint, SetVisible>;
 using Event = std::variant<Ready, Progress, SnapshotReady, ComponentMetadata, MeshReady, EdgeReady, ImportMetrics,
-                           ExportProgress, ExportRowResult, ExportCompleted, Failed, Canceled>;
+                           ExportProgress, ExportRowResult, ExportCompleted, DrawingProgress,
+                           DrawingRowResult, DrawingCompleted, DrawingPreviewReady, Failed, Canceled>;
 
 class ProtocolError final : public std::runtime_error {
 public:

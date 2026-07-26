@@ -45,6 +45,20 @@ std::uint64_t WorkerClient::executeExportPlan(const QByteArray& planJson, const 
     return requestId;
 }
 
+std::uint64_t WorkerClient::executeDrawingPlan(const QByteArray& planJson, const QString& fingerprint)
+{
+    const auto requestId = nextRequestId_++;
+    writeCommand(protocol::encode(protocol::Command{protocol::ExecuteDrawingPlan{requestId, planJson, fingerprint}}));
+    return requestId;
+}
+
+std::uint64_t WorkerClient::requestDrawingPreview(const QByteArray& requestJson, const int revision)
+{
+    const auto requestId = nextRequestId_++;
+    writeCommand(protocol::encode(protocol::Command{protocol::RequestDrawingPreview{requestId, requestJson, revision}}));
+    return requestId;
+}
+
 void WorkerClient::cancel(const std::uint64_t requestId)
 {
     writeCommand(protocol::encode(protocol::Command{protocol::Cancel{requestId}}));
@@ -95,6 +109,15 @@ void WorkerClient::readEvents()
                                          value.passed, value.message);
                 } else if constexpr (std::is_same_v<Value, protocol::ExportCompleted>) {
                     emit exportCompleted(value.requestId, value.succeededCount, value.failedCount);
+                } else if constexpr (std::is_same_v<Value, protocol::DrawingProgress>) {
+                    emit drawingProgress(value.requestId, value.rowIndex, value.rowCount, value.stage, value.fraction);
+                } else if constexpr (std::is_same_v<Value, protocol::DrawingRowResult>) {
+                    emit drawingRowResult(value.requestId, value.rowIndex, value.drawingId, value.path,
+                                          value.passed, value.message);
+                } else if constexpr (std::is_same_v<Value, protocol::DrawingCompleted>) {
+                    emit drawingCompleted(value.requestId, value.succeededCount, value.failedCount);
+                } else if constexpr (std::is_same_v<Value, protocol::DrawingPreviewReady>) {
+                    emit drawingPreviewReady(value.requestId, value.revision, value.previewJson, value.approximate);
                 } else if constexpr (std::is_same_v<Value, protocol::Failed>) {
                     emit requestFailed(value.requestId, value.code, value.message, value.recoverable);
                 } else if constexpr (std::is_same_v<Value, protocol::Canceled>) {
