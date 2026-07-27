@@ -773,8 +773,12 @@ ctest --preset windows-release --output-on-failure -R "qml"
 
 ## Gate E: Workspace UX review
 
-Tasks 10-15 are complete. What is machine-verified is marked; what needs eyes on a real
-part is listed separately rather than ticked off on the strength of the code being written.
+Tasks 10-15 are complete. What is machine-verified is marked; what needs eyes on a real part
+is listed separately rather than ticked off on the strength of the code being written.
+
+**The gate does not close yet, and the blocker is not review time.** Projection reliability is
+measured-defective (see the preview item below and `drawing-audit`). Everything else here can be
+signed off; a drawing that is wrong cannot be, however good the interface around it is.
 
 - [ ] The 2D preview renders the candidate before it can be queued, with extents and warnings.
 
@@ -788,6 +792,23 @@ part is listed separately rather than ticked off on the strength of the code bei
       honest statement was that the preview was **entirely unverified**. Extents rendering
       correctly is not evidence that geometry renders at all, and nothing in the suite
       distinguished the two.
+
+      **Status now: rendering confirmed, correctness blocked.** The preview has been seen
+      drawing real outlines on real parts across several files and views, at stated extents,
+      with warnings and contour counts. So "renders the candidate before it can be queued" is
+      satisfied.
+
+      What is *not* satisfied is that the outline is right, and that is not a matter of
+      looking harder -- `drawing-audit` measures three specific defects: a silhouette bounding
+      box larger than the cut outline it filters (`PCBA_box` Left and Right, 66.42 x 60.57
+      against 55.35 x 53.10), up to 80 unclosed contours in cut mode on an edge-on view, and a
+      silhouette sometimes *smaller* than the cut outline. A preview that faithfully shows
+      wrong geometry passes this criterion and still fails the user.
+
+      **Gate E is therefore blocked on projection reliability, not on review time.** Recorded
+      this way deliberately: read as "needs a human", the next person schedules an hour of
+      clicking. Read as "blocked", they fix the projector first, which is the only order that
+      can close it.
 
       Now covered by a test that asserts the point lists the `Shape` actually consumes,
       verified to fail when those lists come back empty -- which is what a blank preview
