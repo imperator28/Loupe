@@ -373,39 +373,22 @@ void MeshGeometry::setSectionOptions(const bool capEnabled, const bool sliceOnly
                      sectionOffset_, sectionFlipped_, capEnabled, sliceOnly, sliceFill, sliceOutline, false);
 }
 
-void MeshGeometry::ensureBounds() const
-{
-    if (boundsValid_) return;
-    if (vertexData_.size() < 3) return;
-    for (int axis = 0; axis < 3; ++axis) {
-        minimumCoordinate_[axis] = std::numeric_limits<float>::max();
-        maximumCoordinate_[axis] = std::numeric_limits<float>::lowest();
-    }
-    // One pass over the buffer, all three axes at once, rather than one pass per accessor
-    // call. A camera move asks six times per mesh; at that rate the scan was the cost of
-    // taking a standard view.
-    for (qsizetype index = 0; index + 2 < vertexData_.size(); index += 3) {
-        for (int axis = 0; axis < 3; ++axis) {
-            const auto value = vertexData_.at(index + axis);
-            minimumCoordinate_[axis] = std::min(minimumCoordinate_[axis], value);
-            maximumCoordinate_[axis] = std::max(maximumCoordinate_[axis], value);
-        }
-    }
-    boundsValid_ = true;
-}
-
 float MeshGeometry::minimumCoordinate(const int axis) const noexcept
 {
-    ensureBounds();
-    if (!boundsValid_) return std::numeric_limits<float>::quiet_NaN();
-    return minimumCoordinate_[std::clamp(axis, 0, 2)];
+    if (vertexData_.isEmpty()) return std::numeric_limits<float>::quiet_NaN();
+    const auto normalizedAxis = std::clamp(axis, 0, 2);
+    float value = std::numeric_limits<float>::max();
+    for (qsizetype index = normalizedAxis; index < vertexData_.size(); index += 3) value = std::min(value, vertexData_.at(index));
+    return value;
 }
 
 float MeshGeometry::maximumCoordinate(const int axis) const noexcept
 {
-    ensureBounds();
-    if (!boundsValid_) return std::numeric_limits<float>::quiet_NaN();
-    return maximumCoordinate_[std::clamp(axis, 0, 2)];
+    if (vertexData_.isEmpty()) return std::numeric_limits<float>::quiet_NaN();
+    const auto normalizedAxis = std::clamp(axis, 0, 2);
+    float value = std::numeric_limits<float>::lowest();
+    for (qsizetype index = normalizedAxis; index < vertexData_.size(); index += 3) value = std::max(value, vertexData_.at(index));
+    return value;
 }
 
 void MeshGeometry::rebuildDisplayMesh()
@@ -643,10 +626,6 @@ void MeshGeometry::startSectionOverlayBuild()
 
 void MeshGeometry::upload()
 {
-    // Invalidate only. Computing here would charge every section rebuild -- and so every
-    // camera move, since the section's outline width follows the camera -- for a scan that
-    // most of those rebuilds never need.
-    boundsValid_ = false;
     QVector<float> interleaved;
     interleaved.reserve(vertexData_.size() * 2);
     for (qsizetype index = 0; index + 2 < vertexData_.size(); index += 3) {

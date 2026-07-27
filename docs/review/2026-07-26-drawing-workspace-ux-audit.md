@@ -94,3 +94,47 @@ under the offscreen platform and compare, frame by frame, the cube's `cameraOrie
 against `cameraRig.rotation` and the camera's derived forward vector. That distinguishes "the
 camera never received the value" from "it received it a frame late" from "something overwrote
 it", which is exactly what guessing could not.
+
+## Resolved: the standard-view lag was the cube hover highlight
+
+Bisected with side-by-side builds after seven failed code-reading diagnoses. The method that
+worked: build the commit the user called snappy, build the suspect, compare, then add back one
+file at a time. Four measured builds settled what seven readings could not.
+
+| Build | Content | Result |
+| --- | --- | --- |
+| `a746a83` | before the zoom change | snappy |
+| `8dcaac2` | the zoom change | very laggy |
+| TEST-A | master, `ViewCube` + `MeshGeometry` rolled back | snappy |
+| TEST-B | TEST-A + the cube highlight only | laggy |
+| TEST-D | highlight made opaque instead of blended | laggy |
+| TEST-E/F | 2D overlay, no model added | snappy, but broke viewport capture |
+
+**The finding, which is not obvious and is worth keeping:** *any* extra `Model` in the view
+cube's `View3D` costs measurable frame time — blended or opaque, and whether or not it is
+currently `visible`. The cube redraws every frame, so the cost is continuous. It surfaced as
+the model appearing to lag the cube on a face click, which sent me hunting through the camera
+path for six attempts. Nothing in the camera path was ever wrong.
+
+**Also ruled out by measurement, having been asserted by reasoning:** the number of models
+(one was as slow as six), transparency (opaque was as slow as blended), the vertex-extent scan,
+`setStandardView` ordering, and camera transitions.
+
+**Shipped:** the hovered face is shown by tinting its existing label, which adds no geometry.
+
+**Rejected, with the reason:** a 2D `Shape` overlay drawing the projected face quad. It was
+snappy and it looked right, but it broke `viewportCaptureUsesRequestedRenderResolution` — a 2x
+capture came back with no opaque pixels, i.e. it broke the Capture feature. Adding
+`QtQuick.Shapes` to the cube changes how that item tree grabs. A face-background tint is still
+wanted; it needs a route that does not add geometry to the 3D view and does not disturb capture.
+
+**Reverted:** the eager mesh-extent cache. `upload()` runs on every section rebuild, and the
+section's outline width follows the camera, so computing extents there charged every camera
+move for a full vertex pass. The accessors are back to scanning per call, which is what the
+snappy build did. If this is optimised again it must be lazy, and it must be verified against
+capture and camera-move cost, not just the suite.
+
+**Process note.** The suite passed 173/173 through every one of these states, including the
+broken ones. It cannot see frame time, and it did not see the capture break until the Shape
+went in. Interaction regressions need a human with two builds; that is the cheapest reliable
+instrument available here.

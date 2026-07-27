@@ -58,12 +58,6 @@ private:
     friend class CadEdgeGeometry;
 
     void upload();
-    // Computed on demand and cached until the display mesh changes. Deliberately not eager:
-    // upload() runs whenever the section mesh is rebuilt, and the section's outline width
-    // depends on the camera, so an eager scan there put a full vertex pass on every camera
-    // move. Lazy keeps repeated reads O(1) without charging anything to callers that never
-    // ask for bounds.
-    void ensureBounds() const;
     void rebuildDisplayMesh();
     void rebuildSourceNormals();
     void rebuildDisplayNormals();
@@ -75,12 +69,6 @@ private:
     QVector<protocol::TopologyRange> sourceTopology_;
     QSharedPointer<const SectionSourceData> sectionSource_;
     QVector<float> vertexData_;
-    // Cached extents of vertexData_. The accessors used to scan the whole buffer on every
-    // call, and callers ask six times per node, which put a full multi-pass scan of every
-    // visible mesh in front of a camera change.
-    mutable float minimumCoordinate_[3]{};
-    mutable float maximumCoordinate_[3]{};
-    mutable bool boundsValid_{};
     QVector<float> normalData_;
     QVector<quint32> indexData_;
     bool sectionEnabled_{false};

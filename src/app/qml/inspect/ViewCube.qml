@@ -219,34 +219,6 @@ Item {
             // Deliberately NOT Texture.sourceItem, which is the obvious way to draw
             // text onto a face: it needs a live render context and segfaults under
             // the offscreen platform the QML smoke test runs on.
-            // Hover highlight: one model that moves to the hovered face, not one per face.
-            //
-            // It was six, each with a blended material. Blended geometry forces depth sorting
-            // for the whole view, and the cube's View3D redraws every frame, so six of them
-            // cost frame time continuously -- visible as the model lagging behind a camera
-            // change even though nothing about the camera had changed. One, hidden unless a
-            // face is hovered, costs nothing when it is not.
-            Model {
-                readonly property vector3d direction: root.hoveredView.length > 0
-                    ? root.directionFor(root.hoveredView) : Qt.vector3d(0, 0, 1)
-
-                source: "#Rectangle"
-                visible: root.hoveredView.length > 0
-                position: Qt.vector3d(direction.x * root.halfSize * 1.002,
-                                      direction.y * root.halfSize * 1.002,
-                                      direction.z * root.halfSize * 1.002)
-                rotation: root.rotationOntoDirection(direction)
-                scale: Qt.vector3d(root.unitScale, root.unitScale, root.unitScale)
-                pickable: false
-
-                materials: PrincipledMaterial {
-                    baseColor: root.theme ? root.theme.accent : "transparent"
-                    lighting: PrincipledMaterial.NoLighting
-                    alphaMode: PrincipledMaterial.Blend
-                    opacity: 0.42
-                }
-            }
-
             Repeater3D {
                 model: root.viewNames
 
@@ -264,7 +236,14 @@ Item {
                     pickable: false
 
                     materials: PrincipledMaterial {
-                        baseColor: root.labelColor
+                        // Hovered face is shown by tinting its own label. Deliberately not a
+                        // highlight panel: bisecting proved any extra Model in this View3D
+                        // costs frame time -- blended or opaque, visible or not -- because the
+                        // cube redraws every frame. A 2D Shape overlay was tried instead and
+                        // broke viewport capture at 2x/3x, so recolouring geometry that is
+                        // already drawn is the only version that is both snappy and safe.
+                        baseColor: root.hoveredView === modelData && root.theme
+                                   ? root.theme.accent : root.labelColor
                         lighting: PrincipledMaterial.NoLighting
                         alphaMode: PrincipledMaterial.Blend
                         opacityMap: Texture { source: root.labelMaskFor(modelData) }
