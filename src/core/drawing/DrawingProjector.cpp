@@ -10,6 +10,8 @@
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
 #include <Geom2dConvert_BSplineCurveToBezierCurve.hxx>
@@ -576,6 +578,27 @@ private:
     } catch (const Standard_Failure&) { return boundary; }
     if (split.IsNull()) return boundary;
 
+    // An edge lying along the padded canvas boundary. Compared against the rim coordinates
+    // rather than by shape identity, because the splitter rebuilds the rim into new edges.
+    const double rimXMin = xMin - pad;
+    const double rimXMax = xMax + pad;
+    const double rimYMin = yMin - pad;
+    const double rimYMax = yMax + pad;
+    const double rimTolerance = std::max(1.0e-6, pad * 1.0e-3);
+    const auto isCanvasRimEdge = [&](const TopoDS_Edge& edge) {
+        TopoDS_Vertex first;
+        TopoDS_Vertex last;
+        TopExp::Vertices(edge, first, last);
+        if (first.IsNull() || last.IsNull()) return false;
+        const gp_Pnt a = BRep_Tool::Pnt(first);
+        const gp_Pnt b = BRep_Tool::Pnt(last);
+        const auto onSame = [rimTolerance](const double one, const double two, const double line) {
+            return std::abs(one - line) <= rimTolerance && std::abs(two - line) <= rimTolerance;
+        };
+        return onSame(a.X(), b.X(), rimXMin) || onSame(a.X(), b.X(), rimXMax)
+            || onSame(a.Y(), b.Y(), rimYMin) || onSame(a.Y(), b.Y(), rimYMax);
+    };
+
     // Count, per edge, how many INSIDE regions it bounds. One means it separates
     // material from empty space, so it is on the silhouette; two means it is interior.
     std::map<const void*, std::pair<TopoDS_Edge, int>> tally;
@@ -595,6 +618,18 @@ private:
             const TopAbs_Orientation orientation = regionEdges.Current().Orientation();
             if (orientation == TopAbs_INTERNAL || orientation == TopAbs_EXTERNAL) continue;
             const TopoDS_Edge edge = TopoDS::Edge(regionEdges.Current());
+            // Never let the canvas rim itself become silhouette. The pad above exists so the
+            // rim cannot coincide with real geometry, which makes a rim edge definitionally
+            // not part of the part -- and that guarantee holds whether or not the region
+            // classification got the outer region right.
+            //
+            // It does sometimes get it wrong: on an edge-on view of a flat body the outer
+            // region's sample can read as inside, and then the rim bounds exactly one
+            // "inside" region and survives the count below. What came out was the canvas
+            // rectangle, measurably larger than the cut outline it was supposed to filter --
+            // PCBA_box Left and Right gave 66.42 wide against the cut's 55.35, and
+            // 55.35 + 2 * pad is exactly 66.42.
+            if (isCanvasRimEdge(edge)) continue;
             const void* key = edge.TShape().get();
             auto found = tally.find(key);
             if (found == tally.end()) tally.emplace(key, std::pair{edge, 1});

@@ -138,3 +138,43 @@ capture and camera-move cost, not just the suite.
 broken ones. It cannot see frame time, and it did not see the capture break until the Shape
 went in. Interaction regressions need a human with two builds; that is the cheapest reliable
 instrument available here.
+
+## Silhouette: canvas rim leak fixed, region classification still wrong
+
+The oversized silhouette is understood and fixed. The silhouette splitter builds a padded canvas
+face, `pad = 10% of the larger projected extent`, and classifies the resulting regions by
+sampling a point and asking the mesh oracle whether it is inside material. On an edge-on view of
+a flat body the *outer* region's sample reads as inside, so the canvas rim bounds exactly one
+"inside" region and survives the boundary count. The arithmetic confirms it rather than suggests
+it: `PCBA_box` Right measured 66.42 wide, and `55.35 + 2 x 5.535` is exactly 66.42.
+
+Rim edges are now excluded by comparing against the rim coordinates, which is sound regardless of
+the classification, because the pad exists precisely so the rim cannot coincide with real
+geometry.
+
+**This did not make those views correct — it made them empty.** `PCBA_box` Left and Right now
+return no contours at all, because the rim was the *only* thing being kept. The real defect is
+underneath: the region classification fails completely on an edge-on view of a flat body. An
+empty drawing is at least honestly wrong rather than plausibly wrong, but it is not a fix.
+
+So `drawing-audit` now also counts an empty silhouette where the cut outline has geometry, and
+exits non-zero on it. Without that, this change would have flipped the audit to green while
+making two views produce nothing — exactly the false pass the tool exists to prevent.
+
+Current audit state: `mount` clean on all six views; `590662` unchanged; `PCBA_box`
+`oversized=0 empty=2`, exit 5.
+
+## The capture test is flaky, and I acted on it as though it were not
+
+`viewportCaptureUsesRequestedRenderResolution` needs real GPU rendering. Measured back to back
+with no code changes at all: **failed 45s, failed 36s, passed 6s.** A pass takes about six
+seconds; the failures are timeouts.
+
+This matters because earlier in the session I removed a 2D `Shape` overlay -- the projected
+face-quad tint, which the user had reviewed and approved as "snappy and clean" -- on the
+strength of this test failing three times consistently at 44s. That is the same signature as the
+flakiness above. **That removal may have been unnecessary and should be re-tested**, ideally by
+running the test several times before and after rather than once.
+
+The general lesson, which cost real work here: a test that is slow when it fails and fast when
+it passes is timing out, not detecting. Repeat it before drawing a conclusion from it.

@@ -796,6 +796,11 @@ int runDrawingAudit(const std::vector<std::string>& args)
 
     nlohmann::json rows = nlohmann::json::array();
     int oversizedSilhouettes = 0;
+    // A silhouette that produced nothing where the cut outline has geometry. Counted
+    // separately because it is the failure a fix for oversizing can accidentally
+    // create: drop the offending edges and the view goes empty, which the oversize
+    // check alone would report as success.
+    int emptySilhouettes = 0;
     for (const auto& [name, direction] : views) {
         const gp_Dir up = std::abs(direction.Z()) > 0.9 ? gp_Dir(0.0, 1.0, 0.0) : gp_Dir(0.0, 0.0, 1.0);
         nlohmann::json row{{"view", name}};
@@ -836,6 +841,11 @@ int runDrawingAudit(const std::vector<std::string>& args)
                     || bounds.height() > cutHeight + slack;
                 row["silhouetteOversized"] = oversized;
                 if (oversized) ++oversizedSilhouettes;
+                const bool empty = !bounds.valid
+                    || (bounds.width() <= slack && bounds.height() <= slack);
+                const bool cutHasGeometry = cutWidth > slack || cutHeight > slack;
+                row["silhouetteEmpty"] = empty && cutHasGeometry;
+                if (empty && cutHasGeometry) ++emptySilhouettes;
             }
         } catch (const std::exception& error) { row["silhouette"] = {{"error", error.what()}}; }
         rows.push_back(row);
@@ -845,8 +855,9 @@ int runDrawingAudit(const std::vector<std::string>& args)
                {"bodies", bodyCount},
                {"effectiveUnit", unitName(decision.effectiveUnit)},
                {"oversizedSilhouettes", oversizedSilhouettes},
+               {"emptySilhouettes", emptySilhouettes},
                {"views", rows}});
-    return oversizedSilhouettes == 0 ? success : validationFailure;
+    return oversizedSilhouettes == 0 && emptySilhouettes == 0 ? success : validationFailure;
 }
 
 int runDrawingSpike(const std::vector<std::string>& args)
