@@ -54,9 +54,17 @@ Item {
         controller.replayGeometry()
     }
 
+    // See ExportWorkspace: the preview keeps the camera it was left with, so entering
+    // the workspace re-requests a fit. StepViewport holds the request until the
+    // geometry it needs exists rather than dropping it if the replay has not landed.
+    function refitPreview() {
+        if (modelPreviewPanel.viewportLoaderItem) modelPreviewPanel.viewportLoaderItem.requestFit()
+    }
+
     onVisibleChanged: if (visible) {
         root.activatePreviews()
         Qt.callLater(root.synchronizeSceneSelection)
+        Qt.callLater(root.refitPreview)
     }
     Component.onCompleted: if (visible) root.activatePreviews()
 
@@ -94,6 +102,7 @@ Item {
             wellSurface: true
 
             readonly property bool viewportReady: viewportLoader.status === Loader.Ready
+            readonly property var viewportLoaderItem: viewportLoader.item
             // The Loader is asynchronous, so it is not ready when activatePreviews() first
             // asks. Without this the replay never happened and the viewport stayed empty
             // until some other workspace replayed the geometry for it.
@@ -123,6 +132,7 @@ Item {
                     item.requireDisplayFilter = true
                     item.displayOnlyNodeId = Qt.binding(function() { return root.viewportNodeId })
                     item.faceFrameSelected.connect(root.applyFaceFrame)
+                    item.requestFit()
                 }
             }
 

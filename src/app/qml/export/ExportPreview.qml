@@ -21,6 +21,12 @@ Inspect.ElevatedPanel {
         if (viewportLoader.item) viewportLoader.item.renderMode = mode
     }
 
+    // Safe to call before the asynchronous Loader has produced the viewport --
+    // onLoaded requests the fit itself in that case.
+    function requestFit() {
+        if (viewportLoader.item) viewportLoader.item.requestFit()
+    }
+
     wellSurface: true
 
     Loader {
@@ -46,6 +52,7 @@ Inspect.ElevatedPanel {
             item.requireDisplayFilter = root.requireSelection
             item.displayOnlyNodeId = Qt.binding(function() { return root.displayOnlyNodeId })
             item.externalHighlightNodeId = Qt.binding(function() { return root.highlightNodeId })
+            item.requestFit()
         }
     }
 

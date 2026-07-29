@@ -50,9 +50,19 @@ Item {
         controller.replayGeometry()
     }
 
+    // Arriving from Inspect, the previews show whatever camera they were left with,
+    // which after a selection change is rarely framed on what the user is now looking
+    // at. Ask for a fit on every entry; StepViewport holds the request until the
+    // geometry it needs exists, so this works whether or not the replay has landed.
+    function refitPreviews() {
+        masterPreview.requestFit()
+        standalonePreview.requestFit()
+    }
+
     onVisibleChanged: if (visible) {
         root.activatePreviews()
         Qt.callLater(root.synchronizeSceneSelection)
+        Qt.callLater(root.refitPreviews)
     }
     Component.onCompleted: if (visible) root.activatePreviews()
 
@@ -92,10 +102,22 @@ Item {
             onViewportReadyChanged: root.replayGeometryWhenReady()
         }
 
+        // The width is pinned on this column rather than on the ScrollView, which
+        // is what the Drawing workspace does. A ScrollView is a Control, so its
+        // implicit width comes from its content and its padding includes the
+        // scroll bar, and both of those differ per platform -- pinning it there
+        // let macOS resolve this column wider than the 360 the two workspaces are
+        // meant to share, so Export and Drawing did not line up. A ColumnLayout
+        // takes the width it is given.
+        ColumnLayout {
+            Layout.preferredWidth: 360
+            Layout.fillHeight: true
+            spacing: root.theme.spacing3
+
         // Scrollable, because at a small window height the destination, format, naming and
         // export button fall off the bottom with no way to reach them.
         ScrollView {
-            Layout.preferredWidth: 360
+            Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             contentWidth: availableWidth
@@ -136,6 +158,7 @@ Item {
                 draft: root.draft
                 theme: root.theme
             }
+        }
         }
         }
     }

@@ -167,6 +167,7 @@ Item {
             return
         }
         navigation.fitBounds(sceneMinimum, sceneMaximum)
+        pendingFit = false
     }
 
     function captureDevicePixelRatio() {
@@ -192,6 +193,18 @@ Item {
         return displayOnlyNodeId.length === 0 || nodeMatchesSelection(nodeId, displayOnlyNodeId)
     }
 
+    // A fit was asked for but the geometry it needs had not arrived yet. Fitting is
+    // driven by an asynchronous replay, so whether the request or the geometry lands
+    // first is a race -- one that Windows happened to win and macOS to lose, leaving
+    // the part off-screen until refitted by hand. Holding the request until it can
+    // actually be satisfied removes the timing dependency instead of tuning it.
+    property bool pendingFit: false
+
+    function requestFit() {
+        pendingFit = true
+        Qt.callLater(fitCamera)
+    }
+
     function fitDisplayFilter() {
         if (!hasSceneBounds || displayOnlyNodeId.length === 0) return
         let minimum = Qt.vector3d(0, 0, 0)
@@ -209,7 +222,10 @@ Item {
                 maximum = Qt.vector3d(Math.max(maximum.x, bounds.maximum.x), Math.max(maximum.y, bounds.maximum.y), Math.max(maximum.z, bounds.maximum.z))
             }
         }
-        if (found) navigation.fitBounds(minimum, maximum)
+        if (found) {
+            navigation.fitBounds(minimum, maximum)
+            pendingFit = false
+        }
     }
 
     function fitSelection() {
@@ -403,10 +419,23 @@ Item {
         const section = !presentationOnly && controller ? controller.section : null
         const sliceOnlyFinal = section && section.enabled && section.sliceOnly && !section.interacting
                 && !sectionFinalizing
-        for (let id in modelByNode)
-            modelByNode[id].visible = renderMode !== 2 && !sliceOnlyFinal
-                    && nodeVisibleInPreview(modelByNode[id].nodeId)
-                    && (!controller || controller.isNodeVisible(modelByNode[id].nodeId))
+        for (let id in modelByNode) {
+            const model = modelByNode[id]
+            // Whether the user has hidden this component, as distinct from
+            // whether the current display mode happens to draw its solid.
+            const shown = nodeVisibleInPreview(model.nodeId)
+                    && (!controller || controller.isNodeVisible(model.nodeId))
+            model.visible = renderMode !== 2 && !sliceOnlyFinal && shown
+            // Picking follows the user's own hide, not the display mode. A ray
+            // pick still reports a model that is merely not drawn, so leaving
+            // this true let a hidden part keep swallowing clicks and hovers in
+            // front of the parts behind it -- the reason a hidden component was
+            // hard to see past or select around. It deliberately does not use
+            // `visible`: in Edges Only, and while a 2D slice is showing, the
+            // solid is not drawn but its edges are, and those must stay
+            // selectable.
+            model.pickable = shown
+        }
         for (let id in edgeModelByNode) {
             const edgeModel = edgeModelByNode[id]
             // The "show edges for a selected part even in Solid mode" override
@@ -843,6 +872,9 @@ Item {
 
     Component { id: geometryComponent; MeshGeometry {} }
     Component { id: edgeGeometryComponent; CadEdgeGeometry {} }
+    // Coalesces the burst of arriving meshes into one fit, and -- because
+    // fitCamera() only clears pendingFit once it actually fits -- is also what
+    // retries a fit that was requested before its geometry existed.
     Timer { id: fitTimer; interval: 120; onTriggered: root.fitCamera() }
     Timer { id: sectionApplyTimer; interval: 0; repeat: false; onTriggered: root.applyNextSectionItem() }
     Component {
@@ -1393,8 +1425,21 @@ Item {
             navigation.zoomByFactor(activeScale / lastScale)
             lastScale = activeScale
         }
+        // A trackpad has no translation gesture of its own to report here. macOS
+        // delivers a pinch as a native zoom gesture with a synthetic centroid, and
+        // that centroid drifts as the fingers close, so panning from it moved the
+        // view every time the user zoomed. Panning on a trackpad is the two-finger
+        // drag handled in onWheel above ("pan" mode), which loses nothing by this.
+        // A real touchscreen still pans from the gesture, which is its only way to.
+        readonly property bool translationPans:
+                !centroid.device || centroid.device.type !== PointerDevice.TouchPad
+
         onActiveTranslationChanged: {
             if (!active) return
+            if (!translationPans) {
+                lastTranslation = activeTranslation
+                return
+            }
             navigation.pan(activeTranslation.x - lastTranslation.x,
                            activeTranslation.y - lastTranslation.y)
             lastTranslation = activeTranslation
@@ -1653,6 +1698,10 @@ Item {
     onRenderModeChanged: applyRenderMode()
     onDisplayOnlyNodeIdChanged: {
         applyRenderMode()
+        // Owed until it succeeds: the filtered part's geometry may still be in
+        // flight, in which case fitDisplayFilter() below is a no-op and the
+        // retry happens when its bounds arrive.
+        if (displayOnlyNodeId.length > 0) pendingFit = true
         Qt.callLater(fitDisplayFilter)
     }
     onExternalHighlightNodeIdChanged: applyPresentation()
