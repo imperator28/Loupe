@@ -498,6 +498,7 @@ private:
 // split fails, so the caller can report rather than silently emit the full edge set.
 [[nodiscard]] occ::handle<ShapeSequence> silhouetteEdges(const occ::handle<ShapeSequence>& edges,
                                                         const FootprintOracle& oracle,
+                                                        const double deflection,
                                                         ProjectionStatistics& statistics)
 {
     auto boundary = occ::handle<ShapeSequence>(new ShapeSequence());
@@ -989,7 +990,7 @@ ProjectionResult project(const ProjectionRequest& request)
             // Reduce to the edges that separate material from empty space. If the
             // split fails we keep nothing rather than quietly emitting the full edge
             // set, because the two look similar and one is the wrong cut path.
-            const auto boundary = silhouetteEdges(edges, *oracle, statistics);
+            const auto boundary = silhouetteEdges(edges, *oracle, request.deflectionMm, statistics);
             if (boundary.IsNull() || boundary->IsEmpty()) {
                 result.drawing.warnings.push_back(
                     {std::string(warningCode::silhouetteUnavailable), 1});
