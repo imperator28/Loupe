@@ -242,7 +242,20 @@ jobs:
             ' CHANGELOG.md > release-notes.md
             if [ -s release-notes.md ]; then notes_file="release-notes.md"; fi
           fi
-          if [ -n "$notes_file" ]; then
+          # Idempotent: a moved tag (README/changelog landing after the first
+          # publish, or any retag) re-runs this workflow against a release that
+          # already exists. `gh release create` would fail outright in that
+          # case, so update in place instead -- same notes logic, existing
+          # assets replaced via --clobber.
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists; updating in place"
+            if [ -n "$notes_file" ]; then
+              gh release edit "${{ github.ref_name }}" \
+                --title "Loupe ${{ github.ref_name }}" \
+                --notes-file "$notes_file"
+            fi
+            gh release upload "${{ github.ref_name }}" loupe-*.zip --clobber
+          elif [ -n "$notes_file" ]; then
             echo "Using CHANGELOG.md section for ${{ github.ref_name }}"
             gh release create "${{ github.ref_name }}" \
               --title "Loupe ${{ github.ref_name }}" \
