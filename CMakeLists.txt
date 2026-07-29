@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(Loupe VERSION 0.1.2 LANGUAGES CXX)
+project(Loupe VERSION 0.1.3 LANGUAGES CXX)
 
 if(WIN32)
     enable_language(RC)

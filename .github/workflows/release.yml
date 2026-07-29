@@ -14,8 +14,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The tag names the assets and the release title, but the version the app
+  # reports in its About dialog comes from project(VERSION) in CMakeLists.txt.
+  # Nothing tied the two together, so tagging without bumping the project would
+  # publish "loupe-v0.1.3-*" archives whose About dialog still read 0.1.2. This
+  # runs first and cheaply, so a mismatch fails in seconds rather than after a
+  # full two-platform build.
+  verify-version:
+    name: Tag matches project version
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare tag against project(VERSION)
+        run: |
+          set -euo pipefail
+          project_version="$(sed -n 's/^project(Loupe VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          echo "project(VERSION) = ${project_version}"
+          echo "tag              = ${GITHUB_REF_NAME} (${tag_version})"
+          if [ -z "${project_version}" ]; then
+            echo "::error::Could not parse project(Loupe VERSION ...) from CMakeLists.txt"
+            exit 1
+          fi
+          if [ "${project_version}" != "${tag_version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} would ship an About dialog reading ${project_version}."
+            echo "::error::Bump project(Loupe VERSION) in CMakeLists.txt and vcpkg.json, or retag."
+            exit 1
+          fi
+
   build:
     name: ${{ matrix.name }}
+    needs: verify-version
+    # verify-version only runs for tags, and a job that needs a skipped job is
+    # skipped too -- which would leave workflow_dispatch unable to build at all.
+    # Proceed when the gate passed or when it did not apply.
+    if: always() && (needs.verify-version.result == 'success' || needs.verify-version.result == 'skipped')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 360
     strategy:

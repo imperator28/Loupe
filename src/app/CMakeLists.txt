@@ -75,6 +75,15 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME Loupe
         MACOSX_BUNDLE_GUI_IDENTIFIER com.imperator28.Loupe
         MACOSX_BUNDLE_ICON_FILE Loupe.icns
+        # Both keys are set explicitly because CMake defaults
+        # CFBundleShortVersionString to MAJOR.MINOR only. The bundle therefore
+        # advertised "0.1" to Finder and the Get Info panel while the About
+        # dialog read the full version from LOUPE_VERSION -- a mismatch with no
+        # Windows equivalent, since the Windows resource carries no version at
+        # all. Keep both driven by PROJECT_VERSION so every macOS surface agrees
+        # with the About dialog.
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     )
     target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.mm)
     find_library(loupe_appkit_framework AppKit REQUIRED)
