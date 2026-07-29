@@ -1,9 +1,10 @@
 # Loupe 2D Drawing Export — Product Requirements
 
 **Date:** 2026-07-24
-**Status:** Draft for review
+**Status:** Implemented and shipped in v0.1.3. Projection reliability is not yet
+signed off -- see Gate E in the implementation plan.
 **Product phase:** Phase 4 — the first phase after the functional baseline (roadmap Phases 0–3) and the UI refresh (workstreams W1–W8)
-**Target release:** `v0.2.0`
+**Target release:** shipped in `v0.1.3`
 **Governing UI language:** [Indigo Precision (v2)](../../design.md)
 **Companion authority:** [UI refinement handoff](../review/ui-refinement-handoff.md)
 **Scope:** A third workspace, peer to Inspect and Export, that produces true-scale 2D vector files from a STEP file

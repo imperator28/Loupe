@@ -5,14 +5,16 @@
 <h1 align="center">Loupe</h1>
 
 <p align="center">
-  A lightweight, engineer-oriented STEP inspector for fast CAD review, measurement, sectioning, materials, and split-part export.
+  A lightweight, engineer-oriented STEP inspector for fast CAD review, measurement, sectioning, materials, split-part export, and 2D drawing projection.
 </p>
 
 ## Status
 
-Loupe is a functional desktop review build under active development. It is designed to make a typical engineering inspection workflow feel immediate: open a STEP file, understand the assembly, inspect geometry and mass, capture evidence, then prepare only the parts a vendor or prototype shop needs.
+Loupe is a functional desktop review build under active development. It is designed to make a typical engineering inspection workflow feel immediate: open a STEP file, understand the assembly, inspect geometry and mass, capture evidence, then prepare only the parts a vendor or prototype shop needs — as 3D files, or as 2D drawings a cutter can run.
 
-The current desktop targets are Windows 11 x64 and Apple Silicon macOS. Geometry and export operations use the imported CAD document rather than treating display meshes as source data. Native CI gates build and test the release preset for both targets on every push; signing, notarization, installer packaging, and legal distribution review remain separate release steps.
+The work is organised into three workspaces: **Inspect** for review and measurement, **Export** for split-part 3D output, and **Drawing** for 2D projection. Inspect and Export are the mature paths; Drawing is newer and its projection is not yet production-reliable — see the limitation noted under [2D Drawing Export](#2d-drawing-export).
+
+The desktop targets are Windows 11 x64, Apple Silicon macOS, and Intel macOS. Geometry and export operations use the imported CAD document rather than treating display meshes as source data. Native CI gates build and test the release preset for Windows and Apple Silicon on every push, and every tag additionally publishes an Intel macOS build; signing, notarization, installer packaging, and legal distribution review remain separate release steps.
 
 ## Inspection Tools
 
@@ -39,6 +41,34 @@ The Export workspace turns a reviewed assembly into a pick-and-choose export buc
 - Export separate STEP or STL files with reviewed coordinate, grouping, destination, and overwrite settings.
 - Validate every output, write files atomically, and report per-file progress and failures.
 
+## 2D Drawing Export
+
+The Drawing workspace projects a selected part to a 2D drawing at true 1:1 scale, for laser cutting, waterjet, machining quotes, and documentation. Projection runs on the CAD document through hidden-line removal rather than on display triangles, so curves are not faceted. Read the limitation at the end of this section before relying on the output.
+
+Pick the view by choosing one of the six standard views, by clicking a flat face in the 3D preview, or by clicking a view-cube face. The picked face is highlighted while you choose, and a view that would be degenerate is reported rather than silently exported.
+
+Three content modes cover different downstream uses:
+
+| Mode | Output |
+| --- | --- |
+| **Cut** | Outer profile plus through-holes as closed contours a cutter can follow. The default. |
+| **Silhouette** | Only the outline where material actually ends. Step, chamfer, and fillet lines are dropped, so a stepped face does not read as a line across the part. |
+| **Technical** | Every visible edge, including smooth ones, on separate layers. Reads like a CAD view; for reference rather than cutting. |
+
+- Export to **DXF**, **SVG**, or **PDF**. DXF files open correctly in a real downstream consumer.
+- **1:1 is exact.** Any other ratio is named in the filename so it cannot be mistaken at the cutter. An optional scale fiducial can be embedded.
+- Queue several drawings, review the batch, and execute it in the worker. Colliding generated names are numbered instead of the batch being refused.
+- Hover a queued row for a preview; the 2D canvas is navigable, with bounded panning.
+
+> **Known limitation — check drawings before cutting.** Projection is not yet
+> considered production-reliable, and the workspace is included so it can be
+> exercised on real parts. `loupe-spike drawing-audit <file.step>` measures two
+> defects that are still open: Cut mode frequently emits **unclosed** contours
+> (on sample assemblies, most contours in a view), and on some parts the
+> Silhouette bounding box comes out **larger** than the Cut outline it filters.
+> Treat output as a starting point to verify, not as a cut-ready file. Progress
+> is tracked as Gate E in the [drawing export plan](docs/superpowers/plans/2026-07-24-2d-drawing-export.md).
+
 ## Input and Shortcuts
 
 | Input | Action |
@@ -46,10 +76,12 @@ The Export workspace turns a reviewed assembly into a pick-and-choose export buc
 | Left drag | Orbit around the cursor-based pivot |
 | Middle-button drag | Pan |
 | Shift + left drag | Pan |
+| Alt + left drag | Rotate the view in its own plane |
 | Mouse wheel | Zoom |
 | Trackpad two-finger drag | Pan |
 | Trackpad pinch | Zoom |
 | Right click | Open the context menu at the cursor |
+| Click a view-cube face | Align to that standard view |
 | Background click | Clear component selection |
 
 Useful shortcuts:
@@ -70,11 +102,17 @@ The in-app **View > Interaction** guide contains this same mouse, trackpad, and 
 
 ## Install a Release Build
 
-Download the platform archive from the [latest release](https://github.com/imperator28/Loupe/releases/latest) and unzip it.
+Download the platform archive from the [latest release](https://github.com/imperator28/Loupe/releases/latest) and unzip it. Each release publishes three archives:
 
-### macOS (Apple Silicon)
+| Archive | For |
+| --- | --- |
+| `loupe-<tag>-macos-arm64.zip` | Apple Silicon Macs (M1 and later) |
+| `loupe-<tag>-macos-x64.zip` | Intel Macs |
+| `loupe-<tag>-windows-x64.zip` | Windows 11 x64 |
 
-Release builds are **not yet code-signed or notarized**, so macOS quarantines the download and refuses to open it with a misleading *"Loupe is damaged and can't be opened"* message. The app is not damaged — this is Gatekeeper blocking an unsigned download. Clear the quarantine flag once, using whichever you prefer:
+### macOS (Apple Silicon and Intel)
+
+Both macOS archives install the same way. Release builds are **not yet code-signed or notarized**, so macOS quarantines the download and refuses to open it with a misleading *"Loupe is damaged and can't be opened"* message. The app is not damaged — this is Gatekeeper blocking an unsigned download. Clear the quarantine flag once, using whichever you prefer:
 
 - **Finder:** in **System Settings → Privacy & Security**, scroll to the message about Loupe being blocked and click **Open Anyway**.
 - **Helper script:** the macOS zip includes **`Open Loupe (first run).command`**. Put it beside `Loupe.app`, right-click it → **Open** (needed the first time because it, too, is a download), and it clears the flag and launches Loupe. It is a short, readable shell script — open it in a text editor first if you like.
@@ -156,7 +194,8 @@ The UI displays controller-owned state. Stable node IDs, immutable export plans,
 
 ## Documentation
 
-- [2D drawing export requirements (draft)](docs/product/2026-07-24-2d-drawing-export-prd.md)
+- [Changelog](CHANGELOG.md)
+- [2D drawing export requirements](docs/product/2026-07-24-2d-drawing-export-prd.md)
 - [UI refinement handoff](docs/review/ui-refinement-handoff.md)
 - [Apple Silicon development guide](docs/development/macos-apple-silicon.md)
 - [Cross-platform development contract](docs/development/portability.md)

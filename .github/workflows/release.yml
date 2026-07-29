@@ -229,7 +229,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "Loupe ${{ github.ref_name }}" \
-            --generate-notes \
-            loupe-*.zip
+          # Prefer the hand-written section for this tag in CHANGELOG.md: an
+          # auto-generated commit list does not tell a reader what changed, and
+          # for a release carrying a known limitation it cannot state it at all.
+          # Fall back to generated notes when the tag has no section yet.
+          notes_file=""
+          if [ -f CHANGELOG.md ]; then
+            awk -v tag="## ${{ github.ref_name }}" '
+              $0 == tag { capture = 1; next }
+              capture && /^## / { exit }
+              capture { print }
+            ' CHANGELOG.md > release-notes.md
+            if [ -s release-notes.md ]; then notes_file="release-notes.md"; fi
+          fi
+          if [ -n "$notes_file" ]; then
+            echo "Using CHANGELOG.md section for ${{ github.ref_name }}"
+            gh release create "${{ github.ref_name }}" \
+              --title "Loupe ${{ github.ref_name }}" \
+              --notes-file "$notes_file" \
+              loupe-*.zip
+          else
+            echo "No CHANGELOG.md section for ${{ github.ref_name }}; generating notes"
+            gh release create "${{ github.ref_name }}" \
+              --title "Loupe ${{ github.ref_name }}" \
+              --generate-notes \
+              loupe-*.zip
+          fi
