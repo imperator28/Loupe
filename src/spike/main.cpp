@@ -835,6 +835,7 @@ int runDrawingAudit(const std::vector<std::string>& args)
                                  {"open", silhouette.statistics.openContours},
                                  {"splitEdges", silhouette.statistics.silhouetteSplitEdges},
                                  {"regions", silhouette.statistics.silhouetteRegions},
+                                 {"edgesWithCurve", silhouette.statistics.silhouetteEdgesWithCurve},
                                  {"insideRegions", silhouette.statistics.silhouetteInsideRegions},
                                  {"approximate", silhouette.approximate}};
             if (cutOk) {

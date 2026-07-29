@@ -198,3 +198,32 @@ running the test several times before and after rather than once.
 
 The general lesson, which cost real work here: a test that is slow when it fails and fast when
 it passes is timing out, not detecting. Repeat it before drawing a conclusion from it.
+
+## Root cause found: the two headline defects are one defect
+
+**Ruled out: missing 3D curves.** Measured per edge. Every tool edge carries a 3D curve on every
+view, the failing ones included — 28 of 28 on Right, 24 of 24 on Left. `BuildCurves3d` works.
+
+That exhausts the silhouette-side hypotheses, and what remains is arithmetic rather than
+speculation. On the failing views the splitter receives 28 valid, coplanar edges and returns the
+canvas **uncut**. A planar face can only be divided by edges that either close a loop or run
+boundary-to-boundary across it; open fragments that do neither leave the face intact.
+
+The audit already recorded that those views produce exactly such fragments: **`PCBA_box` Right in
+cut mode gives 0 closed and 4 open contours**, Left gives 1 closed and 4 open.
+
+So the empty silhouette and the unclosed-contour defect are **the same defect**. The silhouette
+method structurally requires closed loops to cut its canvas, so it cannot work on any view where
+stitching fails to close them. This explains the whole corpus pattern with no further assumption:
+`mount` closes on all six views and its silhouette is right on all six; `590662` has open contours
+on four views and its silhouette is wrong on exactly those; `PCBA_box` fails on the two views whose
+cut contours do not close.
+
+**The fix belongs in edge stitching, not in the silhouette.** All five eliminated hypotheses were
+symptom-chasing. The next work is `ShapeAnalysis_FreeBounds::ConnectEdgesToWires` and why it leaves
+fragments open on edge-on views of flat bodies — where projected sharp edges coincide with the
+outline and vertices see three or more incident edges. Close the contours and both defects resolve
+together; the silhouette code needs no change of its own.
+
+**Hypotheses eliminated by measurement, in order:** footprint oracle frame; oracle over-reporting;
+region classifier; splitter tolerance (`SetFuzzyValue`, tried and reverted); missing 3D curves.

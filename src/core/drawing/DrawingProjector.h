@@ -76,6 +76,9 @@ struct ProjectionStatistics final {
     int silhouetteSplitEdges{};
     int silhouetteRegions{};
     int silhouetteInsideRegions{};
+    // Tool edges that actually carry a 3D curve. HLR emits pcurves only, and an edge whose
+    // curve was never built is silently useless to a 3D boolean.
+    int silhouetteEdgesWithCurve{};
     int analyticLines{};
     int analyticCircles{};
     int recoveredArcs{};

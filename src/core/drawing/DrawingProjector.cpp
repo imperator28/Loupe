@@ -567,6 +567,11 @@ private:
     arguments.Append(canvas);
     for (TopExp_Explorer toolEdges(toolCompound, TopAbs_EDGE); toolEdges.More(); toolEdges.Next()) {
         ++statistics.silhouetteSplitEdges;
+        double curveFirst = 0.0;
+        double curveLast = 0.0;
+        if (!BRep_Tool::Curve(TopoDS::Edge(toolEdges.Current()), curveFirst, curveLast).IsNull()) {
+            ++statistics.silhouetteEdgesWithCurve;
+        }
     }
     NCollection_List<TopoDS_Shape> tools;
     for (TopExp_Explorer it(toolCompound, TopAbs_EDGE); it.More(); it.Next()) tools.Append(it.Current());
