@@ -564,6 +564,9 @@ private:
 
     NCollection_List<TopoDS_Shape> arguments;
     arguments.Append(canvas);
+    for (TopExp_Explorer toolEdges(toolCompound, TopAbs_EDGE); toolEdges.More(); toolEdges.Next()) {
+        ++statistics.silhouetteSplitEdges;
+    }
     NCollection_List<TopoDS_Shape> tools;
     for (TopExp_Explorer it(toolCompound, TopAbs_EDGE); it.More(); it.Next()) tools.Append(it.Current());
 
@@ -604,6 +607,7 @@ private:
     std::map<const void*, std::pair<TopoDS_Edge, int>> tally;
     int insideRegions = 0;
     for (TopExp_Explorer faces(split, TopAbs_FACE); faces.More(); faces.Next()) {
+        ++statistics.silhouetteRegions;
         const TopoDS_Face region = TopoDS::Face(faces.Current());
         const auto sample = interiorPointOf(region);
         if (!sample || !oracle.contains(*sample)) continue;
@@ -636,6 +640,7 @@ private:
             else ++found->second.second;
         }
     }
+    statistics.silhouetteInsideRegions = insideRegions;
     if (insideRegions == 0) return boundary;
 
     for (const auto& [key, entry] : tally) {

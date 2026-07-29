@@ -833,6 +833,9 @@ int runDrawingAudit(const std::vector<std::string>& args)
             row["silhouette"] = {{"widthMm", bounds.width()}, {"heightMm", bounds.height()},
                                  {"closed", silhouette.statistics.closedContours},
                                  {"open", silhouette.statistics.openContours},
+                                 {"splitEdges", silhouette.statistics.silhouetteSplitEdges},
+                                 {"regions", silhouette.statistics.silhouetteRegions},
+                                 {"insideRegions", silhouette.statistics.silhouetteInsideRegions},
                                  {"approximate", silhouette.approximate}};
             if (cutOk) {
                 // A tolerance, not equality: the two modes tessellate curves independently.

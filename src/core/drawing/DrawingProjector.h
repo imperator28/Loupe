@@ -70,6 +70,12 @@ struct ProjectionStatistics final {
     int edges{};
     // Edges discarded by the outer-contour filter as interior to the silhouette.
     int interiorEdgesRemoved{};
+    // Silhouette diagnostics. A high edge count with a single region means the projected edges
+    // reached the splitter but failed to cut the canvas, which is a different defect from the
+    // classification getting a region's inside/outside wrong.
+    int silhouetteSplitEdges{};
+    int silhouetteRegions{};
+    int silhouetteInsideRegions{};
     int analyticLines{};
     int analyticCircles{};
     int recoveredArcs{};
