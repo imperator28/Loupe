@@ -256,3 +256,29 @@ Two candidate fixes, both real work rather than parameter changes:
 Option 1 is smaller and fits the existing pipeline. Option 2 is the one that stops this class of bug
 recurring. Either needs corpus verification via `drawing-audit`, which now fails on both an oversized
 and an empty silhouette, plus the closure percentages the writers' tests already track.
+
+### Option 1 tried and reverted: collinear-overlap dedupe
+
+Implemented the smaller of the two designed fixes -- drop a straight edge lying entirely along
+another collinear straight edge, keeping the longer, so the branch that stops the chain connector is
+removed at source. Curves excluded, since a curve sharing endpoints with a line is not contained in
+it.
+
+Measured, and it is a partial improvement that misses the target:
+
+- **Cut closure improved on the failing part.** `PCBA_box` Right went from 0 closed contours to 1,
+  Left from 1 to 3. So collinear overlap *is* part of the closure problem, confirming the diagnosis.
+- **The silhouette did not change.** Right and Left still return one region and produce nothing. The
+  remaining open fragments are still enough to leave the canvas uncut.
+- **It perturbed another part substantially and unaccountably.** `590662` Front went from 9 split
+  regions to 434, Back from 3 to 108, while its silhouette output barely moved. A tenfold change in
+  region count with no corresponding change in result is not understood, and shipping it on the
+  strength of "the numbers moved" is how the earlier wrong fixes in this session happened.
+
+Reverted on that basis: partial gain, target unfixed, large unexplained side effect.
+
+What it does establish is that the diagnosis is sound and **option 1 is insufficient on its own**.
+Removing contained duplicates is not enough because coincident geometry also produces *crossing* and
+*T-junction* branches that are not containment cases. That is the argument for option 2 -- planar-graph
+loop extraction handles all branch topologies uniformly, rather than enumerating the ones worth
+special-casing.
