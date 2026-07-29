@@ -366,8 +366,22 @@ struct ProjectedTriangle final {
     const double d1 = cross(triangle.a, triangle.b, point);
     const double d2 = cross(triangle.b, triangle.c, point);
     const double d3 = cross(triangle.c, triangle.a, point);
-    const bool anyNegative = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-    const bool anyPositive = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    // A point lying exactly on a shared edge belongs to both triangles, so it is
+    // inside the footprint. Its cross product against that edge is mathematically
+    // zero, but evaluating it in floating point yields tiny values whose signs
+    // disagree -- and the compiler is free to contract the expression into a fused
+    // multiply-add, which rounds differently per architecture. Tested strictly, the
+    // same point is then interior on x86-64 and exterior on arm64. Comparing against
+    // a tolerance instead makes the verdict identical everywhere.
+    //
+    // The cross product is an area, so the tolerance scales with the triangle: an
+    // absolute one would be meaningless on a 1 mm part and useless on a 1 m one.
+    // At this size it admits points within a fraction of a nanometre of the edge,
+    // far below any real feature and far above the rounding noise.
+    const double span = std::max(triangle.maxX - triangle.minX, triangle.maxY - triangle.minY);
+    const double tolerance = std::max(span, 1.0) * Precision::Confusion();
+    const bool anyNegative = d1 < -tolerance || d2 < -tolerance || d3 < -tolerance;
+    const bool anyPositive = d1 > tolerance || d2 > tolerance || d3 > tolerance;
     // Winding is unknown and mixed across a triangulation, so accept either sense.
     return !(anyNegative && anyPositive);
 }
