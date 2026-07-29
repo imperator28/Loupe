@@ -153,9 +153,29 @@ the classification, because the pad exists precisely so the rim cannot coincide 
 geometry.
 
 **This did not make those views correct — it made them empty.** `PCBA_box` Left and Right now
-return no contours at all, because the rim was the *only* thing being kept. The real defect is
-underneath: the region classification fails completely on an edge-on view of a flat body. An
-empty drawing is at least honestly wrong rather than plausibly wrong, but it is not a fix.
+return no contours at all, because the rim was the *only* thing being kept.
+
+**Localised further, by elimination.** For the rim to be the only survivor, the rim has to belong
+to an "inside" region — and the rim belongs to just one region, the outer one. The explanation
+that fits is that **the splitter never cut the canvas at all** on these views: it returns a single
+face, the whole canvas, whose interior sample lands inside the part footprint, so it counts as one
+inside region and its only edges are the rim. Everything observed follows from that, before and
+after the rim filter.
+
+Two candidate causes were checked and **ruled out**, so the next attempt need not repeat them:
+
+- *The footprint oracle being in a different frame than the split regions.* It is not. HLR uses
+  `gp_Ax2(origin, viewDirection, up × viewDirection)` and the oracle's transform uses `gp_Ax3`
+  with the same three arguments. Same shape is handed to both.
+- *The oracle over-reporting containment.* It is a plain point-in-projected-triangle test with no
+  bounding-box fallback, so it cannot report inside for a point outside every triangle.
+
+That leaves the splitter input: the projected edges failing to cut the canvas face. The likely
+culprit is `BRepLib::BuildCurves3d` on these particular edges — HLR output carries only pcurves,
+that call is what repairs them for the 3D boolean, and an edge whose 3D curve was not built is
+silently useless to the splitter. **The next step is to count, for these two views, how many edges
+survive `BuildCurves3d` and how many faces the splitter returns.** One is expected to be far lower
+than the other.
 
 So `drawing-audit` now also counts an empty silhouette where the cut outline has geometry, and
 exits non-zero on it. Without that, this change would have flipped the audit to green while
