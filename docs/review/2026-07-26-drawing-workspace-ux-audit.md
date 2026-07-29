@@ -227,3 +227,32 @@ together; the silhouette code needs no change of its own.
 
 **Hypotheses eliminated by measurement, in order:** footprint oracle frame; oracle over-reporting;
 region classifier; splitter tolerance (`SetFuzzyValue`, tried and reverted); missing 3D curves.
+
+### Not a tolerance problem — a topology problem
+
+Checked before touching it: stitching already runs at 0.01 mm on the first pass and 0.1 mm on the
+second, and the code carries a measured note that being more permissive *cost* closure (79% down to
+68%, because one part lost five already-closed loops when open and closed wires were not
+partitioned). So there is no tolerance to widen here, and widening it is known to regress.
+
+The real gap is topological. `ConnectEdgesToWires` connects **chains** — it assumes each vertex has
+at most two incident edges. An edge-on view of a flat body breaks that assumption: the top face's
+sharp edge and the silhouette outline project onto the *same line*, so vertices see three or more
+incident edges. A chain connector cannot resolve a branch point; it stops, and the fragment stays
+open. That is why the failure is specific to edge-on views of flat bodies and absent everywhere the
+projection has simple topology.
+
+Two candidate fixes, both real work rather than parameter changes:
+
+1. **Dedupe coincident and overlapping edges before stitching**, removing the branches at source.
+   `appendUniqueEdges` already dedupes exact duplicates by endpoint key; this needs the harder case,
+   collinear *overlap* — one edge lying along part of another — which is what a sharp edge coinciding
+   with an outline produces.
+2. **Replace chain connection with planar-graph loop extraction.** Build the arrangement of projected
+   segments, then walk faces by always taking the next edge counter-clockwise. This is the textbook
+   answer, it handles branches by construction, and it would make closure independent of stitching
+   tolerance entirely.
+
+Option 1 is smaller and fits the existing pipeline. Option 2 is the one that stops this class of bug
+recurring. Either needs corpus verification via `drawing-audit`, which now fails on both an oversized
+and an empty silhouette, plus the closure percentages the writers' tests already track.
