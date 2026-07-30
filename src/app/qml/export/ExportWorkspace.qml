@@ -117,6 +117,7 @@ Item {
         // Scrollable, because at a small window height the destination, format, naming and
         // export button fall off the bottom with no way to reach them.
         ScrollView {
+            id: settingsScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -126,6 +127,12 @@ Item {
 
         ColumnLayout {
             width: parent.width
+            // At least the viewport's height, so Layout.fillHeight below has something to
+            // fill. Without it this column is only as tall as its content, fillHeight
+            // resolves to the bucket's minimum, and the panel stops well short of the
+            // bottom with dead space under it -- while still growing and scrolling when
+            // the content genuinely exceeds the viewport.
+            height: Math.max(implicitHeight, settingsScroll.availableHeight)
             spacing: root.theme.spacing3
 
             ExportPreview {

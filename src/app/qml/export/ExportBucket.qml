@@ -97,6 +97,18 @@ Inspect.ElevatedPanel {
                     z: 4
                 }
 
+                // Hovering a queued row previews it, the same interaction the component tree
+                // offers. The bucket is where a file is checked before export, so it is
+                // exactly where seeing the part matters most.
+                HoverHandler {
+                    onHoveredChanged: {
+                        if (!root.draft) return
+                        if (hovered) root.draft.hoveredNodeId = bucketRow.modelData.nodeId
+                        else if (root.draft.hoveredNodeId === bucketRow.modelData.nodeId)
+                            root.draft.hoveredNodeId = ""
+                    }
+                }
+
                 RowLayout {
                     anchors.fill: parent
                     anchors.margins: 6
