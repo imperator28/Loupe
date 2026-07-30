@@ -282,3 +282,29 @@ Removing contained duplicates is not enough because coincident geometry also pro
 *T-junction* branches that are not containment cases. That is the argument for option 2 -- planar-graph
 loop extraction handles all branch topologies uniformly, rather than enumerating the ones worth
 special-casing.
+
+### Option 3 tried and reverted: mesh-footprint boundary as a fallback
+
+With the gate closed by decision, attempted a targeted fallback rather than the graph rewrite: when
+the splitter returns the canvas uncut, derive the outline from the projected triangle soup the
+footprint oracle already builds, instead of returning nothing. Guarded so working views keep their
+exact arcs and only the failing ones would take a tessellated outline.
+
+It does not work, and the reason is conceptual rather than a bug worth fixing:
+
+**For a closed solid, every triangle edge is shared by exactly two triangles, and projection
+preserves that sharing.** So the "keep edges that appear once" test — which is the standard way to
+take the boundary of a triangle *mesh* — yields the empty set for a projected *solid*. The
+silhouette of a projected solid is the boundary of the **union** of overlapping projected
+triangles, which requires a genuine 2D polygon union, not an incidence count.
+
+A second, smaller thing surfaced and was reverted with it: `pcurveOf` returns null for any edge not
+produced by hidden-line removal, because HLR edges carry a pcurve and nothing else does. So the
+fallback ran and produced nothing, which is indistinguishable from never running. Any future
+approach that synthesises edges must either give them pcurves or teach that reader to project a 3D
+curve — worth knowing before writing the next one.
+
+**Net:** three approaches now eliminated with evidence — collinear-overlap dedupe (helps closure,
+does not fix it), splitter fuzzy tolerance (no effect, perturbs working views), and mesh-footprint
+boundary (empty by construction for solids). The planar-graph arrangement walk over the projected
+segments remains the route, and nothing tried has undermined that diagnosis.
