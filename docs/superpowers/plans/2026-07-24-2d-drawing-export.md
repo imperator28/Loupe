@@ -939,6 +939,11 @@ signed off; a drawing that is wrong cannot be, however good the interface around
 - [x] Full CTest suite green on Windows.
 
       **171/171 passing**, two evidence symlink cases skipped as they always are on Windows.
+- [x] **Gate E closed by product decision, 2026-07-29.** The silhouette defect on edge-on views of
+      flat bodies is understood and documented but not fixed; the gate was accepted with it open.
+      The defect record stays in `docs/review/2026-07-26-drawing-workspace-ux-audit.md` -- root
+      cause in `ConnectEdgesToWires`, six hypotheses eliminated, remaining route specified -- and
+      `drawing-audit` still exits non-zero on it, so closing the gate does not hide it.
 - [ ] **Not verified: macOS.** No macOS machine in this session. The risk is concentrated in
       two places worth checking first there: `Qt.platform.os` now selects the window corner
       radius, and `Shape`'s `CurveRenderer` in the 2D preview is the newest Qt feature this
