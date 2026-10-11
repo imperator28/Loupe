@@ -40,6 +40,19 @@ Item {
     property var sectionOverlayGeometryByNode: ({})
     property var xrayModelBySegment: ({})
     property var boundsByNode: ({})
+    // The controller revision each segment (or node's edges) was last built from. A replay
+    // hands every viewport everything again; one that already holds a revision skips it
+    // rather than decoding the same payload a second time.
+    property var meshRevisionBySegment: ({})
+    property var edgeRevisionByNode: ({})
+    // A viewport that only ever shows one part at a time (requireDisplayFilter) keeps the
+    // payloads of every other part here, unbuilt, and builds a part only when it is shown.
+    // Building all of them is what made entering Export or Drawing on a large assembly
+    // slow: every segment became a geometry and two models to show perhaps one of them.
+    // Keyed nodeId -> segmentKey -> entry, so a display change walks parts, not segments.
+    property var pendingMeshesByNode: ({})
+    property var pendingEdgesByNode: ({})
+    readonly property bool lazyMaterialization: requireDisplayFilter
     property string hoveredNodeId: ""
     property int renderMode: 0
     property bool measurementActive: false
@@ -395,6 +408,10 @@ Item {
         sectionOverlayGeometryByNode = ({})
         xrayModelBySegment = ({})
         boundsByNode = ({})
+        meshRevisionBySegment = ({})
+        edgeRevisionByNode = ({})
+        pendingMeshesByNode = ({})
+        pendingEdgesByNode = ({})
         hasSceneBounds = false
         sectionWasEnabled = false
         sectionWasInteracting = false
@@ -415,41 +432,49 @@ Item {
         applyRenderMode()
     }
 
+    // Whether the user has hidden this component, as distinct from whether the current
+    // display mode happens to draw its solid.
+    function nodeShown(nodeId) {
+        return nodeVisibleInPreview(nodeId) && (!controller || controller.isNodeVisible(nodeId))
+    }
+
+    function sliceOnlyFinalState(section) {
+        return section && section.enabled && section.sliceOnly && !section.interacting
+                && !sectionFinalizing
+    }
+
+    function applySolidState(model, sliceOnlyFinal) {
+        const shown = nodeShown(model.nodeId)
+        model.visible = renderMode !== 2 && !sliceOnlyFinal && shown
+        // Picking follows the user's own hide, not the display mode. A ray
+        // pick still reports a model that is merely not drawn, so leaving
+        // this true let a hidden part keep swallowing clicks and hovers in
+        // front of the parts behind it -- the reason a hidden component was
+        // hard to see past or select around. It deliberately does not use
+        // `visible`: in Edges Only, and while a 2D slice is showing, the
+        // solid is not drawn but its edges are, and those must stay
+        // selectable.
+        model.pickable = shown
+    }
+
+    function applyEdgeState(edgeModel, section, sliceOnlyFinal) {
+        // The "show edges for a selected part even in Solid mode" override
+        // is an interactive-Inspect aid (so a multi-select stays legible
+        // without switching modes). A presentation-only host — e.g.
+        // Export's preview panes — sets its own displayed node as the
+        // shared controller selection too, which would otherwise always
+        // trip this override and make its render-mode control a no-op.
+        const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
+        const sectionPreview = section && section.enabled && section.interacting
+        edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
+                && nodeShown(edgeModel.nodeId)
+    }
+
     function applyRenderMode() {
         const section = !presentationOnly && controller ? controller.section : null
-        const sliceOnlyFinal = section && section.enabled && section.sliceOnly && !section.interacting
-                && !sectionFinalizing
-        for (let id in modelByNode) {
-            const model = modelByNode[id]
-            // Whether the user has hidden this component, as distinct from
-            // whether the current display mode happens to draw its solid.
-            const shown = nodeVisibleInPreview(model.nodeId)
-                    && (!controller || controller.isNodeVisible(model.nodeId))
-            model.visible = renderMode !== 2 && !sliceOnlyFinal && shown
-            // Picking follows the user's own hide, not the display mode. A ray
-            // pick still reports a model that is merely not drawn, so leaving
-            // this true let a hidden part keep swallowing clicks and hovers in
-            // front of the parts behind it -- the reason a hidden component was
-            // hard to see past or select around. It deliberately does not use
-            // `visible`: in Edges Only, and while a 2D slice is showing, the
-            // solid is not drawn but its edges are, and those must stay
-            // selectable.
-            model.pickable = shown
-        }
-        for (let id in edgeModelByNode) {
-            const edgeModel = edgeModelByNode[id]
-            // The "show edges for a selected part even in Solid mode" override
-            // is an interactive-Inspect aid (so a multi-select stays legible
-            // without switching modes). A presentation-only host — e.g.
-            // Export's preview panes — sets its own displayed node as the
-            // shared controller selection too, which would otherwise always
-            // trip this override and make its render-mode control a no-op.
-            const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
-            const sectionPreview = section && section.enabled && section.interacting
-            edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
-                    && nodeVisibleInPreview(edgeModel.nodeId)
-                    && (!controller || controller.isNodeVisible(edgeModel.nodeId))
-        }
+        const sliceOnlyFinal = sliceOnlyFinalState(section)
+        for (let id in modelByNode) applySolidState(modelByNode[id], sliceOnlyFinal)
+        for (let id in edgeModelByNode) applyEdgeState(edgeModelByNode[id], section, sliceOnlyFinal)
         for (let id in sectionOverlayModelByNode) {
             const overlay = sectionOverlayModelByNode[id]
             const hasExactDisplay = section && section.enabled && !section.interacting
@@ -457,6 +482,13 @@ Item {
             overlay.visible = hasExactDisplay && (section.sliceOnly || renderMode !== 2)
                     && (!controller || controller.isNodeVisible(overlay.nodeId))
         }
+    }
+
+    // New geometry only needs the section re-applied when a section is actually showing;
+    // with it off, a fresh geometry is already in the unsectioned state. Coalesced, so a
+    // burst of arriving segments costs one pass rather than one per segment.
+    function scheduleSectionForNewGeometry() {
+        if (!presentationOnly && controller && controller.section.enabled) Qt.callLater(root.applySection)
     }
 
     function applyAppearance() {
@@ -585,6 +617,22 @@ Item {
     }
 
     function appendMesh(nodeId, segmentKey, sourceColor, meshJson) {
+        const revision = controller ? controller.meshRevision(segmentKey) : 0
+        if (revision > 0 && meshRevisionBySegment[segmentKey] === revision) return
+        meshRevisionBySegment[segmentKey] = revision
+        if (lazyMaterialization && !geometryByNode[segmentKey] && !nodeVisibleInPreview(nodeId)) {
+            let pending = pendingMeshesByNode[nodeId]
+            if (!pending) {
+                pending = {}
+                pendingMeshesByNode[nodeId] = pending
+            }
+            pending[segmentKey] = { sourceColor: sourceColor, meshJson: meshJson }
+            return
+        }
+        buildMesh(nodeId, segmentKey, sourceColor, meshJson)
+    }
+
+    function buildMesh(nodeId, segmentKey, sourceColor, meshJson) {
         if (geometryByNode[segmentKey]) {
             const geometry = geometryByNode[segmentKey]
             if (!geometry.replaceWorkerMesh(meshJson)) return
@@ -595,8 +643,7 @@ Item {
                 model.importColor = sourceColor || model.importColor
                 model.sourceColor = controller ? controller.resolvedAppearanceColor(nodeId, model.importColor) : model.importColor
             }
-            applyPresentation()
-            applySection()
+            scheduleSectionForNewGeometry()
             return
         }
         const geometry = geometryComponent.createObject(sceneRoot)
@@ -617,15 +664,28 @@ Item {
         modelByNode[segmentKey] = model
         xrayModelBySegment[segmentKey] = xrayModel
         includeGeometryBounds(nodeId, geometry)
-        applyPresentation()
-        applySection()
+        // Only the new model's own state. Re-walking every model here made a replay of N
+        // segments cost N^2, which is most of what entering a workspace used to spend.
+        const section = !presentationOnly && controller ? controller.section : null
+        applySolidState(model, sliceOnlyFinalState(section))
+        scheduleSectionForNewGeometry()
     }
 
     function appendEdges(nodeId, edgeJson) {
+        const revision = controller ? controller.edgeRevision(nodeId) : 0
+        if (revision > 0 && edgeRevisionByNode[nodeId] === revision) return
+        edgeRevisionByNode[nodeId] = revision
+        if (lazyMaterialization && !edgeGeometryByNode[nodeId] && !nodeVisibleInPreview(nodeId)) {
+            pendingEdgesByNode[nodeId] = edgeJson
+            return
+        }
+        buildEdges(nodeId, edgeJson)
+    }
+
+    function buildEdges(nodeId, edgeJson) {
         if (edgeGeometryByNode[nodeId]) {
             edgeGeometryByNode[nodeId].replaceWorkerEdges(edgeJson)
-            applyPresentation()
-            applySection()
+            scheduleSectionForNewGeometry()
             return
         }
         const geometry = edgeGeometryComponent.createObject(sceneRoot)
@@ -636,8 +696,27 @@ Item {
         const model = edgeModelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId })
         edgeGeometryByNode[nodeId] = geometry
         edgeModelByNode[nodeId] = model
-        applyPresentation()
-        applySection()
+        const section = !presentationOnly && controller ? controller.section : null
+        applyEdgeState(model, section, sliceOnlyFinalState(section))
+        scheduleSectionForNewGeometry()
+    }
+
+    // Builds the parked parts the display filter now shows. Called before the filter's
+    // fit, so the fit finds the bounds it needs.
+    function materializePending() {
+        for (let nodeId in pendingMeshesByNode) {
+            if (lazyMaterialization && !nodeVisibleInPreview(nodeId)) continue
+            const pending = pendingMeshesByNode[nodeId]
+            delete pendingMeshesByNode[nodeId]
+            for (let segmentKey in pending)
+                buildMesh(nodeId, segmentKey, pending[segmentKey].sourceColor, pending[segmentKey].meshJson)
+        }
+        for (let nodeId in pendingEdgesByNode) {
+            if (lazyMaterialization && !nodeVisibleInPreview(nodeId)) continue
+            const edgeJson = pendingEdgesByNode[nodeId]
+            delete pendingEdgesByNode[nodeId]
+            buildEdges(nodeId, edgeJson)
+        }
     }
 
     function pickAt(x, y, additive) {
@@ -1697,6 +1776,7 @@ Item {
     }
     onRenderModeChanged: applyRenderMode()
     onDisplayOnlyNodeIdChanged: {
+        materializePending()
         applyRenderMode()
         // Owed until it succeeds: the filtered part's geometry may still be in
         // flight, in which case fitDisplayFilter() below is a no-op and the
@@ -1705,6 +1785,7 @@ Item {
         Qt.callLater(fitDisplayFilter)
     }
     onExternalHighlightNodeIdChanged: applyPresentation()
+    onLazyMaterializationChanged: if (!lazyMaterialization) materializePending()
     Connections {
         target: root.controller ? root.controller.section : null
         function onChanged() { root.applySection() }

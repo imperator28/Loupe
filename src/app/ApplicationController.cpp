@@ -157,6 +157,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             importedColorByNode_.insert(nodeId, sourceColor);
             if (isNodeSelected(nodeId)) emit componentPropertiesChanged();
         }
+        meshRevisionBySegment_.insert(segmentKey, ++geometryRevisionCounter_);
         emit meshReady(nodeId, segmentKey, sourceColor, meshJson);
     });
     connect(&workerClient_, &worker::WorkerClient::componentMetadata, this,
@@ -180,6 +181,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         if (requestId != activeRequestId_) return;
         if (cacheHit_ && cachedGeometryLoaded_) return;
         appendCachedEdges(nodeId, edgeJson);
+        edgeRevisionByNode_.insert(nodeId, ++geometryRevisionCounter_);
         emit edgeReady(nodeId, edgeJson);
     });
     connect(&workerClient_, &worker::WorkerClient::progress, this, [this](quint64 requestId, const QString& stage, const double fraction) {
@@ -486,6 +488,8 @@ void ApplicationController::openFile(const QUrl& file)
     geometryReplayQueue_.clear();
     geometryReplayIndex_ = 0;
     ++geometryReplayGeneration_;
+    meshRevisionBySegment_.clear();
+    edgeRevisionByNode_.clear();
     cachedGeometryLoaded_ = false;
     geometryByNode_.clear();
     parentByNode_.clear();
@@ -773,21 +777,38 @@ std::optional<QVector<ApplicationController::GeometryReplayEntry>> ApplicationCo
 
 void ApplicationController::replayGeometryChunk()
 {
-    if (geometryReplayIndex_ >= geometryReplayQueue_.size()) {
-        geometryReplayQueue_.clear();
-        geometryReplayIndex_ = 0;
-        if (previewGeometryReceived_) emit importProgressChanged();
-        return;
-    }
-
-    auto entry = std::move(geometryReplayQueue_[geometryReplayIndex_++]);
-    if (entry.kind == 1) {
-        previewGeometryReceived_ = true;
-        if (!entry.sourceColor.isEmpty()) importedColorByNode_.insert(entry.nodeId, entry.sourceColor);
-        emit meshReady(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload);
-    } else {
-        emit edgeReady(entry.nodeId, entry.payload);
-    }
+    // As many entries as fit in a slice of one frame, rather than one per event-loop
+    // turn: a large assembly has thousands of segments, and one at a time left the
+    // replay paced by the event loop instead of by the work. The budget still returns
+    // to the loop often enough that the UI keeps painting and accepting input.
+    constexpr qint64 kReplaySliceMs = 8;
+    QElapsedTimer slice;
+    slice.start();
+    const auto generation = geometryReplayGeneration_;
+    do {
+        if (geometryReplayIndex_ >= geometryReplayQueue_.size()) {
+            geometryReplayQueue_.clear();
+            geometryReplayIndex_ = 0;
+            if (previewGeometryReceived_) emit importProgressChanged();
+            return;
+        }
+        auto entry = std::move(geometryReplayQueue_[geometryReplayIndex_++]);
+        if (entry.kind == 1) {
+            previewGeometryReceived_ = true;
+            if (!entry.sourceColor.isEmpty()) importedColorByNode_.insert(entry.nodeId, entry.sourceColor);
+            // A replay re-sends what the viewports were already given, so it keeps the
+            // revision; only geometry that arrived from the cache alone gets a new one.
+            if (!meshRevisionBySegment_.contains(entry.segmentKey))
+                meshRevisionBySegment_.insert(entry.segmentKey, ++geometryRevisionCounter_);
+            emit meshReady(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload);
+        } else {
+            if (!edgeRevisionByNode_.contains(entry.nodeId))
+                edgeRevisionByNode_.insert(entry.nodeId, ++geometryRevisionCounter_);
+            emit edgeReady(entry.nodeId, entry.payload);
+        }
+        // A handler may have opened another file or restarted the replay.
+        if (generation != geometryReplayGeneration_) return;
+    } while (slice.elapsed() < kReplaySliceMs);
     geometryReplayTimer_.start();
 }
 

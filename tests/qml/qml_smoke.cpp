@@ -214,7 +214,7 @@ void QmlSmokeTest::exportPickerCheckboxUpdatesDraft()
 
 void QmlSmokeTest::sectionViewActivatesWithRenderedMesh()
 {
-    std::unique_ptr<QQmlPropertyMap> theme(QQmlPropertyMap::create());
+    auto theme = std::make_unique<QQmlPropertyMap>();
     theme->insert(QStringLiteral("dark"), true);
     theme->insert(QStringLiteral("surface"), QColor(QStringLiteral("#101418")));
     theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#101418")));
@@ -271,7 +271,7 @@ void QmlSmokeTest::sectionViewActivatesWithRenderedMesh()
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()
 {
-    std::unique_ptr<QQmlPropertyMap> theme(QQmlPropertyMap::create());
+    auto theme = std::make_unique<QQmlPropertyMap>();
     theme->insert(QStringLiteral("dark"), true);
     theme->insert(QStringLiteral("surface"), QColor(QStringLiteral("#101418")));
     theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#101418")));
