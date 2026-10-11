@@ -519,6 +519,12 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 const auto shapeCount = std::min({sessionImport.native->shapes.size(), sessionImport.native->shapePlacements.size(), sessionImport.native->shapeNodeIds.size(),
                                                   sessionImport.native->definitionLabels.size(), sessionImport.native->definitionIds.size()});
                 const auto colors = XCAFDoc_DocumentTool::ColorTool(sessionImport.native->document->Main());
+                // Native coordinates to millimetres. The same product export and drawing use,
+                // so the viewer, measurements and mass cannot disagree with a written file:
+                // the reviewed factor applies to the file's own numbers, and the rebase takes
+                // OCCT's normalised native coordinates back to those numbers first.
+                const auto nativeToMillimeters = unitDecision.sourceToMillimeters
+                    * loupe::exporting::detail::nativeUnitRebase(sessionImport);
                 const auto sendProfile = [&](const TessellationProfile& profile, const double start, const double end) {
                     QSet<QString> preparedDefinitions;
                     for (std::size_t index = 0; index < shapeCount; ++index) {
@@ -528,10 +534,10 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                         const auto definitionId = QString::fromStdString(sessionImport.native->definitionIds[index]);
                         if (!preparedDefinitions.contains(definitionId)) {
                             const auto definitionShape = XCAFDoc_ShapeTool::GetShape(sessionImport.native->definitionLabels[index]);
-                            prepareTessellation(definitionShape, unitDecision.sourceToMillimeters, profile);
+                            prepareTessellation(definitionShape, nativeToMillimeters, profile);
                             preparedDefinitions.insert(definitionId);
                         }
-                        const auto segments = encodeMesh(shape, sessionImport.native->shapePlacements[index], unitDecision.sourceToMillimeters, colors,
+                        const auto segments = encodeMesh(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, colors,
                                                          sessionImport.native->labels[index], sessionImport.native->definitionLabels[index]);
                         if (job->canceled.load()) return false;
                         for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
@@ -547,14 +553,14 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                                                                profile.refinement, segment.vertices, segment.normals, segment.indices,
                                                                segment.topology});
                         }
-                        const auto edges = encodeEdges(shape, sessionImport.native->shapePlacements[index], unitDecision.sourceToMillimeters, profile);
+                        const auto edges = encodeEdges(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, profile);
                         if (!edges.indices.isEmpty()) {
                             postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
                                                                edges.vertices, edges.indices, edges.topology});
                         }
                         if (profile.refinement == kRefinedProfile.refinement) {
-                            const auto analysis = inspection::analyze(shape, unitDecision.sourceToMillimeters);
-                            const auto topology = inspection::analyzeTopology(shape, unitDecision.sourceToMillimeters);
+                            const auto analysis = inspection::analyze(shape, nativeToMillimeters);
+                            const auto topology = inspection::analyzeTopology(shape, nativeToMillimeters);
                             if (analysis.valid) {
                                 post({{QStringLiteral("type"), QStringLiteral("componentMetadata")},
                                       {QStringLiteral("requestId"), static_cast<qint64>(requestId)},

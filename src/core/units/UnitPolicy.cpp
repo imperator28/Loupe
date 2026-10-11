@@ -7,13 +7,18 @@
 namespace loupe::units {
 namespace {
 
-[[nodiscard]] bool hasInvalidDeclaredUnits(
-    const std::vector<LengthUnit>& declaredUnits,
-    const LengthUnit xcafUnit)
+// One known unit across every representation context. The XCAF unit is deliberately not
+// compared: OCCT normalises transferred geometry into its own working unit (millimetres
+// by default), so an inch file always reads back with a millimetre XCAF unit. Treating
+// that as a conflict sent every inch file down the unresolved path with a 1.0 factor,
+// which the viewer happened to survive and export did not -- parts came out 25.4x small.
+[[nodiscard]] std::optional<LengthUnit> coherentDeclaredUnit(const std::vector<LengthUnit>& declaredUnits)
 {
-    return std::ranges::any_of(declaredUnits, [xcafUnit](const LengthUnit unit) {
-        return unit == LengthUnit::Unknown || unit == LengthUnit::Mixed || unit != xcafUnit;
-    });
+    if (declaredUnits.empty()) return std::nullopt;
+    const auto first = declaredUnits.front();
+    if (first != LengthUnit::Millimeter && first != LengthUnit::Inch) return std::nullopt;
+    if (!std::ranges::all_of(declaredUnits, [first](const LengthUnit unit) { return unit == first; })) return std::nullopt;
+    return first;
 }
 
 } // namespace
@@ -46,11 +51,11 @@ UnitDecision decide(const UnitEvidence& evidence, const std::optional<UnitOverri
                 overrideValue->reason};
     }
 
-    if (evidence.xcafUnit == LengthUnit::Unknown || evidence.xcafUnit == LengthUnit::Mixed
-        || evidence.declaredRepresentationUnits.empty()
-        || hasInvalidDeclaredUnits(evidence.declaredRepresentationUnits, evidence.xcafUnit)
-        || evidence.internallyInconsistent) {
-        return {evidence.xcafUnit,
+    const auto declared = coherentDeclaredUnit(evidence.declaredRepresentationUnits);
+    if (!declared || evidence.internallyInconsistent) {
+        // sourceUnit() is millimetres here, so a 1.0 factor keeps OCCT's per-context
+        // conversion -- the best available reading -- while review is still required.
+        return {LengthUnit::Millimeter,
                 UnitConfidence::MissingOrMixed,
                 1.0,
                 "missing, mixed, or inconsistent STEP unit evidence"};
@@ -59,11 +64,17 @@ UnitDecision decide(const UnitEvidence& evidence, const std::optional<UnitOverri
     const bool implausibleExtent = !std::isfinite(evidence.normalizedLongestExtentMm)
         || evidence.normalizedLongestExtentMm < 10.0
         || evidence.normalizedLongestExtentMm > 100000.0;
-    return {evidence.xcafUnit,
+    return {*declared,
             implausibleExtent ? UnitConfidence::Suspicious : UnitConfidence::Confirmed,
-            millimetersPerUnit(evidence.xcafUnit),
+            millimetersPerUnit(*declared),
             implausibleExtent ? "normalized extent crossed conservative unit-review threshold"
-                             : "coherent STEP and XCAF unit evidence"};
+                             : "coherent declared STEP units"};
+}
+
+LengthUnit sourceUnit(const UnitEvidence& evidence) noexcept
+{
+    if (evidence.internallyInconsistent) return LengthUnit::Millimeter;
+    return coherentDeclaredUnit(evidence.declaredRepresentationUnits).value_or(LengthUnit::Millimeter);
 }
 
 } // namespace loupe::units

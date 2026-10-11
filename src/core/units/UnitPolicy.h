@@ -40,4 +40,10 @@ struct UnitDecision {
     const std::optional<UnitOverride>& overrideValue);
 [[nodiscard]] double millimetersPerUnit(LengthUnit unit);
 
+// The unit the raw numbers in the STEP file are written in: the one unit every
+// representation context declares, or millimetres when the declarations are missing
+// or disagree. OCCT converts each context into its own working unit while reading, so
+// this -- not the XCAF document unit -- is what a reviewed source factor applies to.
+[[nodiscard]] LengthUnit sourceUnit(const UnitEvidence& evidence) noexcept;
+
 } // namespace loupe::units

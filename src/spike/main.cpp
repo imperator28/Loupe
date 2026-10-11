@@ -5,6 +5,7 @@
 #include "core/drawing/PdfWriter.h"
 #include "core/drawing/SvgWriter.h"
 #include "core/export/ExportPlan.h"
+#include "core/export/ShapeSelection.h"
 #include "core/export/StepExporter.h"
 #include "core/export/StlExporter.h"
 #include "core/import/StepImporter.h"
@@ -707,13 +708,15 @@ int runDrawingBodies(const std::vector<std::string>& args)
     } catch (const std::exception& error) { fail(importFailure, error.what()); }
 
     const auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    // The same native-to-millimetre product the worker uses for display and export.
+    const auto nativeToMillimeters = decision.sourceToMillimeters * loupe::exporting::detail::nativeUnitRebase(imported);
     const auto& native = *imported.native;
     const auto bodyCount = std::min(native.shapes.size(), native.shapePlacements.size());
 
-    const auto scaled = [&decision](const TopoDS_Shape& input) {
-        if (decision.sourceToMillimeters == 1.0) return input;
+    const auto scaled = [nativeToMillimeters](const TopoDS_Shape& input) {
+        if (nativeToMillimeters == 1.0) return input;
         gp_Trsf scale;
-        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), decision.sourceToMillimeters);
+        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), nativeToMillimeters);
         return BRepBuilderAPI_Transform(input, scale, true).Shape();
     };
 
@@ -771,6 +774,8 @@ int runDrawingAudit(const std::vector<std::string>& args)
     } catch (const std::exception& error) { fail(importFailure, error.what()); }
 
     const auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    // The same native-to-millimetre product the worker uses for display and export.
+    const auto nativeToMillimeters = decision.sourceToMillimeters * loupe::exporting::detail::nativeUnitRebase(imported);
     const auto& native = *imported.native;
     const auto bodyCount = std::min(native.shapes.size(), native.shapePlacements.size());
 
@@ -782,9 +787,9 @@ int runDrawingAudit(const std::vector<std::string>& args)
         builder.Add(assembly, native.shapes[index].Located(TopLoc_Location(native.shapePlacements[index])));
     }
     TopoDS_Shape shape = assembly;
-    if (decision.sourceToMillimeters != 1.0) {
+    if (nativeToMillimeters != 1.0) {
         gp_Trsf scale;
-        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), decision.sourceToMillimeters);
+        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), nativeToMillimeters);
         shape = BRepBuilderAPI_Transform(assembly, scale, true).Shape();
     }
 
@@ -879,6 +884,8 @@ int runDrawingSpike(const std::vector<std::string>& args)
     } catch (const std::exception& error) { fail(importFailure, error.what()); }
 
     const auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    // The same native-to-millimetre product the worker uses for display and export.
+    const auto nativeToMillimeters = decision.sourceToMillimeters * loupe::exporting::detail::nativeUnitRebase(imported);
 
     // Compose every body at its assembly placement into one shape. HLR must be
     // fed a single pre-located shape: adding N located sub-shapes and hiding
@@ -897,9 +904,9 @@ int runDrawingSpike(const std::vector<std::string>& args)
     // transform's scale factor to 1, so a scale baked into the projector is
     // silently discarded for orthographic views.
     TopoDS_Shape shape = assembly;
-    if (decision.sourceToMillimeters != 1.0) {
+    if (nativeToMillimeters != 1.0) {
         gp_Trsf scale;
-        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), decision.sourceToMillimeters);
+        scale.SetScale(gp_Pnt(0.0, 0.0, 0.0), nativeToMillimeters);
         shape = BRepBuilderAPI_Transform(assembly, scale, true).Shape();
     }
 

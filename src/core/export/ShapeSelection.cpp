@@ -65,10 +65,7 @@ double nativeUnitRebase(const import::ImportResult& imported)
 {
     double nativeMeters = 0.001;
     XCAFDoc_DocumentTool::GetLengthUnit(imported.native->document, nativeMeters);
-    const auto declared = imported.unitEvidence.declaredRepresentationUnits.empty()
-        ? units::LengthUnit::Millimeter
-        : imported.unitEvidence.declaredRepresentationUnits.front();
-    return nativeMeters * 1000.0 / units::millimetersPerUnit(declared);
+    return nativeMeters * 1000.0 / units::millimetersPerUnit(units::sourceUnit(imported.unitEvidence));
 }
 
 TopoDS_Shape scaledAboutOrigin(const TopoDS_Shape& shape, const double factor)

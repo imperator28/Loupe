@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include "core/export/ShapeSelection.h"
 #include "core/import/StepImporter.h"
 #include "core/units/UnitPolicy.h"
 #include "fixtures/FixtureFactory.h"
@@ -111,7 +112,13 @@ TEST_CASE("STEP importer keeps declared inch and transferred XCAF unit evidence 
     REQUIRE(result.unitEvidence.xcafUnit == LengthUnit::Millimeter);
     REQUIRE(result.unitEvidence.declaredRepresentationUnits == std::vector {LengthUnit::Inch});
     REQUIRE(result.unitEvidence.normalizedLongestExtentMm == Catch::Approx(35.0 * 25.4));
-    REQUIRE(loupe::units::decide(result.unitEvidence, std::nullopt).blocksExport());
+    // The declared unit, not the XCAF working unit, decides: a consistent inch file is
+    // resolved, and its native coordinates rebase back to the file's own inch numbers.
+    const auto decision = loupe::units::decide(result.unitEvidence, std::nullopt);
+    REQUIRE_FALSE(decision.blocksExport());
+    REQUIRE(decision.effectiveUnit == LengthUnit::Inch);
+    REQUIRE(decision.sourceToMillimeters == Catch::Approx(25.4));
+    REQUIRE(decision.sourceToMillimeters * loupe::exporting::detail::nativeUnitRebase(result) == Catch::Approx(1.0));
 }
 
 } // namespace
