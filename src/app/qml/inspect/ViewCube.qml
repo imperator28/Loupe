@@ -144,11 +144,11 @@ Item {
     ]
 
     function barScale(axis) {
-        const long = root.unitScale
+        const span = root.unitScale
         const thin = root.edgeThickness
-        if (axis === "x") return Qt.vector3d(long, thin, thin)
-        if (axis === "y") return Qt.vector3d(thin, long, thin)
-        return Qt.vector3d(thin, thin, long)
+        if (axis === "x") return Qt.vector3d(span, thin, thin)
+        if (axis === "y") return Qt.vector3d(thin, span, thin)
+        return Qt.vector3d(thin, thin, span)
     }
 
     View3D {
