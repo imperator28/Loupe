@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      label:
+        description: Name for the packaged zips (a testing build, e.g. v0.1.4-beta.1). Defaults to the branch name.
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -82,6 +87,10 @@ jobs:
             # MAX_PATH; see native-verify.yml for the measured rationale.
             vcpkg_install_options: --clean-buildtrees-after-build;--clean-packages-after-build;--x-buildtrees-root=D:/bt
     env:
+      # The zips are named after the tag. A dispatch on a branch takes the given label or the
+      # branch name, and a branch name may contain '/', which the packaging steps turn into
+      # '-' rather than writing the zip into a directory that does not exist.
+      PACKAGE_LABEL: ${{ inputs.label || github.ref_name }}
       LOUPE_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       VCPKG_COMMIT: db4723bd0a99eab031f1a3dee4336dca43049c87
       VCPKG_DISABLE_METRICS: '1'
@@ -176,7 +185,7 @@ jobs:
           cp -R "build/${{ matrix.configure_preset }}/src/app/Loupe.app" "$STAGE/"
           cp "scripts/macos/Open Loupe (first run).command" "$STAGE/"
           test -f "$STAGE/Loupe.app/Contents/MacOS/loupe-worker"
-          ditto -c -k --keepParent "$STAGE" "loupe-${{ github.ref_name }}-macos-arm64.zip"
+          ditto -c -k --keepParent "$STAGE" "loupe-${PACKAGE_LABEL//\//-}-macos-arm64.zip"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -209,7 +218,7 @@ jobs:
             # windows in ''" -- confirmed by inspecting the v0.1.0 asset itself.
             printf '[Paths]\nPrefix = .\nPlugins = plugins\nQml2Imports = qml\n' > dist/loupe-windows-x64/qt.conf
           fi
-          cd dist && 7z a "../loupe-${{ github.ref_name }}-windows-x64.zip" loupe-windows-x64
+          cd dist && 7z a "../loupe-${PACKAGE_LABEL//\//-}-windows-x64.zip" loupe-windows-x64
 
       - name: Upload packaged app
         uses: actions/upload-artifact@v4
