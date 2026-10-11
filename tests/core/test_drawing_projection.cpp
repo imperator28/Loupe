@@ -7,13 +7,20 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Ax1.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
 #include <TopoDS_Compound.hxx>
 
 #include <array>
+#include <vector>
+#include <variant>
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <utility>
@@ -152,7 +159,7 @@ TEST_CASE("statistics account for every converted edge", "[drawing-projection]")
 
     REQUIRE(statistics.edges > 0);
     const int classified = statistics.analyticLines + statistics.analyticCircles + statistics.recoveredArcs
-        + statistics.exactCubics + statistics.tessellatedCurves;
+        + statistics.exactCubics + statistics.tessellatedCurves + statistics.edgeOnCircles + statistics.arcFittedCurves;
     REQUIRE(classified >= statistics.edges);
     REQUIRE(statistics.closedContours + statistics.openContours > 0);
 }
@@ -335,3 +342,107 @@ TEST_CASE("coincident sharp and silhouette edges are not emitted twice", "[drawi
 }
 
 } // namespace
+
+namespace {
+
+struct PrimitiveCounts final {
+    int segments{};
+    int arcs{};
+    int cubics{};
+    std::vector<Arc> arcList;
+};
+
+PrimitiveCounts countByType(const loupe::drawing::Drawing& drawing)
+{
+    PrimitiveCounts counts;
+    for (const auto& layer : drawing.layers) {
+        for (const auto& contour : layer.contours) {
+            for (const auto& primitive : contour.primitives) {
+                if (std::holds_alternative<Segment>(primitive)) ++counts.segments;
+                else if (const auto* arc = std::get_if<Arc>(&primitive)) { ++counts.arcs; counts.arcList.push_back(*arc); }
+                else ++counts.cubics;
+            }
+        }
+    }
+    return counts;
+}
+
+} // namespace
+
+TEST_CASE("a view picked from a face's mesh normal still draws the hole as a circle", "[drawing-projection][snap]")
+{
+    // Picking a face hands over the display mesh's float normal, a few micro-radians off
+    // the face. HLR keeps a circle a circle only when its axis is parallel to the view to
+    // 1e-12 rad, so the hole came back as an ellipse and was drawn as a polygon.
+    const gp_Dir meshNormal(1.0e-6, -0.7e-6, 1.0);
+    const auto result = loupe::drawing::project(requestFor(drilledPlate(), meshNormal));
+
+    REQUIRE(result.snappedToGeometry);
+    REQUIRE(result.viewDirectionUsed.IsParallel(gp_Dir(0.0, 0.0, 1.0), 1.0e-12));
+    REQUIRE(result.statistics.tessellatedCurves == 0);
+    const auto counts = countByType(result.drawing);
+    REQUIRE(std::ranges::any_of(counts.arcList, [](const Arc& arc) { return std::abs(arc.radius - 5.0) < 1.0e-6; }));
+    REQUIRE(counts.segments == 4);
+}
+
+TEST_CASE("an exact standard view is never snapped onto a nearby face", "[drawing-projection][snap]")
+{
+    // A face tilted a fraction off a principal plane must not drag the named view with it.
+    gp_Trsf tilt;
+    tilt.SetRotation(gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(1.0, 0.0, 0.0)), 2.0e-4);
+    const TopoDS_Shape tilted = BRepBuilderAPI_Transform(drilledPlate(), tilt).Shape();
+    const auto result = loupe::drawing::project(requestFor(tilted, gp_Dir(0.0, 0.0, 1.0)));
+
+    REQUIRE_FALSE(result.snappedToGeometry);
+    REQUIRE(result.viewDirectionUsed.IsEqual(gp_Dir(0.0, 0.0, 1.0), 1.0e-15));
+}
+
+TEST_CASE("a hole seen obliquely is drawn as arcs within tolerance, not a polygon", "[drawing-projection][snap]")
+{
+    // At 45 degrees a 5 mm hole is an ellipse. DXF R12 has no ellipse, and tessellating one
+    // to 0.01 mm takes hundreds of segments; a chain of checked arcs holds the same tolerance.
+    const gp_Dir oblique(0.0, -1.0, 1.0);
+    auto request = requestFor(drilledPlate(), oblique);
+    request.upDirection = gp_Dir(0.0, 1.0, 1.0);
+    const auto result = loupe::drawing::project(request);
+
+    REQUIRE_FALSE(result.snappedToGeometry);
+    REQUIRE(result.statistics.arcFittedCurves > 0);
+    REQUIRE(result.statistics.tessellatedCurves == 0);
+    const auto counts = countByType(result.drawing);
+    REQUIRE(counts.arcs >= 8);
+    REQUIRE(counts.arcs < 200);
+    // Every arc lies on one of the hole's two rims as they truly project, within the
+    // drawing tolerance. The rims are projected through the same frame the projector uses.
+    gp_Trsf frame;
+    frame.SetTransformation(gp_Ax3(gp_Pnt(0.0, 0.0, 0.0), result.viewDirectionUsed,
+                                   request.upDirection.Crossed(result.viewDirectionUsed)));
+    std::vector<gp_Pnt2d> rims;
+    for (const double height : {0.0, 5.0}) {
+        for (int step = 0; step < 4000; ++step) {
+            const double angle = 2.0 * std::numbers::pi * step / 4000.0;
+            gp_Pnt point(20.0 + 5.0 * std::cos(angle), 15.0 + 5.0 * std::sin(angle), height);
+            point.Transform(frame);
+            rims.emplace_back(point.X(), point.Y());
+        }
+    }
+    for (const auto& arc : counts.arcList) {
+        for (int step = 0; step <= 8; ++step) {
+            const auto sample = arc.pointAtAngle(arc.startAngle + arc.sweepAngle * step / 8.0);
+            double nearest = 1.0e9;
+            for (const auto& rim : rims) nearest = std::min(nearest, rim.Distance(sample));
+            REQUIRE(nearest < request.deflectionMm);
+        }
+    }
+}
+
+TEST_CASE("a hole seen exactly edge-on is a straight line, not OCCT's coarse polyline", "[drawing-projection]")
+{
+    // HLR gives up on an edge-on circle and emits a fixed 15-point polyline, which for a
+    // full circle runs out and back over the same line: fourteen overlapping segments on a
+    // cut path. It is exactly a line, and is emitted as one run each way at most.
+    const auto result = loupe::drawing::project(requestFor(drilledPlate(), gp_Dir(1.0, 0.0, 0.0)));
+
+    REQUIRE(result.statistics.coarseFallbackEdges == 0);
+    REQUIRE(result.drawing.warningCount(loupe::drawing::warningCode::coarseCurveFallback) == 0);
+}
