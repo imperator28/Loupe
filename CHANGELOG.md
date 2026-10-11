@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.1.4-beta.1
+
+A testing build of five fixes from the 0.1.3 review. Published as a pre-release:
+it is not the "latest" download.
+
+### Fixes
+
+- **Inch STEP files exported 25.4x too small.** OCCT reads every file into a
+  millimetre document, and the unit policy took that for a conflict with the
+  file's declared inches, falling back to millimetres with a 1.0 factor. The
+  viewer happened to survive it; STEP, STL and drawing export did not (a 0.5 in
+  part was written as 0.5 mm). Inch files now resolve as inches, and display,
+  measurement, export and drawing share one scale, so they cannot disagree.
+  Inch files now show **Units: in**; measurements follow.
+- **Switching to Export or Drawing rebuilt the model.** Each arriving mesh
+  re-walked every model in the scene, so building N parts cost N²; the replay
+  also re-decoded geometry viewports already held, and the single-part previews
+  built every part to show one. Measured on the viewport's own work at 4000
+  segments: 72 s to build → 0.46 s, 167 s to replay → near zero, 44 s for the
+  standalone preview → 0.07 s.
+- **A part did not render in its swatch colour.** A face pointed at the viewer
+  received ~1.5x its colour plus a specular hot spot (#3070C0 drew as #9BC0FF).
+  Lighting is rebalanced so a facing face renders within a level or two of its
+  colour. Uncoloured parts no longer arrive painted with a teal placeholder,
+  and a subassembly's swatch shows the colour its parts are drawn in.
+- **Circles in a face-picked drawing view became polygons.** The picked view
+  carried the display mesh's float error, and OCCT keeps a circle a circle only
+  when the view is parallel to its axis to 1e-12 rad. The view now snaps to the
+  face's exact normal (or a hole's axis). Obliquely seen circles are drawn as
+  arcs within tolerance rather than hundreds of segments, so DXF keeps real
+  arcs, and an edge-on circle is a single line rather than fourteen overlapping
+  segments.
+
+### New
+
+- **Automatic part colours** (View → Part Colours, or the document properties
+  panel with nothing selected): cool shades, warm shades, or muted, with
+  Shuffle. Low-contrast by design. Applies to parts without file colours, and to
+  files that give every part the same default colour; optionally to all parts.
+  Display only.
+
+> **Still open.** Cut-mode contour closure (Gate E) is unchanged by this build;
+> check drawings before cutting.
+
 ## v0.1.3
 
 The first release with the **Drawing** workspace, plus a rebuilt view cube, an
