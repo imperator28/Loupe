@@ -201,7 +201,10 @@ QString colorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Label& 
                    || XCAFDoc_ColorTool::GetColor(definition, XCAFDoc_ColorGen, color))) {
         return colorString(color);
     }
-    return QStringLiteral("#67D5C0");
+    // No colour, rather than a stand-in one. A placeholder was indistinguishable from a part
+    // genuinely coloured that way, so the app could neither show its own neutral fallback
+    // (which the inspector swatch did, so the two disagreed) nor tell which parts to auto-colour.
+    return {};
 }
 
 void prepareTessellation(const TopoDS_Shape& shape, const double sourceToMillimeters,

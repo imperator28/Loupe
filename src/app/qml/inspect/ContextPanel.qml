@@ -124,7 +124,8 @@ ElevatedPanel {
                 text: ""
                 background: Rectangle {
                     radius: 3
-                    color: controller ? controller.activeResolvedAppearanceColor : root.theme.neutralBody
+                    color: controller && controller.activeResolvedAppearanceColor.length > 0
+                           ? controller.activeResolvedAppearanceColor : root.theme.neutralBody
                     border.color: root.theme.border
                 }
                 onClicked: appearanceDialog.open()
@@ -148,7 +149,8 @@ ElevatedPanel {
         id: appearanceDialog
         theme: root.theme
         title: qsTr("Body color")
-        selectedColor: controller ? controller.activeResolvedAppearanceColor : root.theme.neutralBody
+        selectedColor: controller && controller.activeResolvedAppearanceColor.length > 0
+                       ? controller.activeResolvedAppearanceColor : root.theme.neutralBody
         onAccepted: if (controller) controller.setActiveAppearanceColor(pickedColor, assignmentScope.currentValue)
     }
 

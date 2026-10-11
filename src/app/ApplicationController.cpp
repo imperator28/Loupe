@@ -42,7 +42,8 @@ const auto kImporterVersion = QStringLiteral("step-importer-8");
 const auto kMeshProfile = QStringLiteral("progressive-1");
 // Mesh payloads now contain the composed occurrence transform.  Keep older
 // local-coordinate payloads out of the replay cache.
-const auto kGeometryCacheProfile = QStringLiteral("progressive-3-placed-geometry");
+// -4: an uncoloured face carries no colour instead of a teal placeholder.
+const auto kGeometryCacheProfile = QStringLiteral("progressive-4-uncoloured-faces");
 constexpr auto kGeometryCacheMagic = "LGC1";
 constexpr auto kWorkerConnectionAttempts = 4'800;
 
@@ -1147,7 +1148,19 @@ QString ApplicationController::activeAppearanceColor() const
 
 QString ApplicationController::activeResolvedAppearanceColor() const
 {
-    return resolvedAppearanceColor(activeNodeId_, importedColorByNode_.value(activeNodeId_));
+    if (activeNodeId_.isEmpty()) return {};
+    // A subassembly or a multi-solid container draws nothing itself, so its colour is the
+    // colour its geometry is drawn in. Without this the swatch fell back to a placeholder
+    // the viewport never showed.
+    if (geometryByNode_.contains(activeNodeId_) || importedColorByNode_.contains(activeNodeId_))
+        return resolvedAppearanceColor(activeNodeId_, importedColorByNode_.value(activeNodeId_));
+    auto nodes = geometryNodesForAction(activeNodeId_);
+    nodes.sort();
+    for (const auto& nodeId : nodes) {
+        if (const auto color = resolvedAppearanceColor(nodeId, importedColorByNode_.value(nodeId)); !color.isEmpty())
+            return color;
+    }
+    return resolvedAppearanceColor(activeNodeId_, {});
 }
 
 bool ApplicationController::setActiveAppearanceColor(const QString& color, const QString& scope)
@@ -1192,7 +1205,9 @@ QString ApplicationController::resolvedAppearanceColor(const QString& nodeId, co
     if (const auto material = materialByNode_.value(nodeId); !material.isEmpty()) {
         if (const auto color = materialLibrary_.colorFor(material); !color.isEmpty()) return color;
     }
-    return sourceColor.isEmpty() ? QStringLiteral("#67D5C0") : sourceColor;
+    // Empty when nothing colours the part: the caller draws its theme's neutral body colour,
+    // the same one in the viewport and in the inspector swatch.
+    return sourceColor;
 }
 
 bool ApplicationController::setUnitOverride(const QString& unit)

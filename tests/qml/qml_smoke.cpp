@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace {
 
@@ -76,6 +77,7 @@ private slots:
     void measurementFaceHighlightLoadsTopology();
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
+    void viewportDrawsAFacingFaceInItsPickedColour();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
@@ -267,6 +269,82 @@ void QmlSmokeTest::sectionViewActivatesWithRenderedMesh()
     section->setEnabled(true);
     QTest::qWait(500);
     QVERIFY(section->enabled());
+}
+
+void QmlSmokeTest::viewportDrawsAFacingFaceInItsPickedColour()
+{
+    // The inspector swatch shows the colour a part is given; a face pointed at the viewer
+    // must render that colour. It did not: the head-on key light and fill put ~1.5x the
+    // colour on such a face and a specular hot spot washed it toward white (#3070C0 drew
+    // as #9BC0FF). A sphere's centre always faces the camera, whatever the view.
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"surface", "surfaceRaised", "surfaceSubtle", "control", "border", "onSurface", "foreground",
+                            "muted", "accent", "selection", "selectedBody", "selectedEdge", "edge", "neutralBody"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#000000")));
+    theme->insert(QStringLiteral("dark"), false);
+
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    const QVariantMap initialProperties{
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))},
+        {QStringLiteral("presentationOnly"), true},
+    };
+    std::unique_ptr<QObject> object(component.createWithInitialProperties(initialProperties));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QVERIFY(viewport != nullptr);
+    QQuickWindow window;
+    window.resize(400, 400);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(400, 400));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    loupe::protocol::MeshPayload sphere;
+    sphere.requestId = 1;
+    sphere.nodeId = sphere.definitionId = QStringLiteral("sphere");
+    sphere.segmentKey = QStringLiteral("sphere:0");
+    constexpr int rings = 48;
+    constexpr int sectors = 96;
+    for (int ring = 0; ring <= rings; ++ring) {
+        for (int sector = 0; sector <= sectors; ++sector) {
+            const double theta = std::numbers::pi * ring / rings;
+            const double phi = 2.0 * std::numbers::pi * sector / sectors;
+            const auto x = static_cast<float>(std::sin(theta) * std::cos(phi));
+            const auto y = static_cast<float>(std::cos(theta));
+            const auto z = static_cast<float>(std::sin(theta) * std::sin(phi));
+            sphere.vertices << x * 10.0F << y * 10.0F << z * 10.0F;
+            sphere.normals << x << y << z;
+        }
+    }
+    for (quint32 ring = 0; ring < rings; ++ring) {
+        for (quint32 sector = 0; sector < sectors; ++sector) {
+            const quint32 first = ring * (sectors + 1) + sector;
+            const quint32 below = first + sectors + 1;
+            sphere.indices << first << first + 1 << below << below << first + 1 << below + 1;
+        }
+    }
+    const auto payload = loupe::protocol::encodeGeometry(sphere);
+
+    for (const auto& picked : {QStringLiteral("#3070C0"), QStringLiteral("#9AA2B2"), QStringLiteral("#E0C040"),
+                               QStringLiteral("#202020")}) {
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, sphere.nodeId),
+                                          Q_ARG(QString, sphere.segmentKey), Q_ARG(QString, picked),
+                                          Q_ARG(QByteArray, payload)));
+        QTest::qWait(400);
+        const auto image = window.grabWindow();
+        const auto rendered = image.pixelColor(image.width() / 2, image.height() / 2);
+        const QColor expected(picked);
+        const auto difference = std::max({std::abs(rendered.red() - expected.red()),
+                                          std::abs(rendered.green() - expected.green()),
+                                          std::abs(rendered.blue() - expected.blue())});
+        QVERIFY2(difference <= 8, qPrintable(QStringLiteral("%1 rendered as %2").arg(picked, rendered.name())));
+    }
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()

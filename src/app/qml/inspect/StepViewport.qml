@@ -491,11 +491,18 @@ Item {
         if (!presentationOnly && controller && controller.section.enabled) Qt.callLater(root.applySection)
     }
 
+    // The colour a part is drawn in. The inspector swatch resolves the same way, so the two
+    // cannot disagree; when nothing colours the part, both use the theme's neutral body.
+    function displayColor(nodeId, importColor) {
+        const resolved = controller ? controller.resolvedAppearanceColor(nodeId, importColor) : importColor
+        return resolved && resolved.length > 0 ? resolved : root.theme.neutralBody
+    }
+
     function applyAppearance() {
         if (!controller) return
         for (let id in modelByNode) {
             const model = modelByNode[id]
-            model.sourceColor = controller.resolvedAppearanceColor(model.nodeId, model.importColor)
+            model.sourceColor = root.displayColor(model.nodeId, model.importColor)
             const overlay = sectionOverlayModelByNode[id]
             if (overlay) overlay.sourceColor = model.sourceColor
         }
@@ -640,8 +647,8 @@ Item {
             if (overlayGeometry) overlayGeometry.copySectionOverlayFrom(geometry)
             const model = modelByNode[segmentKey]
             if (model) {
-                model.importColor = sourceColor || model.importColor
-                model.sourceColor = controller ? controller.resolvedAppearanceColor(nodeId, model.importColor) : model.importColor
+                model.importColor = sourceColor
+                model.sourceColor = root.displayColor(nodeId, model.importColor)
             }
             scheduleSectionForNewGeometry()
             return
@@ -651,9 +658,8 @@ Item {
             geometry.destroy()
             return
         }
-        const importedColor = sourceColor || root.theme.neutralBody
-        const model = modelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId, "importColor": importedColor,
-                                                    "sourceColor": controller ? controller.resolvedAppearanceColor(nodeId, importedColor) : importedColor })
+        const model = modelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId, "importColor": sourceColor,
+                                                    "sourceColor": root.displayColor(nodeId, sourceColor) })
         const xrayModel = componentXrayModel.createObject(componentXrayRoot, {
             "geometry": geometry,
             "nodeId": nodeId,
@@ -961,7 +967,8 @@ Item {
         Model {
             id: modelItem
             property string nodeId: ""
-            property color importColor: root.theme.neutralBody
+            // The file's own colour, or empty when the file gives none.
+            property string importColor: ""
             property color sourceColor: root.theme.neutralBody
             property bool selected: root.showComponentSelection && root.controller
                                     && ((root.selectionEnabled && root.controller.selectedNodeCount >= 0
@@ -979,7 +986,7 @@ Item {
                 emissiveFactor: modelItem.selected ? viewportVisualTheme.selectionEmissive
                                                    : modelItem.inspectionHovered ? viewportVisualTheme.hoverEmissive
                                                                                : Qt.vector3d(0, 0, 0)
-                roughnessValue: 0.34
+                roughnessValue: 0.6
                 clipEnabled: !root.presentationOnly && root.controller && root.controller.section.enabled
                 sectionNormal: root.effectiveSectionNormal
                 sectionOffset: root.controller ? root.controller.section.effectiveOffset : 0
@@ -1084,7 +1091,11 @@ Item {
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
-            DirectionalLight { eulerRotation: Qt.vector3d(0, 0, 0); brightness: viewportVisualTheme.keyLightBrightness }
+            DirectionalLight {
+                eulerRotation: Qt.vector3d(0, 0, 0)
+                brightness: viewportVisualTheme.keyLightBrightness
+                ambientColor: viewportVisualTheme.ambientLight
+            }
         }
         DirectionalLight { eulerRotation: Qt.vector3d(-35, -35, 0); brightness: viewportVisualTheme.fillLightBrightness }
         Node {
