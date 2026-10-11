@@ -140,6 +140,12 @@ public:
     Q_INVOKABLE void cancelImport();
     Q_INVOKABLE void fitView();
     Q_INVOKABLE void replayGeometry();
+    // Which payload a viewport is being handed. Bumped only when a segment's geometry
+    // genuinely changes (a refinement pass, a reimport), and left alone by a replay, so a
+    // viewport that already holds this revision can skip it instead of decoding it again.
+    // Zero means unknown: apply it.
+    Q_INVOKABLE int meshRevision(const QString& segmentKey) const { return meshRevisionBySegment_.value(segmentKey); }
+    Q_INVOKABLE int edgeRevision(const QString& nodeId) const { return edgeRevisionByNode_.value(nodeId); }
     Q_INVOKABLE void isolateActiveNode();
     Q_INVOKABLE void toggleIsolateActiveNode();
     Q_INVOKABLE void hideActiveNode();
@@ -266,6 +272,9 @@ private:
     qsizetype geometryReplayIndex_{};
     quint64 geometryReplayGeneration_{};
     QTimer geometryReplayTimer_{this};
+    QHash<QString, int> meshRevisionBySegment_;
+    QHash<QString, int> edgeRevisionByNode_;
+    int geometryRevisionCounter_{};
     QElapsedTimer importElapsed_;
     QTimer importProgressTimer_{this};
     double modelExtentMm_{};
