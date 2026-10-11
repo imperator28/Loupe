@@ -41,8 +41,6 @@ TEST_CASE("missing or mixed units require resolution", "[units]")
     REQUIRE(decide(UnitEvidence{{}, LengthUnit::Unknown, 120.0, false}, std::nullopt).blocksExport());
     REQUIRE(decide(UnitEvidence{{LengthUnit::Unknown}, LengthUnit::Millimeter, 120.0, false}, std::nullopt)
                 .blocksExport());
-    REQUIRE(decide(UnitEvidence{{LengthUnit::Inch}, LengthUnit::Millimeter, 120.0, false}, std::nullopt)
-                .blocksExport());
     REQUIRE(decide(
                 UnitEvidence{{LengthUnit::Inch, LengthUnit::Millimeter}, LengthUnit::Millimeter, 120.0, false},
                 std::nullopt)
@@ -51,6 +49,32 @@ TEST_CASE("missing or mixed units require resolution", "[units]")
                 UnitEvidence{{LengthUnit::Inch, LengthUnit::Millimeter}, LengthUnit::Mixed, 120.0, true},
                 std::nullopt)
                 .blocksExport());
+}
+
+TEST_CASE("an inch file OCCT normalised to millimetres is still an inch file", "[units]")
+{
+    // OCCT reads every STEP file into a millimetre XCAF document, so the XCAF unit is
+    // its working unit, not evidence about the file. Reading the mismatch as a conflict
+    // gave inch files a 1.0 factor, and their parts exported 25.4x too small.
+    const UnitEvidence evidence{{LengthUnit::Inch, LengthUnit::Inch}, LengthUnit::Millimeter, 889.0, false};
+    const UnitDecision result = decide(evidence, std::nullopt);
+
+    REQUIRE(result.effectiveUnit == LengthUnit::Inch);
+    REQUIRE(result.sourceToMillimeters == Catch::Approx(25.4));
+    REQUIRE(result.confidence == UnitConfidence::Confirmed);
+    REQUIRE(sourceUnit(evidence) == LengthUnit::Inch);
+}
+
+TEST_CASE("unresolved units fall back to millimetres for the source unit", "[units]")
+{
+    REQUIRE(sourceUnit(UnitEvidence{{}, LengthUnit::Millimeter, 120.0, false}) == LengthUnit::Millimeter);
+    REQUIRE(sourceUnit(UnitEvidence{{LengthUnit::Inch, LengthUnit::Millimeter}, LengthUnit::Millimeter, 120.0, false})
+            == LengthUnit::Millimeter);
+    REQUIRE(sourceUnit(UnitEvidence{{LengthUnit::Inch}, LengthUnit::Millimeter, 120.0, true}) == LengthUnit::Millimeter);
+    const auto mixed = decide(UnitEvidence{{LengthUnit::Inch, LengthUnit::Millimeter}, LengthUnit::Millimeter, 120.0, false},
+                              std::nullopt);
+    REQUIRE(mixed.effectiveUnit == LengthUnit::Millimeter);
+    REQUIRE(mixed.sourceToMillimeters == Catch::Approx(1.0));
 }
 
 TEST_CASE("malformed unit overrides are rejected", "[units]")

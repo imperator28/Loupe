@@ -36,7 +36,9 @@ namespace {
 // Bumped again (-7): each split body now gets its own unique definitionId
 // instead of reusing the container's, so quantity grouping and per-definition
 // material assignment don't treat unrelated sibling bodies as one part.
-const auto kImporterVersion = QStringLiteral("step-importer-7");
+// Bumped again (-8): an inch file is no longer misread as unresolved with a 1.0
+// factor, so a cached snapshot carries a unit decision export would get wrong.
+const auto kImporterVersion = QStringLiteral("step-importer-8");
 const auto kMeshProfile = QStringLiteral("progressive-1");
 // Mesh payloads now contain the composed occurrence transform.  Keep older
 // local-coordinate payloads out of the replay cache.

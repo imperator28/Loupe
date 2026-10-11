@@ -197,6 +197,41 @@ TEST_CASE("STEP export retains and writes the requested inch unit", "[export][st
     REQUIRE(roundTrip.unitEvidence.normalizedLongestExtentMm == Catch::Approx(254.0));
 }
 
+TEST_CASE("an inch file exports at true size with the decision the app reviews", "[export][step][inch]")
+{
+    // The app passes the worker's own unit decision back with every export. For an inch
+    // file that decision used to be millimetres with a 1.0 factor, and the written part
+    // came out 25.4x small: a 10 in box as a 10 mm one.
+    const ScopedExportDirectory directory{"step-inch-reviewed"};
+    const auto source = loupe::tests::writeRepeatedBoxAssembly(directory.path() / "repeated.step", loupe::tests::FixtureUnit::Inch);
+    const auto imported = loupe::import::StepImporter {}.read(source);
+    const auto definition = std::ranges::find_if(imported.snapshot.nodes, [](const auto& node) { return node.kind == NodeKind::Definition; });
+    REQUIRE(definition != imported.snapshot.nodes.end());
+    auto decision = loupe::units::decide(imported.unitEvidence, std::nullopt);
+    decision.confidence = loupe::units::UnitConfidence::Confirmed;
+
+    for (const auto format : {Format::Step, Format::Stl}) {
+        PlanRequest request;
+        request.selections = {{definition->id, SelectionKind::Definition}};
+        request.hierarchyPaths = {{definition->id, definition->hierarchyPath}};
+        request.destination = (directory.path() / (format == Format::Step ? "step" : "stl")).string();
+        request.format = format; request.coordinates = Coordinates::Local;
+        request.grouping = Grouping::SeparateFiles; request.stepOutputUnit = StepOutputUnit::Millimeter;
+        request.unitDecision = decision;
+        const auto plan = loupe::exporting::buildPlan(request);
+        const auto& output = plan.outputs().front();
+        if (format == Format::Step) {
+            static_cast<void>(loupe::exporting::StepExporter {}.write(imported, output));
+            const auto roundTrip = loupe::import::StepImporter {}.read(output.finalPath());
+            REQUIRE(roundTrip.unitEvidence.declaredRepresentationUnits == std::vector {loupe::units::LengthUnit::Millimeter});
+            REQUIRE(roundTrip.unitEvidence.normalizedLongestExtentMm == Catch::Approx(254.0));
+        } else {
+            static_cast<void>(loupe::exporting::StlExporter {}.write(imported, output));
+            requireBounds(readBinaryStl(output.finalPath()), 0.0F, 254.0F, 0.0F, 254.0F, 0.0F, 254.0F);
+        }
+    }
+}
+
 TEST_CASE("occurrence STL export is binary millimetres at its assembly placement", "[export][stl]")
 {
     const ScopedExportDirectory directory{"stl"};
