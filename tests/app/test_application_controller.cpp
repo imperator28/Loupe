@@ -452,11 +452,16 @@ void ApplicationControllerTest::autoPartColoursTreatOneSharedFileColourAsNone()
     const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-uniform-colour.step").toStdString(),
                                                                   Quantity_Color(0.792, 0.820, 0.933, Quantity_TOC_sRGB));
     loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
     const auto parts = geometryNodeIds(controller);
     QCOMPARE(parts.size(), 2);
     QVERIFY(controller.fileColorsUniform());
+    // The colour arrives as the file wrote it (sRGB), not as OCCT's linear value in hex,
+    // which turned #CAD1EE into #979FDA.
+    QVERIFY(meshSpy.count() > 0);
+    for (const auto& arguments : meshSpy) QCOMPARE(arguments.at(2).toString(), QStringLiteral("#CAD1EE"));
     const auto fileColor = QStringLiteral("#CAD1EE");
     QCOMPARE(controller.resolvedAppearanceColor(parts.at(0), fileColor), fileColor);
 

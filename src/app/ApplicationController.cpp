@@ -44,7 +44,8 @@ const auto kMeshProfile = QStringLiteral("progressive-1");
 // Mesh payloads now contain the composed occurrence transform.  Keep older
 // local-coordinate payloads out of the replay cache.
 // -4: an uncoloured face carries no colour instead of a teal placeholder.
-const auto kGeometryCacheProfile = QStringLiteral("progressive-4-uncoloured-faces");
+// -5: file colours are sRGB hex, no longer OCCT's linear values written as hex.
+const auto kGeometryCacheProfile = QStringLiteral("progressive-5-srgb-colours");
 constexpr auto kGeometryCacheMagic = "LGC1";
 
 [[nodiscard]] std::optional<loupe::app::render::PartPaletteStyle> partPaletteStyle(const QString& mode)

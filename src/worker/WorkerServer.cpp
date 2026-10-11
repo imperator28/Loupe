@@ -182,11 +182,18 @@ const TessellationProfile kRefinedProfile{
 
 QString colorString(const Quantity_ColorRGBA& color)
 {
-    const auto& rgb = color.GetRGB();
+    // Quantity_Color holds LINEAR RGB; Red()/Green()/Blue() return it as such. A hex colour
+    // is sRGB, which is also what STEP writes and what the CAD tool showed, so convert. Read
+    // raw, a file's #CAD1EE came out as #979FDA -- every file colour darker and more
+    // saturated in Loupe than in the CAD tool that set it.
+    double red = 0.0;
+    double green = 0.0;
+    double blue = 0.0;
+    color.GetRGB().Values(red, green, blue, Quantity_TOC_sRGB);
     const auto channel = [](const double value) {
         return QStringLiteral("%1").arg(std::clamp(qRound(value * 255.0), 0, 255), 2, 16, QLatin1Char('0'));
     };
-    return (QStringLiteral("#") + channel(rgb.Red()) + channel(rgb.Green()) + channel(rgb.Blue())).toUpper();
+    return (QStringLiteral("#") + channel(red) + channel(green) + channel(blue)).toUpper();
 }
 
 QString colorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Label& occurrence,
