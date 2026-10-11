@@ -23,7 +23,10 @@ it is not the "latest" download.
 - **A part did not render in its swatch colour.** A face pointed at the viewer
   received ~1.5x its colour plus a specular hot spot (#3070C0 drew as #9BC0FF).
   Lighting is rebalanced so a facing face renders within a level or two of its
-  colour. Uncoloured parts no longer arrive painted with a teal placeholder,
+  colour. File colours were also read as OCCT's linear values and shown as if
+  they were sRGB, so every file colour looked darker and more saturated than in
+  the CAD tool (SolidWorks' #CAD1EE showed as #97A3DA); they now match.
+  Uncoloured parts no longer arrive painted with a teal placeholder,
   and a subassembly's swatch shows the colour its parts are drawn in.
 - **Circles in a face-picked drawing view became polygons.** The picked view
   carried the display mesh's float error, and OCCT keeps a circle a circle only
