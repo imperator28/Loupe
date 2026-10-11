@@ -31,6 +31,12 @@ QtObject {
     // themes, so it does not derive from the accent token.
     readonly property color sectionBorder: theme.viewportSectionBorder
     readonly property color sectionLabel: theme.accentForeground
-    readonly property real keyLightBrightness: dark ? 1.1 : 1.2
-    readonly property real fillLightBrightness: dark ? 0.55 : 0.7
+    // Balanced so a face pointed at the viewer renders the colour that was picked for it,
+    // within a level or two, in both themes: the head-on key plus the ambient floor sum to
+    // about one, and the fill only adds shape. The previous 1.2 + 0.7 put about 1.5x the
+    // base colour on a facing face, which with the specular hot spot is why a part never
+    // looked like its swatch. Measured on a rendered sphere; see the colour-match test.
+    readonly property real keyLightBrightness: 0.75
+    readonly property real fillLightBrightness: 0.2
+    readonly property color ambientLight: Qt.rgba(0.45, 0.45, 0.45, 1)
 }

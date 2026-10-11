@@ -9,6 +9,7 @@
 
 #include "app/ApplicationController.h"
 #include "app/models/AssemblyTreeModel.h"
+#include "core/domain/AssemblyTypes.h"
 #include "fixtures/FixtureFactory.h"
 
 class ApplicationControllerTest final : public QObject
@@ -40,6 +41,7 @@ private slots:
     void topologyPickRecordsEntityMeasurementWithoutChangingSelection();
     void appearanceOverridesMaterialAndSourceColor();
     void reopensSourceWithPersistedAppearanceOverrides();
+    void uncolouredPartsCarryNoColourAndContainersShowTheirGeometry();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -358,6 +360,41 @@ void ApplicationControllerTest::appearanceOverridesMaterialAndSourceColor()
     QCOMPARE(controller.resolvedAppearanceColor(controller.activeNodeId(), QStringLiteral("#112233")), QStringLiteral("#FF0055"));
     QVERIFY(controller.clearActiveAppearanceColor(QStringLiteral("occurrence")));
     QCOMPARE(controller.resolvedAppearanceColor(controller.activeNodeId(), QStringLiteral("#112233")), QStringLiteral("#B8C2CC"));
+}
+
+void ApplicationControllerTest::uncolouredPartsCarryNoColourAndContainersShowTheirGeometry()
+{
+    // The inspector swatch and the viewport must resolve a part's colour the same way. An
+    // uncoloured part used to arrive painted with a teal placeholder while the swatch fell
+    // back on its own, and a subassembly's swatch showed a colour none of its parts had.
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-uncoloured.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QVERIFY(meshSpy.count() > 0);
+    for (const auto& arguments : meshSpy) QVERIFY(arguments.at(2).toString().isEmpty());
+
+    const auto document = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object();
+    const auto geometry = document.value(QStringLiteral("geometry")).toArray();
+    QVERIFY(geometry.size() >= 2);
+    QString rootId;
+    for (const auto& value : document.value(QStringLiteral("nodes")).toArray()) {
+        if (value.toObject().value(QStringLiteral("kind")).toInt() == static_cast<int>(loupe::domain::NodeKind::Root))
+            rootId = value.toObject().value(QStringLiteral("id")).toString();
+    }
+    QVERIFY(!rootId.isEmpty());
+
+    const auto partId = geometry.first().toObject().value(QStringLiteral("nodeId")).toString();
+    controller.setActiveNodeId(partId);
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QString{});
+    controller.setActiveNodeId(rootId);
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QString{});
+
+    controller.setActiveNodeId(partId);
+    QVERIFY(controller.setActiveAppearanceColor(QStringLiteral("#FF0055"), QStringLiteral("occurrence")));
+    controller.setActiveNodeId(rootId);
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#FF0055"));
 }
 
 void ApplicationControllerTest::reopensSourceWithPersistedAppearanceOverrides()
