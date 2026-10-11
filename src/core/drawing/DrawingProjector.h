@@ -85,6 +85,11 @@ struct ProjectionStatistics final {
     int exactCubics{};
     int tessellatedCurves{};
     int coarseFallbackEdges{};
+    // Circles seen exactly edge-on, which OCCT hands over as its coarse polyline fallback
+    // but which are exact straight lines and are emitted as such.
+    int edgeOnCircles{};
+    // Ellipses (obliquely viewed circles) emitted as a chain of tolerance-checked arcs.
+    int arcFittedCurves{};
     int duplicatesRemoved{};
     int closedContours{};
     int openContours{};
@@ -98,8 +103,14 @@ struct ProjectionResult final {
     // than left for the caller to infer from the warning list, because every consumer -- the
     // preview, the row message, the file -- has to disclose it.
     bool approximate{};
-    // The direction actually projected from. Equal to the request's unless approximate.
+    // The direction actually projected from. Equal to the request's unless approximate or
+    // snapped.
     gp_Dir viewDirectionUsed{0.0, 0.0, 1.0};
+    // The requested direction was within a milliradian of a planar face's normal or a
+    // cylinder or cone axis and was moved onto it. Exact, not approximate: a view picked
+    // from the display mesh carries its float error, and the face's own normal is the view
+    // that was asked for.
+    bool snappedToGeometry{};
 };
 
 class ProjectionError : public std::runtime_error {

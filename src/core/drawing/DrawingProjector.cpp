@@ -1,5 +1,6 @@
 #include "core/drawing/DrawingProjector.h"
 
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BndLib_Add2dCurve.hxx>
 #include <Bnd_Box2d.hxx>
@@ -43,6 +44,7 @@
 #include <gp_Ax3.hxx>
 #include <gp_Vec2d.hxx>
 #include <gp_Circ2d.hxx>
+#include <gp_Elips2d.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 
@@ -203,6 +205,91 @@ void appendPolylineFromPoles(const occ::handle<Geom2d_BSplineCurve>& spline, std
     }
 }
 
+// Approximate a smooth curve with a chain of circular arcs, each checked against the curve
+// within the tolerance. Used for ellipses -- a circle seen obliquely -- which DXF R12 cannot
+// encode: tessellating one at 0.01 mm takes hundreds of segments, while a dozen arcs hold
+// the same tolerance and stay arcs in every format. Each arc runs through its span's two
+// ends, so the chain is continuous. Returns false, emitting nothing, if the curve will not
+// fit within the depth budget.
+[[nodiscard]] bool appendArcFitted(const Geom2dAdaptor_Curve& adaptor, const double first, const double last,
+                                   const double tolerance, std::vector<Primitive>& out)
+{
+    constexpr int maximumDepth = 9;
+    constexpr int checkSamples = 8;
+    std::vector<Primitive> fitted;
+    const auto fit = [&](const auto& self, const double low, const double high, const int depth) -> bool {
+        const gp_Pnt2d start = adaptor.Value(low);
+        const gp_Pnt2d middle = adaptor.Value(0.5 * (low + high));
+        const gp_Pnt2d end = adaptor.Value(high);
+        if (const auto circle = circleThrough(start, middle, end)) {
+            const auto& [centre, radius] = *circle;
+            bool within = std::isfinite(radius);
+            for (int index = 1; within && index < checkSamples; ++index) {
+                const double parameter = low + (high - low) * index / checkSamples;
+                within = std::abs(adaptor.Value(parameter).Distance(centre) - radius) <= tolerance;
+            }
+            if (within && radius < start.Distance(end) * 1000.0) {
+                fitted.push_back(arcThrough(centre, radius, start, middle, end, false));
+                return true;
+            }
+        }
+        if (depth >= maximumDepth) return false;
+        const double split = 0.5 * (low + high);
+        return self(self, low, split, depth + 1) && self(self, split, high, depth + 1);
+    };
+    // Start from quarters so a closed ellipse never asks one arc to span its whole period.
+    constexpr int initialSpans = 4;
+    for (int span = 0; span < initialSpans; ++span) {
+        const double low = first + (last - first) * span / initialSpans;
+        const double high = first + (last - first) * (span + 1) / initialSpans;
+        if (!fit(fit, low, high, 0)) return false;
+    }
+    out.insert(out.end(), fitted.begin(), fitted.end());
+    return true;
+}
+
+// OCCT's hidden-line edge builder gives up on a circle seen exactly edge-on and emits its
+// 15-point polyline fallback (HLRBRep_Curve classifies it GeomAbs_OtherCurve). The points
+// are exact, and collinear: the circle really does project to a straight line, traversed
+// out and back for a full circle. Fourteen overlapping segments would double the cut path,
+// so keep only the turning points. Returns false when the poles are not collinear.
+[[nodiscard]] bool appendCollinearPolyline(const occ::handle<Geom2d_BSplineCurve>& spline, const double tolerance,
+                                           std::vector<Primitive>& out)
+{
+    const int count = spline->NbPoles();
+    const gp_Pnt2d origin = spline->Pole(1);
+    int farthest = 1;
+    for (int index = 2; index <= count; ++index) {
+        if (spline->Pole(index).Distance(origin) > spline->Pole(farthest).Distance(origin)) farthest = index;
+    }
+    const double length = spline->Pole(farthest).Distance(origin);
+    if (length <= Precision::Confusion()) return false;
+    const gp_Vec2d direction(origin, spline->Pole(farthest));
+    const gp_Vec2d unit = direction / length;
+    std::vector<double> stations;
+    stations.reserve(static_cast<std::size_t>(count));
+    for (int index = 1; index <= count; ++index) {
+        const gp_Vec2d offset(origin, spline->Pole(index));
+        if (std::abs(unit.Crossed(offset)) > tolerance) return false;
+        stations.push_back(unit.Dot(offset));
+    }
+    std::vector<double> turning{stations.front()};
+    for (std::size_t index = 1; index + 1 < stations.size(); ++index) {
+        const double before = stations[index] - turning.back();
+        const double after = stations[index + 1] - stations[index];
+        if (before * after < 0.0) turning.push_back(stations[index]);
+    }
+    turning.push_back(stations.back());
+    const auto at = [&](const double station) {
+        return gp_Pnt2d(origin.X() + unit.X() * station, origin.Y() + unit.Y() * station);
+    };
+    for (std::size_t index = 0; index + 1 < turning.size(); ++index) {
+        if (std::abs(turning[index + 1] - turning[index]) > Precision::Confusion())
+            out.push_back(Segment{at(turning[index]), at(turning[index + 1])});
+    }
+    return true;
+}
+
 void appendBSpline(const Geom2dAdaptor_Curve& adaptor, const double first, const double last,
                    const ProjectionRequest& request, ProjectionStatistics& statistics,
                    std::vector<Primitive>& out)
@@ -218,9 +305,16 @@ void appendBSpline(const Geom2dAdaptor_Curve& adaptor, const double first, const
     // tolerance control. The geometry is still emitted exactly as given, but the
     // drawing must say it was coarsened -- silent degradation on a cut path is
     // precisely what the requirements forbid.
-    if (source->Degree() == 1 && source->NbPoles() == 15) ++statistics.coarseFallbackEdges;
-
+    const bool coarseFallback = source->Degree() == 1 && source->NbPoles() == 15;
     const auto spline = trimmedCopy(source, first, last);
+    if (coarseFallback) {
+        // An edge-on circle is exactly a straight line, so it is not a coarsened curve.
+        if (appendCollinearPolyline(spline, std::max(request.deflectionMm * 0.5, Precision::Confusion()), out)) {
+            ++statistics.edgeOnCircles;
+            return;
+        }
+        ++statistics.coarseFallbackEdges;
+    }
     if (spline->Degree() == 1) {
         appendPolylineFromPoles(spline, out);
         return;
@@ -263,6 +357,48 @@ void appendPrimitives(const occ::handle<Geom2d_Curve>& curve, const double first
                                  adaptor.Value(0.5 * (first + last)), adaptor.Value(last), fullCircle));
         ++statistics.analyticCircles;
         return;
+    }
+    case GeomAbs_Ellipse: {
+        // A circle whose axis is a hair off the view comes back as an ellipse with two
+        // practically equal radii -- HLR only calls it a circle when the axes are parallel
+        // to 1e-12 rad. Within the drawing tolerance that IS the circle, so draw it as one.
+        const gp_Elips2d ellipse = adaptor.Ellipse();
+        if (ellipse.MajorRadius() - ellipse.MinorRadius() <= request.deflectionMm) {
+            const bool fullCircle = (last - first) >= twoPi - 1.0e-9;
+            out.push_back(arcThrough(ellipse.Location(), 0.5 * (ellipse.MajorRadius() + ellipse.MinorRadius()),
+                                     adaptor.Value(first), adaptor.Value(0.5 * (first + last)), adaptor.Value(last),
+                                     fullCircle));
+            ++statistics.recoveredArcs;
+            return;
+        }
+        // The other limit: a circle a hair off edge-on is an ellipse thinner than the
+        // tolerance, which is a straight line along its major axis. Its turning points are
+        // where the parameter passes 0 or pi, so emit the runs between those.
+        if (ellipse.MinorRadius() <= request.deflectionMm * 0.5) {
+            const gp_Pnt2d centre = ellipse.Location();
+            const gp_Dir2d axis = ellipse.XAxis().Direction();
+            const auto onAxis = [&](const double parameter) {
+                const double station = ellipse.MajorRadius() * std::cos(parameter);
+                return gp_Pnt2d(centre.X() + axis.X() * station, centre.Y() + axis.Y() * station);
+            };
+            std::vector<double> turns{first};
+            for (double turn = std::ceil(first / std::numbers::pi) * std::numbers::pi; turn < last; turn += std::numbers::pi)
+                if (turn > first + Precision::PConfusion()) turns.push_back(turn);
+            turns.push_back(last);
+            for (std::size_t index = 0; index + 1 < turns.size(); ++index) {
+                const gp_Pnt2d from = onAxis(turns[index]);
+                const gp_Pnt2d to = onAxis(turns[index + 1]);
+                if (from.Distance(to) > Precision::Confusion()) out.push_back(Segment{from, to});
+            }
+            ++statistics.edgeOnCircles;
+            return;
+        }
+        // A genuinely oblique circle: arcs within tolerance rather than hundreds of segments.
+        if (appendArcFitted(adaptor, first, last, request.deflectionMm * 0.5, out)) {
+            ++statistics.arcFittedCurves;
+            return;
+        }
+        break;
     }
     case GeomAbs_BezierCurve: {
         const auto source = adaptor.Bezier();
@@ -842,6 +978,45 @@ constexpr double kDegenerateTiltRadians = 0.001;
     return count;
 }
 
+// A view picked by clicking a face arrives as the area-weighted normal of the display mesh:
+// float triangles, so a few micro-radians off the face's true normal. That is invisible,
+// and ruinous -- HLR only keeps a circle a circle when its axis is parallel to the view to
+// 1e-12 rad, so every hole on the face came back as an ellipse and was drawn as a polygon
+// (on the sample assembly, 174 circles became 0 and 638 segments became 6870). "Normal to
+// this face" means the face's analytic normal, so snap to it, or to a cylinder or cone axis
+// for a view down a hole. Only directions already this close are moved, which changes the
+// drawing by less than 5e-7 of its size -- toward the exact view, not away from it.
+constexpr double kViewSnapRadians = 1.0e-3;
+
+[[nodiscard]] std::optional<gp_Dir> snappedViewDirection(const TopoDS_Shape& shape, const gp_Dir& requested)
+{
+    // An exact principal axis -- every standard view -- is already exact, and must stay the
+    // named view even when some face of the part is tilted a fraction off it.
+    const auto isAxis = [](const double value) { return std::abs(std::abs(value) - 1.0) < 1.0e-15; };
+    if (isAxis(requested.X()) || isAxis(requested.Y()) || isAxis(requested.Z())) return std::nullopt;
+
+    std::optional<gp_Dir> best;
+    double bestAngle = kViewSnapRadians;
+    const auto consider = [&](const gp_Dir& candidate) {
+        const gp_Dir oriented = candidate.Dot(requested) < 0.0 ? candidate.Reversed() : candidate;
+        const double angle = oriented.Angle(requested);
+        if (angle > 0.0 && angle < bestAngle) {
+            bestAngle = angle;
+            best = oriented;
+        }
+    };
+    for (TopExp_Explorer explorer(shape, TopAbs_FACE); explorer.More(); explorer.Next()) {
+        const BRepAdaptor_Surface surface(TopoDS::Face(explorer.Current()), false);
+        switch (surface.GetType()) {
+        case GeomAbs_Plane: consider(surface.Plane().Axis().Direction()); break;
+        case GeomAbs_Cylinder: consider(surface.Cylinder().Axis().Direction()); break;
+        case GeomAbs_Cone: consider(surface.Cone().Axis().Direction()); break;
+        default: break;
+        }
+    }
+    return best;
+}
+
 [[nodiscard]] HiddenLineOutput runHiddenLineRemoval(const TopoDS_Shape& shape, const ProjectionRequest& request)
 {
     const auto plane = BRepLib::Plane();
@@ -942,6 +1117,11 @@ ProjectionResult project(const ProjectionRequest& request)
     // it is disclosed rather than silent, which is the only reason it is acceptable in a
     // feature whose promise is exact 1:1.
     auto effectiveRequest = request;
+    bool snapped = false;
+    if (const auto exact = snappedViewDirection(shape, request.viewDirection)) {
+        effectiveRequest.viewDirection = *exact;
+        snapped = true;
+    }
     auto hiddenLine = runHiddenLineRemoval(shape, effectiveRequest);
     bool approximate = false;
     const auto edgeCount = [](const HiddenLineOutput& output) {
@@ -950,7 +1130,7 @@ ProjectionResult project(const ProjectionRequest& request)
     if (edgeCount(hiddenLine) == 0 && countFaces(shape) > 0) {
         // Tilted towards the up direction, so the perturbation is deterministic and the
         // foreshortening falls on one known axis rather than an arbitrary one.
-        const gp_Vec tilted = gp_Vec(request.viewDirection) + gp_Vec(request.upDirection) * kDegenerateTiltRadians;
+        const gp_Vec tilted = gp_Vec(effectiveRequest.viewDirection) + gp_Vec(request.upDirection) * kDegenerateTiltRadians;
         effectiveRequest.viewDirection = gp_Dir(tilted);
         hiddenLine = runHiddenLineRemoval(shape, effectiveRequest);
         approximate = true;
@@ -967,6 +1147,7 @@ ProjectionResult project(const ProjectionRequest& request)
     ProjectionResult result;
     result.approximate = approximate;
     result.viewDirectionUsed = effectiveRequest.viewDirection;
+    result.snappedToGeometry = snapped;
     auto& statistics = result.statistics;
 
     // The footprint oracle is only built for the silhouette mode, since meshing
