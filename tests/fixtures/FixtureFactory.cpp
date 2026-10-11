@@ -10,6 +10,7 @@
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Shape.hxx>
 #include <XCAFApp_Application.hxx>
+#include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <BRep_Builder.hxx>
@@ -69,12 +70,22 @@ std::filesystem::path writeRepeatedBoxAssembly(const std::filesystem::path& file
 
 std::filesystem::path writeTwoDefinitionAssembly(const std::filesystem::path& file)
 {
+    return writeTwoDefinitionAssembly(file, std::nullopt);
+}
+
+std::filesystem::path writeTwoDefinitionAssembly(const std::filesystem::path& file, const std::optional<Quantity_Color>& bothPartsColor)
+{
     const auto document = makeDocument(FixtureUnit::Millimeter);
     const auto shapes = XCAFDoc_DocumentTool::ShapeTool(document->Main());
     const TopoDS_Shape box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
     const TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(3.0, 17.0).Shape();
-    shapes->AddShape(box, false);
-    shapes->AddShape(cylinder, false);
+    const auto boxLabel = shapes->AddShape(box, false);
+    const auto cylinderLabel = shapes->AddShape(cylinder, false);
+    if (bothPartsColor) {
+        const auto colors = XCAFDoc_DocumentTool::ColorTool(document->Main());
+        colors->SetColor(boxLabel, *bothPartsColor, XCAFDoc_ColorGen);
+        colors->SetColor(cylinderLabel, *bothPartsColor, XCAFDoc_ColorGen);
+    }
     BRep_Builder builder;
     TopoDS_Compound assembly;
     builder.MakeCompound(assembly);

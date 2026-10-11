@@ -83,11 +83,29 @@ ApplicationWindow {
     Component.onCompleted: {
         appTheme.mode = themePreference.mode
         windowChrome.applyAppearance(root, appTheme.dark)
+        controller.partColorMode = themePreference.partColorMode
+        controller.recolorFileColors = themePreference.recolorFileColors
+        controller.partColorSeed = themePreference.partColorSeed
     }
     Connections {
         target: root.themePreference
         function onModeChanged() { appTheme.mode = root.themePreference.mode }
     }
+    // The controller owns part colours for the session; the preference remembers them.
+    Connections {
+        target: root.controller
+        function onPartColorsChanged() {
+            root.themePreference.partColorMode = root.controller.partColorMode
+            root.themePreference.recolorFileColors = root.controller.recolorFileColors
+            root.themePreference.partColorSeed = root.controller.partColorSeed
+        }
+    }
+    readonly property var partColorModes: [
+        { value: "file", label: qsTr("File Colours") },
+        { value: "shades", label: qsTr("Auto: Cool Shades") },
+        { value: "warm", label: qsTr("Auto: Warm Shades") },
+        { value: "muted", label: qsTr("Auto: Muted") }
+    ]
 
     menuBar: Inspect.ThemedMenuBar {
         theme: appTheme
@@ -166,6 +184,36 @@ ApplicationWindow {
                     checkable: true
                     checked: root.themePreference.mode === "Dark"
                     onTriggered: { appTheme.mode = "Dark"; root.themePreference.mode = "Dark" }
+                }
+            }
+            Inspect.ThemedMenu {
+                theme: appTheme
+                title: qsTr("Part Colours")
+                Repeater {
+                    model: root.partColorModes
+                    delegate: Inspect.ThemedMenuItem {
+                        required property var modelData
+                        theme: appTheme
+                        text: modelData.label
+                        checkable: true
+                        checked: root.controller.partColorMode === modelData.value
+                        onTriggered: root.controller.partColorMode = modelData.value
+                    }
+                }
+                Inspect.ThemedMenuSeparator { theme: appTheme }
+                Inspect.ThemedMenuItem {
+                    theme: appTheme
+                    text: qsTr("Shuffle Colours")
+                    enabled: root.controller.partColorMode !== "file"
+                    onTriggered: root.controller.shufflePartColors()
+                }
+                Inspect.ThemedMenuItem {
+                    theme: appTheme
+                    text: qsTr("Recolour Parts With File Colours")
+                    checkable: true
+                    enabled: root.controller.partColorMode !== "file"
+                    checked: root.controller.recolorFileColors
+                    onTriggered: root.controller.recolorFileColors = checked
                 }
             }
             Inspect.ThemedMenuSeparator { theme: appTheme }

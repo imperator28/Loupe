@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QHash>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -79,6 +80,18 @@ class ApplicationController : public QObject {
     // call model +Z "Front" and model +Y "Top" -- harmless while orbiting, but
     // wrong for a named view that drives a 1:1 drawing.
     Q_PROPERTY(QString upAxis READ upAxis NOTIFY upAxisChanged)
+    // Automatic per-part colours: "file" keeps the file's colours (and the neutral body for
+    // uncoloured parts); "shades", "warm" and "muted" give each part definition its own
+    // low-contrast colour wherever the file's colours say nothing. Display only -- nothing
+    // here reaches an exported file. Persisted by the QML layer, not here, so a controller
+    // in a test always starts from "file".
+    Q_PROPERTY(QString partColorMode READ partColorMode WRITE setPartColorMode NOTIFY partColorsChanged)
+    // Also recolour parts the file does colour.
+    Q_PROPERTY(bool recolorFileColors READ recolorFileColors WRITE setRecolorFileColors NOTIFY partColorsChanged)
+    Q_PROPERTY(int partColorSeed READ partColorSeed WRITE setPartColorSeed NOTIFY partColorsChanged)
+    // The file colours every part, and all in one colour -- a CAD default, not a choice.
+    // Such colours are treated as absent, which is the common case auto colour is for.
+    Q_PROPERTY(bool fileColorsUniform READ fileColorsUniform NOTIFY partColorsChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -125,6 +138,13 @@ public:
     [[nodiscard]] bool previewReady() const noexcept { return previewGeometryReceived_; }
     [[nodiscard]] const QString& effectiveUnit() const noexcept { return effectiveUnit_; }
     [[nodiscard]] const QString& upAxis() const noexcept { return upAxis_; }
+    [[nodiscard]] const QString& partColorMode() const noexcept { return partColorMode_; }
+    void setPartColorMode(const QString& mode);
+    [[nodiscard]] bool recolorFileColors() const noexcept { return recolorFileColors_; }
+    void setRecolorFileColors(bool recolor);
+    [[nodiscard]] int partColorSeed() const noexcept { return static_cast<int>(partColorSeed_); }
+    void setPartColorSeed(int seed);
+    [[nodiscard]] bool fileColorsUniform() const noexcept { return fileColorsUniform_; }
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -159,6 +179,8 @@ public:
     Q_INVOKABLE bool setActiveAppearanceColor(const QString& color, const QString& scope);
     Q_INVOKABLE bool clearActiveAppearanceColor(const QString& scope);
     Q_INVOKABLE QString resolvedAppearanceColor(const QString& nodeId, const QString& sourceColor) const;
+    // A new arrangement of the same palette.
+    Q_INVOKABLE void shufflePartColors();
     Q_INVOKABLE bool setUnitOverride(const QString& unit);
     // Unlike a unit override this must NOT reimport: it only renames views.
     Q_INVOKABLE bool setUpAxis(const QString& axis);
@@ -194,6 +216,7 @@ signals:
     void importProgressChanged();
     void effectiveUnitChanged();
     void upAxisChanged();
+    void partColorsChanged();
     void meshReady(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson);
     void edgeReady(const QString& nodeId, const QByteArray& edgeJson);
     // approximate is carried through rather than dropped, so the preview can say when it
@@ -219,6 +242,10 @@ private:
     void appendCachedEdges(const QString& nodeId, const QByteArray& payload);
     void replayCachedGeometry(const QByteArray& archive);
     void replayGeometryChunk();
+    void noteImportedColor(const QString& nodeId, const QString& color);
+    void rebuildPartColorOrder();
+    [[nodiscard]] QString autoPartColor(const QString& nodeId) const;
+    void partColorsUpdated();
     void saveGeometryCache();
 
     struct ComponentGeometry final { double surfaceAreaMm2{}; double volumeMm3{}; QVector3D boundsMm; double longestEdgeMm{}; double circularRadiusMm{}; int planarFaceCount{}; };
@@ -288,6 +315,18 @@ private:
     QHash<QString, QString> materialByNode_;
     QHash<QString, QString> appearanceByNode_;
     QHash<QString, QString> importedColorByNode_;
+    QString partColorMode_{QStringLiteral("file")};
+    bool recolorFileColors_{false};
+    std::uint32_t partColorSeed_{};
+    // Distinct face colours the file has given, and whether any face had none: together
+    // they decide fileColorsUniform_ without rescanning every part per arriving mesh.
+    QSet<QString> importedFaceColors_;
+    bool importedUncolouredFace_{false};
+    bool fileColorsUniform_{false};
+    // Part definitions in tree order, then each one's position in the palette walk.
+    QStringList partColorKeys_;
+    QHash<QString, int> partColorPositionByKey_;
+    mutable QHash<QString, QString> autoPartColorByKey_;
     QHash<QString, QString> displayNameByNode_;
     QHash<QString, cache::AppearanceOverride> persistedAppearanceByKey_;
     tools::MeasurementController measurementController_{this};

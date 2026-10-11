@@ -2,6 +2,7 @@
 #include "app/cache/CacheKey.h"
 #include "app/cache/CacheStore.h"
 #include "app/cache/SourceFingerprint.h"
+#include "app/render/PartPalette.h"
 #include "core/domain/AssemblyTypes.h"
 #include "core/inspection/MaterialProperties.h"
 
@@ -45,6 +46,11 @@ const auto kMeshProfile = QStringLiteral("progressive-1");
 // -4: an uncoloured face carries no colour instead of a teal placeholder.
 const auto kGeometryCacheProfile = QStringLiteral("progressive-4-uncoloured-faces");
 constexpr auto kGeometryCacheMagic = "LGC1";
+
+[[nodiscard]] std::optional<loupe::app::render::PartPaletteStyle> partPaletteStyle(const QString& mode)
+{
+    return loupe::app::render::partPaletteStyleFromName(mode);
+}
 constexpr auto kWorkerConnectionAttempts = 4'800;
 
 QString defaultWorkerExecutable()
@@ -154,6 +160,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             previewGeometryReceived_ = true;
             emit importProgressChanged();
         }
+        noteImportedColor(nodeId, sourceColor);
         if (!sourceColor.isEmpty() && importedColorByNode_.value(nodeId) != sourceColor) {
             importedColorByNode_.insert(nodeId, sourceColor);
             if (isNodeSelected(nodeId)) emit componentPropertiesChanged();
@@ -499,6 +506,12 @@ void ApplicationController::openFile(const QUrl& file)
     materialByNode_.clear();
     appearanceByNode_.clear();
     importedColorByNode_.clear();
+    importedFaceColors_.clear();
+    importedUncolouredFace_ = false;
+    fileColorsUniform_ = false;
+    partColorKeys_.clear();
+    partColorPositionByKey_.clear();
+    autoPartColorByKey_.clear();
     displayNameByNode_.clear();
     persistedAppearanceByKey_.clear();
     modelExtentMm_ = 0.0;
@@ -796,6 +809,7 @@ void ApplicationController::replayGeometryChunk()
         auto entry = std::move(geometryReplayQueue_[geometryReplayIndex_++]);
         if (entry.kind == 1) {
             previewGeometryReceived_ = true;
+            noteImportedColor(entry.nodeId, entry.sourceColor);
             if (!entry.sourceColor.isEmpty()) importedColorByNode_.insert(entry.nodeId, entry.sourceColor);
             // A replay re-sends what the viewports were already given, so it keeps the
             // revision; only geometry that arrived from the cache alone gets a new one.
@@ -845,9 +859,11 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
     definitionByNode_.clear();
     displayNameByNode_.clear();
     double modelExtent = 0.0;
+    QStringList geometryInTreeOrder;
     for (const auto& value : document.object().value(QStringLiteral("geometry")).toArray()) {
         const auto object = value.toObject();
         const auto nodeId = object.value(QStringLiteral("nodeId")).toString();
+        if (!nodeId.isEmpty()) geometryInTreeOrder.append(nodeId);
         const auto bounds = object.value(QStringLiteral("boundsMm")).toObject();
         if (!nodeId.isEmpty()) geometryByNode_.insert(nodeId, {object.value(QStringLiteral("surfaceAreaMm2")).toDouble(), object.value(QStringLiteral("volumeMm3")).toDouble(),
                                                                  QVector3D{static_cast<float>(bounds.value(QStringLiteral("width")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("height")).toDouble()), static_cast<float>(bounds.value(QStringLiteral("depth")).toDouble())},
@@ -941,6 +957,18 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
         });
     }
     assemblyTreeModel_.replaceSnapshot(treeNodes);
+    // One palette slot per part definition, so every instance of a repeated part shares a
+    // colour, taken in tree order so neighbouring parts sit far apart in the palette walk.
+    partColorKeys_.clear();
+    QSet<QString> seenPartColorKeys;
+    for (const auto& nodeId : geometryInTreeOrder) {
+        const auto key = definitionByNode_.value(nodeId, nodeId);
+        if (!seenPartColorKeys.contains(key)) {
+            seenPartColorKeys.insert(key);
+            partColorKeys_.append(key);
+        }
+    }
+    rebuildPartColorOrder();
     loadAppearanceOverrides();
     applyActiveGeometryToMeasurement();
 }
@@ -1205,9 +1233,91 @@ QString ApplicationController::resolvedAppearanceColor(const QString& nodeId, co
     if (const auto material = materialByNode_.value(nodeId); !material.isEmpty()) {
         if (const auto color = materialLibrary_.colorFor(material); !color.isEmpty()) return color;
     }
+    // A file colour stands unless the user asked to recolour them all, or the file gave every
+    // part the same one -- a CAD default, which tells parts apart no better than none.
+    if (partPaletteStyle(partColorMode_)) {
+        const bool fileColorCounts = !sourceColor.isEmpty() && !recolorFileColors_ && !fileColorsUniform_;
+        if (!fileColorCounts) {
+            if (const auto color = autoPartColor(nodeId); !color.isEmpty()) return color;
+        }
+    }
     // Empty when nothing colours the part: the caller draws its theme's neutral body colour,
     // the same one in the viewport and in the inspector swatch.
     return sourceColor;
+}
+
+void ApplicationController::setPartColorMode(const QString& mode)
+{
+    const auto normalized = partPaletteStyle(mode) ? mode : QStringLiteral("file");
+    if (partColorMode_ == normalized) return;
+    partColorMode_ = normalized;
+    partColorsUpdated();
+}
+
+void ApplicationController::setRecolorFileColors(const bool recolor)
+{
+    if (recolorFileColors_ == recolor) return;
+    recolorFileColors_ = recolor;
+    partColorsUpdated();
+}
+
+void ApplicationController::setPartColorSeed(const int seed)
+{
+    const auto value = static_cast<std::uint32_t>(seed);
+    if (partColorSeed_ == value) return;
+    partColorSeed_ = value;
+    rebuildPartColorOrder();
+    partColorsUpdated();
+}
+
+void ApplicationController::shufflePartColors()
+{
+    // Never back to 0, which is the unshuffled tree order.
+    auto next = partColorSeed_ * 1664525U + 1013904223U;
+    if (next == 0) next = 1;
+    setPartColorSeed(static_cast<int>(next));
+}
+
+void ApplicationController::noteImportedColor(const QString& nodeId, const QString& color)
+{
+    static_cast<void>(nodeId);
+    if (color.isEmpty()) importedUncolouredFace_ = true;
+    else importedFaceColors_.insert(color);
+    // Two or more parts, every face coloured, one colour throughout.
+    const bool uniform = geometryByNode_.size() >= 2 && !importedUncolouredFace_ && importedFaceColors_.size() == 1;
+    if (uniform == fileColorsUniform_) return;
+    fileColorsUniform_ = uniform;
+    emit partColorsChanged();
+    if (partPaletteStyle(partColorMode_) && !recolorFileColors_) emit componentPropertiesChanged();
+}
+
+void ApplicationController::rebuildPartColorOrder()
+{
+    partColorPositionByKey_.clear();
+    autoPartColorByKey_.clear();
+    const auto ordered = render::partPaletteOrder(partColorKeys_, partColorSeed_);
+    for (int position = 0; position < ordered.size(); ++position) partColorPositionByKey_.insert(ordered.at(position), position);
+}
+
+QString ApplicationController::autoPartColor(const QString& nodeId) const
+{
+    const auto style = partPaletteStyle(partColorMode_);
+    if (!style) return {};
+    const auto key = definitionByNode_.value(nodeId, nodeId);
+    if (const auto cached = autoPartColorByKey_.constFind(key); cached != autoPartColorByKey_.cend()) return *cached;
+    // A part the snapshot did not list (it should not happen) still gets a stable slot.
+    const auto position = partColorPositionByKey_.value(key, static_cast<int>(qHash(key) % 4093U + static_cast<std::size_t>(partColorKeys_.size())));
+    const auto color = render::partPaletteColor(*style, position, partColorSeed_).name(QColor::HexRgb).toUpper();
+    autoPartColorByKey_.insert(key, color);
+    return color;
+}
+
+void ApplicationController::partColorsUpdated()
+{
+    autoPartColorByKey_.clear();
+    emit partColorsChanged();
+    // Every viewport re-resolves its models' colours, once.
+    emit componentPropertiesChanged();
 }
 
 bool ApplicationController::setUnitOverride(const QString& unit)
