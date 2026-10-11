@@ -47,6 +47,8 @@ qt_add_executable(loupe-app
     render/DefinitionInstances.h
     render/SceneModel.cpp
     render/SceneModel.h
+    render/PartPalette.cpp
+    render/PartPalette.h
 )
 
 set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")

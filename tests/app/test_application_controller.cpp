@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QColor>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -42,6 +43,8 @@ private slots:
     void appearanceOverridesMaterialAndSourceColor();
     void reopensSourceWithPersistedAppearanceOverrides();
     void uncolouredPartsCarryNoColourAndContainersShowTheirGeometry();
+    void autoPartColoursGiveEachDefinitionItsOwnColour();
+    void autoPartColoursTreatOneSharedFileColourAsNone();
 };
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
@@ -395,6 +398,72 @@ void ApplicationControllerTest::uncolouredPartsCarryNoColourAndContainersShowThe
     QVERIFY(controller.setActiveAppearanceColor(QStringLiteral("#FF0055"), QStringLiteral("occurrence")));
     controller.setActiveNodeId(rootId);
     QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#FF0055"));
+}
+
+namespace {
+
+QStringList geometryNodeIds(const loupe::app::ApplicationController& controller)
+{
+    QStringList nodeIds;
+    for (const auto& value : QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray())
+        nodeIds.append(value.toObject().value(QStringLiteral("nodeId")).toString());
+    return nodeIds;
+}
+
+} // namespace
+
+void ApplicationControllerTest::autoPartColoursGiveEachDefinitionItsOwnColour()
+{
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-auto-colour.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+
+    // A fresh controller keeps the file's colours; these parts have none.
+    QCOMPARE(controller.partColorMode(), QStringLiteral("file"));
+    QCOMPARE(controller.resolvedAppearanceColor(parts.at(0), {}), QString{});
+
+    QSignalSpy appearanceSpy(&controller, &loupe::app::ApplicationController::componentPropertiesChanged);
+    controller.setPartColorMode(QStringLiteral("shades"));
+    QCOMPARE(appearanceSpy.count(), 1);
+    const auto first = controller.resolvedAppearanceColor(parts.at(0), {});
+    const auto second = controller.resolvedAppearanceColor(parts.at(1), {});
+    QVERIFY(QColor(first).isValid() && QColor(second).isValid());
+    QVERIFY(first != second);
+
+    // A user's own colour and a material still win over an automatic one.
+    controller.setActiveNodeId(parts.at(0));
+    QVERIFY(controller.setActiveAppearanceColor(QStringLiteral("#FF0055"), QStringLiteral("occurrence")));
+    QCOMPARE(controller.resolvedAppearanceColor(parts.at(0), {}), QStringLiteral("#FF0055"));
+
+    controller.shufflePartColors();
+    QVERIFY(controller.resolvedAppearanceColor(parts.at(1), {}) != second);
+    controller.setPartColorMode(QStringLiteral("unknown"));
+    QCOMPARE(controller.partColorMode(), QStringLiteral("file"));
+    QCOMPARE(controller.resolvedAppearanceColor(parts.at(1), {}), QString{});
+}
+
+void ApplicationControllerTest::autoPartColoursTreatOneSharedFileColourAsNone()
+{
+    // The supplied sample gives all twelve parts SolidWorks' default #CAD1EE. A colour every
+    // part shares tells them apart no better than none, so auto colour must still apply.
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-uniform-colour.step").toStdString(),
+                                                                  Quantity_Color(0.792, 0.820, 0.933, Quantity_TOC_sRGB));
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    QVERIFY(controller.fileColorsUniform());
+    const auto fileColor = QStringLiteral("#CAD1EE");
+    QCOMPARE(controller.resolvedAppearanceColor(parts.at(0), fileColor), fileColor);
+
+    controller.setPartColorMode(QStringLiteral("muted"));
+    const auto first = controller.resolvedAppearanceColor(parts.at(0), fileColor);
+    const auto second = controller.resolvedAppearanceColor(parts.at(1), fileColor);
+    QVERIFY(first != fileColor && second != fileColor && first != second);
 }
 
 void ApplicationControllerTest::reopensSourceWithPersistedAppearanceOverrides()

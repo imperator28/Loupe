@@ -142,6 +142,61 @@ ElevatedPanel {
                 onClicked: controller.clearActiveAppearanceColor(assignmentScope.currentValue)
             }
         }
+
+        // Document-level: shown when nothing is selected, where this panel otherwise only
+        // carries its title.
+        ColumnLayout {
+            objectName: "partColorControls"
+            visible: controller && controller.selectedNodeCount === 0
+                     && controller.documentState === AppState.TreeReady
+            Layout.fillWidth: true
+            spacing: root.theme.spacing2
+            Label { text: qsTr("Part colours"); color: root.foreground }
+            RowLayout {
+                Layout.fillWidth: true
+                ThemedComboBox {
+                    id: partColorMode
+                    objectName: "partColorMode"
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    textRole: "text"
+                    valueRole: "value"
+                    model: [{ text: qsTr("File colours"), value: "file" },
+                            { text: qsTr("Auto · cool shades"), value: "shades" },
+                            { text: qsTr("Auto · warm shades"), value: "warm" },
+                            { text: qsTr("Auto · muted"), value: "muted" }]
+                    currentIndex: Math.max(0, indexOfValue(controller ? controller.partColorMode : "file"))
+                    onActivated: if (controller) controller.partColorMode = currentValue
+                }
+                ThemedButton {
+                    theme: root.theme
+                    text: qsTr("Shuffle")
+                    enabled: controller && controller.partColorMode !== "file"
+                    onClicked: controller.shufflePartColors()
+                    ThemedToolTip {
+                        theme: root.theme
+                        text: qsTr("Rearrange which part gets which colour")
+                        visible: parent.hovered
+                    }
+                }
+            }
+            ThemedCheckBox {
+                theme: root.theme
+                text: qsTr("Recolour parts with file colours")
+                visible: controller && controller.partColorMode !== "file"
+                checked: controller ? controller.recolorFileColors : false
+                onClicked: if (controller) controller.recolorFileColors = checked
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                visible: controller && controller.fileColorsUniform
+                text: controller && controller.partColorMode !== "file"
+                      ? qsTr("This file gives every part the same colour, so automatic colours apply to all of them.")
+                      : qsTr("This file gives every part the same colour. An automatic palette tells them apart.")
+                color: root.subduedForeground
+            }
+        }
         Item { Layout.fillHeight: true }
     }
 

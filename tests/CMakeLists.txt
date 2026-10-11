@@ -92,6 +92,8 @@ add_executable(loupe-application-controller-tests
     app/test_application_controller.cpp
     fixtures/FixtureFactory.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
@@ -193,6 +195,8 @@ add_test(NAME worker-client COMMAND loupe-worker-client-tests)
 add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
@@ -351,6 +355,20 @@ loupe_enable_warnings(loupe-scene-model-tests)
 add_test(NAME scene-model COMMAND loupe-scene-model-tests)
 set_tests_properties(scene-model PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-part-palette-tests
+    app/test_part_palette.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
+)
+target_link_libraries(loupe-part-palette-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_include_directories(loupe-part-palette-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-part-palette-tests)
+add_test(NAME part-palette COMMAND loupe-part-palette-tests)
+set_tests_properties(part-palette PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
