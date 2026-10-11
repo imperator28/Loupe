@@ -480,10 +480,15 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 if (server) server->send(event);
             }, Qt::QueuedConnection);
         };
-        auto finish = [server, requestId, job] {
+        // finalEvent goes out only after the job is released. "Ready" used to be posted from
+        // the import thread before finish() was queued, so a client acting on it at once could
+        // be answered "busy" -- a request is still active -- whenever that thread was
+        // descheduled between the two.
+        auto finish = [server, requestId, job](std::optional<QJsonObject> finalEvent = std::nullopt) {
             if (!server) return;
-            QMetaObject::invokeMethod(server, [server, requestId, job] {
+            QMetaObject::invokeMethod(server, [server, requestId, job, finalEvent = std::move(finalEvent)] {
                 if (server && server->activeSessions_.value(requestId) == job) server->activeSessions_.remove(requestId);
+                if (server && finalEvent) server->send(*finalEvent);
             }, Qt::QueuedConnection);
         };
         auto retain = [server, requestId, job](const std::shared_ptr<DocumentSession>& session) {
@@ -611,7 +616,11 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                           {QStringLiteral("previewTriangleCount"), previewTriangleCount},
                           {QStringLiteral("refinedTriangleCount"), refinedTriangleCount},
                           {QStringLiteral("bodyCount"), static_cast<int>(shapeCount)}});
-                    progress(QStringLiteral("Ready"), 1.0);
+                    finish(QJsonObject{{QStringLiteral("type"), QStringLiteral("progress")},
+                                       {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                                       {QStringLiteral("stage"), QStringLiteral("Ready")},
+                                       {QStringLiteral("fraction"), 1.0}});
+                    return;
                 }
             } catch (const std::exception&) {
                 if (!job->canceled.load()) post({{QStringLiteral("type"), QStringLiteral("failed")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
