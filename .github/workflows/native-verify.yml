@@ -147,9 +147,16 @@ jobs:
         # the whole job budget.
         run: |
           ctest --preset "${{ matrix.configure_preset }}" --output-on-failure --timeout 600 || {
+            # Keep the failing run's QML log; the re-run below would overwrite it.
+            cp "build/${{ matrix.configure_preset }}/tests/qml-smoke.log" qml-smoke-first-run.log 2>/dev/null || true
             ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose --timeout 600
             exit 1
           }
+
+      - name: Show QML smoke log
+        if: failure()
+        shell: bash
+        run: cat qml-smoke-first-run.log || echo "qml-smoke did not fail, or wrote no log"
 
       - name: Package release app (macOS)
         if: runner.os == 'macOS'

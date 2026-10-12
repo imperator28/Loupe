@@ -336,14 +336,18 @@ void QmlSmokeTest::viewportDrawsAFacingFaceInItsPickedColour()
         QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, sphere.nodeId),
                                           Q_ARG(QString, sphere.segmentKey), Q_ARG(QString, picked),
                                           Q_ARG(QByteArray, payload)));
-        QTest::qWait(400);
-        const auto image = window.grabWindow();
-        const auto rendered = image.pixelColor(image.width() / 2, image.height() / 2);
+        // Polled rather than read after a fixed wait: a slow runner may not have drawn the new
+        // colour yet, and a fixed wait made this fail intermittently on Windows CI.
         const QColor expected(picked);
-        const auto difference = std::max({std::abs(rendered.red() - expected.red()),
-                                          std::abs(rendered.green() - expected.green()),
-                                          std::abs(rendered.blue() - expected.blue())});
-        QVERIFY2(difference <= 8, qPrintable(QStringLiteral("%1 rendered as %2").arg(picked, rendered.name())));
+        QColor rendered;
+        const auto difference = [&] {
+            const auto image = window.grabWindow();
+            rendered = image.pixelColor(image.width() / 2, image.height() / 2);
+            return std::max({std::abs(rendered.red() - expected.red()), std::abs(rendered.green() - expected.green()),
+                             std::abs(rendered.blue() - expected.blue())});
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(difference() <= 8, 5000);
+        QVERIFY2(difference() <= 8, qPrintable(QStringLiteral("%1 rendered as %2").arg(picked, rendered.name())));
     }
 }
 

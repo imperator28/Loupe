@@ -286,7 +286,10 @@ else()
     set(_loupe_smoke_qpa_platform "${_loupe_qpa_platform}")
 endif()
 
-add_test(NAME qml-smoke COMMAND loupe-qml-smoke-tests)
+# Also logged to a file: on Windows CI the test's console output has not reached the job
+# log, so an intermittent failure there showed nothing at all. The release workflows print
+# this file when the Test step fails.
+add_test(NAME qml-smoke COMMAND loupe-qml-smoke-tests -o qml-smoke.log,txt -o -,txt)
 set_tests_properties(qml-smoke PROPERTIES
     TIMEOUT 180
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_smoke_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins;QML2_IMPORT_PATH=${_loupe_qt_runtime_root}/qml"
