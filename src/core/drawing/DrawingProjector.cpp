@@ -567,6 +567,18 @@ public:
     }
 
     [[nodiscard]] bool usable() const noexcept { return !triangles_.empty(); }
+    // The projected footprint's extent. It is what the silhouette must reach: the outline
+    // of a part touches its extreme points in every direction.
+    [[nodiscard]] Bounds2d bounds() const
+    {
+        Bounds2d extent;
+        for (const auto& triangle : triangles_) {
+            extent.add(triangle.a);
+            extent.add(triangle.b);
+            extent.add(triangle.c);
+        }
+        return extent;
+    }
 
     [[nodiscard]] bool contains(const gp_Pnt2d& point) const
     {
@@ -604,21 +616,21 @@ private:
 // classify a region, never to produce geometry.
 // ---------------------------------------------------------------------------
 
-// A point guaranteed to lie inside a planar face, taken from its own triangulation.
-// An area centroid is not safe here: a split region can be L-shaped or annular, and
-// its centroid can fall outside it or inside a hole.
-[[nodiscard]] std::optional<gp_Pnt2d> interiorPointOf(const TopoDS_Face& face)
+// Points guaranteed to lie inside a planar face, taken from its own triangulation: the
+// centroids of its largest triangles, so each sits as far from an edge as the mesh allows.
+// An area centroid is not safe here: a split region can be L-shaped or annular, and its
+// centroid can fall outside it or inside a hole.
+[[nodiscard]] std::vector<gp_Pnt2d> interiorPointsOf(const TopoDS_Face& face, const std::size_t count)
 {
     BRepMesh_IncrementalMesh mesher(face, 0.5, false, 0.5, false);
     static_cast<void>(mesher.IsDone());
     TopLoc_Location location;
     const auto triangulation = BRep_Tool::Triangulation(face, location);
-    if (triangulation.IsNull() || triangulation->NbTriangles() < 1) return std::nullopt;
+    if (triangulation.IsNull() || triangulation->NbTriangles() < 1) return {};
     const gp_Trsf transform = location.Transformation();
 
-    // Largest triangle, so the sample sits as far from an edge as the mesh allows.
-    double bestArea = -1.0;
-    gp_Pnt2d best;
+    std::vector<std::pair<double, gp_Pnt2d>> candidates;
+    candidates.reserve(static_cast<std::size_t>(triangulation->NbTriangles()));
     for (int index = 1; index <= triangulation->NbTriangles(); ++index) {
         int a = 0;
         int b = 0;
@@ -629,13 +641,16 @@ private:
         const gp_Pnt pc = triangulation->Node(c).Transformed(transform);
         const double area = std::abs((pb.X() - pa.X()) * (pc.Y() - pa.Y())
                                      - (pb.Y() - pa.Y()) * (pc.X() - pa.X())) * 0.5;
-        if (area > bestArea) {
-            bestArea = area;
-            best = gp_Pnt2d((pa.X() + pb.X() + pc.X()) / 3.0, (pa.Y() + pb.Y() + pc.Y()) / 3.0);
-        }
+        if (area <= 0.0) continue;
+        candidates.emplace_back(area, gp_Pnt2d((pa.X() + pb.X() + pc.X()) / 3.0, (pa.Y() + pb.Y() + pc.Y()) / 3.0));
     }
-    if (bestArea <= 0.0) return std::nullopt;
-    return best;
+    const auto keep = std::min(count, candidates.size());
+    std::partial_sort(candidates.begin(), candidates.begin() + static_cast<std::ptrdiff_t>(keep), candidates.end(),
+                      [](const auto& one, const auto& two) { return one.first > two.first; });
+    std::vector<gp_Pnt2d> points;
+    points.reserve(keep);
+    for (std::size_t index = 0; index < keep; ++index) points.push_back(candidates[index].second);
+    return points;
 }
 
 // Edges separating inside from outside, i.e. the silhouette. Returns empty when the
@@ -759,8 +774,22 @@ private:
     for (TopExp_Explorer faces(split, TopAbs_FACE); faces.More(); faces.Next()) {
         ++statistics.silhouetteRegions;
         const TopoDS_Face region = TopoDS::Face(faces.Current());
-        const auto sample = interiorPointOf(region);
-        if (!sample || !oracle.contains(*sample)) continue;
+        // The region that reaches the padded canvas rim is the outside, by construction --
+        // the pad guarantees no geometry there -- so it is never put to the mesh. A single
+        // unlucky sample used to classify it as inside, which inverted the whole boundary:
+        // the silhouette came back open, or as the canvas rectangle itself.
+        bool touchesRim = false;
+        for (TopExp_Explorer regionEdges(region, TopAbs_EDGE); regionEdges.More() && !touchesRim; regionEdges.Next())
+            touchesRim = isCanvasRimEdge(TopoDS::Edge(regionEdges.Current()));
+        if (touchesRim) continue;
+        // Every other region by majority over several samples rather than one. A thin or
+        // awkwardly shaped region's single largest triangle can sit close enough to its
+        // edge that the footprint mesh, built to the drawing tolerance, answers wrongly --
+        // and one wrong region leaves its whole boundary open.
+        const auto samples = interiorPointsOf(region, 5);
+        if (samples.empty()) continue;
+        const auto inside = std::ranges::count_if(samples, [&oracle](const gp_Pnt2d& point) { return oracle.contains(point); });
+        if (inside * 2 <= static_cast<std::ptrdiff_t>(samples.size())) continue;
         ++insideRegions;
         for (TopExp_Explorer regionEdges(region, TopAbs_EDGE); regionEdges.More(); regionEdges.Next()) {
             // An edge embedded inside a region rather than bounding it -- a fragment
@@ -1194,6 +1223,23 @@ ProjectionResult project(const ProjectionRequest& request)
             }
         }
         auto contours = stitchContours(edges, tolerance, request, statistics);
+        if (oracle && !contours.empty()) {
+            // Hidden-line removal occasionally fails to produce an outline curve at all -- a
+            // side-on torus loses both arcs at one end -- and then no classification can
+            // recover the silhouette: it comes out closed but short of the part. A closed,
+            // wrong cut path is worse than an open one, so compare against the footprint and
+            // say so. The mesh sits inside curved surfaces by up to the deflection, hence
+            // the margin.
+            Bounds2d outline;
+            for (const auto& contour : contours) outline.add(contourBounds(contour));
+            const auto footprint = oracle->bounds();
+            const double margin = std::max(0.05, request.deflectionMm * 10.0);
+            if (outline.valid && footprint.valid
+                && (std::abs(outline.minX - footprint.minX) > margin || std::abs(outline.maxX - footprint.maxX) > margin
+                    || std::abs(outline.minY - footprint.minY) > margin || std::abs(outline.maxY - footprint.maxY) > margin)) {
+                result.drawing.warnings.push_back({std::string(warningCode::silhouetteIncomplete), 1});
+            }
+        }
         if (!contours.empty()) {
             result.drawing.layers.push_back(
                 Layer{defaultLayerName(LayerRole::Cut), LayerRole::Cut, std::move(contours)});

@@ -403,6 +403,8 @@ Inspect.ElevatedPanel {
                                        .arg(warning.count))
                     else if (warning.code === "silhouette_unavailable")
                         lines.push(qsTr("The outline could not be isolated for this view."))
+                    else if (warning.code === "silhouette_incomplete")
+                        lines.push(qsTr("The outline falls short of the part's full extent: some edges could not be projected. Check before cutting, or try another view."))
                     else if (warning.code === "coarse_curve_fallback")
                         lines.push(qsTr("%1 curve(s) fell back to a coarser approximation.").arg(warning.count))
                     else if (warning.code === "open_contour")
