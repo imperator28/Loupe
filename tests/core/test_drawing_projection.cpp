@@ -1,10 +1,12 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/drawing/DrawingPreview.h"
 #include "core/drawing/DrawingProjector.h"
 
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
 #include <gp_Trsf.hxx>
@@ -16,6 +18,8 @@
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
 #include <TopoDS_Compound.hxx>
+
+#include <nlohmann/json.hpp>
 
 #include <array>
 #include <vector>
@@ -445,4 +449,41 @@ TEST_CASE("a hole seen exactly edge-on is a straight line, not OCCT's coarse pol
 
     REQUIRE(result.statistics.coarseFallbackEdges == 0);
     REQUIRE(result.drawing.warningCount(loupe::drawing::warningCode::coarseCurveFallback) == 0);
+}
+
+TEST_CASE("a hole stored as one closed spline is still drawn as a circle", "[drawing-projection]")
+{
+    // ECAD part libraries routinely write a whole hole as a single closed NURBS curve. Arc
+    // recovery fitted a circle through the curve's start, middle and end -- and on a closed
+    // curve the start and end are one point, so it never fitted, and every hole was
+    // tessellated into segments.
+    const TopoDS_Shape splines = BRepBuilderAPI_NurbsConvert(drilledPlate(), true).Shape();
+    const auto result = loupe::drawing::project(requestFor(splines, gp_Dir(0.0, 0.0, 1.0)));
+
+    REQUIRE(result.statistics.tessellatedCurves == 0);
+    REQUIRE(result.statistics.recoveredArcs > 0);
+    const auto counts = countByType(result.drawing);
+    REQUIRE(counts.segments == 4);
+    REQUIRE(std::ranges::any_of(counts.arcList, [](const Arc& arc) {
+        return std::abs(arc.radius - 5.0) < 1.0e-6 && arc.isFullCircle();
+    }));
+}
+
+TEST_CASE("the preview draws a small hole round, not as a polygon", "[drawing-projection][preview]")
+{
+    // The preview zooms to fit the part, so a fixed 0.05 mm chord tolerance drew a 0.9 mm
+    // hole on a 5 mm connector as an octagon -- making a true arc look faceted.
+    const TopoDS_Shape plate = BRepPrimAPI_MakeBox(5.0, 5.0, 2.0).Shape();
+    const TopoDS_Shape drill =
+        BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(2.5, 2.5, -1.0), gp_Dir(0.0, 0.0, 1.0)), 0.45, 4.0).Shape();
+    const auto result = loupe::drawing::project(requestFor(BRepAlgoAPI_Cut(plate, drill).Shape(), gp_Dir(0.0, 0.0, 1.0)));
+    const auto preview = nlohmann::json::parse(loupe::drawing::encodePreview(result));
+
+    int roundest = 0;
+    for (const auto& layer : preview.at("layers")) {
+        for (const auto& contour : layer.at("contours")) {
+            roundest = std::max(roundest, static_cast<int>(contour.at("points").size() / 2));
+        }
+    }
+    REQUIRE(roundest >= 64);
 }

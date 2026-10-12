@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -11,8 +12,12 @@ namespace loupe::drawing {
 namespace {
 
 // Chord tolerance for flattening. The preview is on a screen, so this is a pixel-level
-// question rather than a cutting one; 0.05 mm is well below what any zoom level resolves.
+// question rather than a cutting one -- but the view zooms to fit the part, so an absolute
+// tolerance alone is not enough: on a 5 mm connector 0.05 mm let a 0.9 mm hole draw as an
+// octagon, and the true arc in the file looked like a faceted one. Every arc also gets at
+// least one step per kMaximumArcStepRadians, which keeps any circle round at any size.
 constexpr double kPreviewDeflectionMm = 0.05;
+constexpr double kMaximumArcStepRadians = 2.0 * std::numbers::pi / 96.0;
 constexpr int kMinimumArcSteps = 4;
 constexpr int kMaximumArcSteps = 720;
 constexpr int kCubicSteps = 16;
@@ -28,7 +33,7 @@ void appendPoint(QJsonArray& points, const gp_Pnt2d& point)
     if (!(arc.radius > 0.0)) return kMinimumArcSteps;
     // Steps needed for the chord to stay within tolerance of the true arc.
     const auto ratio = std::clamp(1.0 - kPreviewDeflectionMm / arc.radius, -1.0, 1.0);
-    const auto stepAngle = 2.0 * std::acos(ratio);
+    const auto stepAngle = std::min(2.0 * std::acos(ratio), kMaximumArcStepRadians);
     if (!(stepAngle > 0.0)) return kMaximumArcSteps;
     const auto steps = static_cast<int>(std::ceil(std::abs(arc.sweepAngle) / stepAngle));
     return std::clamp(steps, kMinimumArcSteps, kMaximumArcSteps);
