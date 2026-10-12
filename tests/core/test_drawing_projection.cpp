@@ -14,6 +14,7 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
@@ -486,4 +487,32 @@ TEST_CASE("the preview draws a small hole round, not as a polygon", "[drawing-pr
         }
     }
     REQUIRE(roundest >= 64);
+}
+
+TEST_CASE("a silhouette is never closed around the canvas, and says when it falls short", "[drawing-projection][silhouette]")
+{
+    // Each split region was classified by one interior sample, and the region reaching the
+    // canvas rim could read as inside -- which inverted the boundary and left it open (or
+    // made it the canvas rectangle). That region is now outside by construction.
+    //
+    // A side-on torus is also the case where OCCT's hidden-line removal drops the outline
+    // arcs at one end, so no silhouette can be correct: it must not pass for one.
+    const TopoDS_Shape torus = BRepPrimAPI_MakeTorus(10.0, 3.0).Shape();
+    auto request = requestFor(torus, gp_Dir(0.0, 1.0, 0.0));
+    request.mode = ContentMode::OuterContourOnly;
+    const auto result = loupe::drawing::project(request);
+
+    REQUIRE(result.statistics.openContours == 0);
+    REQUIRE(result.drawing.warningCount(loupe::drawing::warningCode::silhouetteIncomplete) == 1);
+}
+
+TEST_CASE("a complete silhouette carries no incompleteness warning", "[drawing-projection][silhouette]")
+{
+    for (const auto& direction : {gp_Dir(0.0, 0.0, 1.0), gp_Dir(1.0, 0.0, 0.0), gp_Dir(0.0, 1.0, 0.0)}) {
+        auto request = requestFor(drilledPlate(), direction);
+        request.mode = ContentMode::OuterContourOnly;
+        const auto result = loupe::drawing::project(request);
+        REQUIRE(result.statistics.openContours == 0);
+        REQUIRE(result.drawing.warningCount(loupe::drawing::warningCode::silhouetteIncomplete) == 0);
+    }
 }
