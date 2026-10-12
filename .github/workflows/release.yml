@@ -197,35 +197,38 @@ jobs:
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        # See native-verify.yml for the staging rationale.
         run: |
-          EXE=$(find "build/${{ matrix.configure_preset }}" -maxdepth 3 \( -name Loupe.exe -o -name loupe-app.exe \) -not -path "*CMakeFiles*" | head -1)
-          test -n "$EXE"
-          mkdir -p dist/loupe-windows-x64
-          cp "$EXE" dist/loupe-windows-x64/Loupe.exe
-          cp "$(dirname "$EXE")"/*.dll dist/loupe-windows-x64/ 2>/dev/null || true
-          # The app launches loupe-worker.exe as a subprocess for all STEP
-          # import/geometry work; it sits beside the main exe in the build
-          # output but the *.dll glob above never picks it up, so every
-          # release before this fix shipped without it.
-          cp "$(dirname "$EXE")/loupe-worker.exe" dist/loupe-windows-x64/
-          VCPKG_INSTALLED="build/${{ matrix.configure_preset }}/vcpkg_installed/${{ matrix.vcpkg_triplet }}"
-          WINDEPLOY=$(find "$VCPKG_INSTALLED/tools" -name windeployqt.exe 2>/dev/null | head -1)
-          if [[ -n "$WINDEPLOY" ]]; then
-            "$WINDEPLOY" --release --qmldir src/app/qml dist/loupe-windows-x64/Loupe.exe
-          else
-            echo "windeployqt not found; staging Qt runtime wholesale"
-            cp -r "$VCPKG_INSTALLED/Qt6/plugins" dist/loupe-windows-x64/
-            cp -r "$VCPKG_INSTALLED/Qt6/qml" dist/loupe-windows-x64/
-            cp "$VCPKG_INSTALLED/bin"/*.dll dist/loupe-windows-x64/
-            # Qt only auto-discovers a "platforms" folder that is a direct
-            # sibling of the exe; staged wholesale it is one level deeper, at
-            # ./plugins/platforms, so without this qt.conf every packaged exe
-            # fails at launch with "Could not find the Qt platform plugin
-            # windows in ''" -- confirmed by inspecting the v0.1.0 asset itself.
-            printf '[Paths]\nPrefix = .\nPlugins = plugins\nQml2Imports = qml\n' > dist/loupe-windows-x64/qt.conf
-          fi
+          scripts/package/stage-windows.sh "${{ matrix.configure_preset }}" "${{ matrix.vcpkg_triplet }}" dist/loupe-windows-x64
           cd dist && 7z a "../loupe-${PACKAGE_LABEL//\//-}-windows-x64.zip" loupe-windows-x64
+
+      - name: Launch the packaged app (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # Started from the staged folder with only system directories on PATH and no Qt
+        # environment, exactly as on a tester's machine: CI tests otherwise point Qt at vcpkg's
+        # own plugins, which is how a package that could not start was never caught.
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:QT_PLUGIN_PATH, Env:QML2_IMPORT_PATH, Env:QT_QPA_PLATFORM, Env:QT_QPA_PLATFORM_PLUGIN_PATH -ErrorAction SilentlyContinue
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          $app = Start-Process -FilePath "dist/loupe-windows-x64/Loupe.exe" -ArgumentList "--self-check" -PassThru -NoNewWindow -RedirectStandardError self-check.log
+          $null = $app.Handle
+          if (-not $app.WaitForExit(120000)) {
+            Stop-Process -Id $app.Id -Force
+            Get-Content self-check.log -ErrorAction SilentlyContinue
+            throw "Loupe.exe did not finish its self-check within two minutes"
+          }
+          $app.WaitForExit()
+          Get-Content self-check.log -ErrorAction SilentlyContinue
+          if ($app.ExitCode -ne 0) { throw "Packaged Loupe.exe failed its self-check (exit code $($app.ExitCode))" }
+
+      - name: Launch the packaged app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # The bundle as a tester runs it, with no Qt environment pointing at the build tree.
+        run: |
+          env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QT_QPA_PLATFORM QT_FORCE_STDERR_LOGGING=1 \
+            perl -e 'alarm 120; exec @ARGV' "dist/loupe-macos-arm64/Loupe.app/Contents/MacOS/Loupe" --self-check
 
       - name: Upload packaged app
         uses: actions/upload-artifact@v4

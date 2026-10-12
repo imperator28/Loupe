@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.4-beta.3
+
+Beta 2 with the Windows package fixed: it failed to start with "no Qt platform
+plugin could be initialized". Qt's plugin folders now sit directly beside
+`Loupe.exe`, where Qt finds them with no configuration, and every build now
+launches the packaged app from its own folder -- with nothing from the build
+machine on its path -- before it is published, so a package that cannot start
+fails the build instead of reaching a tester. Everything in beta 2 below is
+unchanged.
+
+
 ## v0.1.4-beta.2
 
 Second testing build, from review of beta 1.
