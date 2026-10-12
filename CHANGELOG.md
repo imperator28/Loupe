@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.4-beta.2
+
+Second testing build, from review of beta 1.
+
+### New
+
+- **High-contrast part colours** (View → Part Colours → Auto: High Contrast):
+  saturated hues with alternating lightness, for when telling parts apart
+  matters more than calm.
+- **Semi-transparent parts** instead of hiding them: **T** (or the toolbar's
+  Transparent button, or right-click) toggles the selection; **Shift+T** makes
+  everything else transparent. Transparent parts let clicks through to the part
+  behind. Works in Inspect and in Export's master preview; Show All undoes it.
+- **The display mode follows you** between Inspect, Export and Drawing.
+
+### Fixes
+
+- **Holes still drew as polygons in drawings.** The 2D preview flattened arcs
+  to a fixed 0.05 mm chord, so on a small part a 0.9 mm hole showed as an
+  octagon although the drawing held a true arc. Separately, a hole stored as one
+  closed spline (as ECAD part libraries write them) was never recognised as a
+  circle and was exported as segments; it is now a true circle in every format.
+- **Open contours in Silhouette mode.** A misread outer region could leave the
+  outline open, and the result depended on memory layout -- the same part
+  could come out closed on one run and open on the next. Both fixed. Where the
+  projection engine fails to produce an outline curve at all, the preview now
+  says the silhouette falls short instead of passing a wrong outline.
+
+
 ## v0.1.4-beta.1
 
 A testing build of five fixes from the 0.1.3 review. Published as a pre-release:
