@@ -164,7 +164,8 @@ ElevatedPanel {
                     model: [{ text: qsTr("File colours"), value: "file" },
                             { text: qsTr("Auto · cool shades"), value: "shades" },
                             { text: qsTr("Auto · warm shades"), value: "warm" },
-                            { text: qsTr("Auto · muted"), value: "muted" }]
+                            { text: qsTr("Auto · muted"), value: "muted" },
+                            { text: qsTr("Auto · high contrast"), value: "vivid" }]
                     currentIndex: Math.max(0, indexOfValue(controller ? controller.partColorMode : "file"))
                     onActivated: if (controller) controller.partColorMode = currentValue
                 }

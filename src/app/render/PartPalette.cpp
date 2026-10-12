@@ -1,6 +1,7 @@
 #include "app/render/PartPalette.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <utility>
@@ -32,6 +33,8 @@ constexpr StyleBand bandFor(const PartPaletteStyle style)
     case PartPaletteStyle::CoolShades: return {0.60, 0.84, 0.035, 255.0, 16.0};
     case PartPaletteStyle::WarmShades: return {0.62, 0.86, 0.040, 75.0, 16.0};
     case PartPaletteStyle::Muted: return {0.68, 0.79, 0.060, 0.0, 360.0};
+    // Lightness is not walked for vivid; it alternates between the band's two ends.
+    case PartPaletteStyle::Vivid: return {0.60, 0.78, 0.150, 0.0, 360.0};
     }
     return {0.60, 0.84, 0.035, 255.0, 16.0};
 }
@@ -49,6 +52,31 @@ double linearToSrgb(const double value)
 double srgbToLinear(const double value)
 {
     return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
+}
+
+[[nodiscard]] std::array<double, 3> linearRgbFromOklab(const Oklab& lab)
+{
+    const auto l = std::pow(lab.l + 0.3963377774 * lab.a + 0.2158037573 * lab.b, 3.0);
+    const auto m = std::pow(lab.l - 0.1055613458 * lab.a - 0.0638541728 * lab.b, 3.0);
+    const auto s = std::pow(lab.l - 0.0894841775 * lab.a - 1.2914855480 * lab.b, 3.0);
+    return {4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+            -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+            -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s};
+}
+
+// Reduce chroma, keeping lightness and hue, until the colour fits in sRGB. Clamping the
+// channels instead would shift a saturated colour's hue -- two vivid parts meant to differ
+// could clip onto the same corner of the gamut.
+[[nodiscard]] Oklab inGamut(Oklab lab)
+{
+    const auto fits = [](const std::array<double, 3>& rgb) {
+        return std::ranges::all_of(rgb, [](const double value) { return value >= -1.0e-6 && value <= 1.0 + 1.0e-6; });
+    };
+    for (int step = 0; step < 64 && !fits(linearRgbFromOklab(lab)); ++step) {
+        lab.a *= 0.95;
+        lab.b *= 0.95;
+    }
+    return lab;
 }
 
 QColor fromOklab(const Oklab& lab)
@@ -94,6 +122,7 @@ std::optional<PartPaletteStyle> partPaletteStyleFromName(const QString& name)
     if (name == QStringLiteral("shades")) return PartPaletteStyle::CoolShades;
     if (name == QStringLiteral("warm")) return PartPaletteStyle::WarmShades;
     if (name == QStringLiteral("muted")) return PartPaletteStyle::Muted;
+    if (name == QStringLiteral("vivid")) return PartPaletteStyle::Vivid;
     return std::nullopt;
 }
 
@@ -107,12 +136,14 @@ QColor partPaletteColor(const PartPaletteStyle style, const int position, const 
     // A second, independent walk for hue. In the shades styles it only nudges the hue a
     // few degrees, which separates two parts that happen to land at similar lightness.
     const auto hueStep = fractional(phase * 0.5 + position * 0.7548776662466927);
-    const auto lightness = band.lightnessLow + lightnessStep * (band.lightnessHigh - band.lightnessLow);
+    const auto lightness = style == PartPaletteStyle::Vivid
+        ? (position % 2 == 0 ? band.lightnessHigh : band.lightnessLow)
+        : band.lightnessLow + lightnessStep * (band.lightnessHigh - band.lightnessLow);
     const auto hueDegrees = band.hueSpreadDegrees >= 360.0
         ? 360.0 * fractional(phase + position * kGoldenFraction)
         : band.hueDegrees + (hueStep - 0.5) * band.hueSpreadDegrees;
     const auto hue = hueDegrees * std::numbers::pi / 180.0;
-    return fromOklab({lightness, band.chroma * std::cos(hue), band.chroma * std::sin(hue)});
+    return fromOklab(inGamut({lightness, band.chroma * std::cos(hue), band.chroma * std::sin(hue)}));
 }
 
 QStringList partPaletteOrder(const QStringList& treeOrderedKeys, const std::uint32_t seed)
