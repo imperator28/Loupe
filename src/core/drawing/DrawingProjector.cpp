@@ -55,6 +55,7 @@
 #include <optional>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <utility>
 
 namespace loupe::drawing {
@@ -769,7 +770,12 @@ private:
 
     // Count, per edge, how many INSIDE regions it bounds. One means it separates
     // material from empty space, so it is on the silhouette; two means it is interior.
-    std::map<const void*, std::pair<TopoDS_Edge, int>> tally;
+    // In the order edges are first met, not keyed by address: a map ordered by pointer gave
+    // the stitcher its edges in an order that changed from run to run with the allocator,
+    // and the greedy wire builder then closed the same silhouette on one run and left it
+    // open on the next.
+    std::vector<std::pair<TopoDS_Edge, int>> tally;
+    std::unordered_map<const void*, std::size_t> tallyIndex;
     int insideRegions = 0;
     for (TopExp_Explorer faces(split, TopAbs_FACE); faces.More(); faces.Next()) {
         ++statistics.silhouetteRegions;
@@ -814,16 +820,19 @@ private:
             // 55.35 + 2 * pad is exactly 66.42.
             if (isCanvasRimEdge(edge)) continue;
             const void* key = edge.TShape().get();
-            auto found = tally.find(key);
-            if (found == tally.end()) tally.emplace(key, std::pair{edge, 1});
-            else ++found->second.second;
+            if (const auto found = tallyIndex.find(key); found != tallyIndex.end()) {
+                ++tally[found->second].second;
+            } else {
+                tallyIndex.emplace(key, tally.size());
+                tally.emplace_back(edge, 1);
+            }
         }
     }
     statistics.silhouetteInsideRegions = insideRegions;
     if (insideRegions == 0) return boundary;
 
-    for (const auto& [key, entry] : tally) {
-        if (entry.second == 1) boundary->Append(entry.first);
+    for (const auto& [edge, count] : tally) {
+        if (count == 1) boundary->Append(edge);
         else ++statistics.interiorEdgesRemoved;
     }
     return boundary;
