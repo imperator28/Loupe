@@ -92,6 +92,9 @@ class ApplicationController : public QObject {
     // The file colours every part, and all in one colour -- a CAD default, not a choice.
     // Such colours are treated as absent, which is the common case auto colour is for.
     Q_PROPERTY(bool fileColorsUniform READ fileColorsUniform NOTIFY partColorsChanged)
+    // Solid (0), Solid + Edges (1) or Edges Only (2), shared by every viewport so a mode
+    // chosen in one workspace is the mode in the next.
+    Q_PROPERTY(int renderMode READ renderMode WRITE setRenderMode NOTIFY renderModeChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
@@ -145,6 +148,8 @@ public:
     [[nodiscard]] int partColorSeed() const noexcept { return static_cast<int>(partColorSeed_); }
     void setPartColorSeed(int seed);
     [[nodiscard]] bool fileColorsUniform() const noexcept { return fileColorsUniform_; }
+    [[nodiscard]] int renderMode() const noexcept { return renderMode_; }
+    void setRenderMode(int mode);
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
@@ -217,6 +222,7 @@ signals:
     void effectiveUnitChanged();
     void upAxisChanged();
     void partColorsChanged();
+    void renderModeChanged();
     void meshReady(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson);
     void edgeReady(const QString& nodeId, const QByteArray& edgeJson);
     // approximate is carried through rather than dropped, so the preview can say when it
@@ -323,6 +329,7 @@ private:
     QSet<QString> importedFaceColors_;
     bool importedUncolouredFace_{false};
     bool fileColorsUniform_{false};
+    int renderMode_{};
     // Part definitions in tree order, then each one's position in the palette walk.
     QStringList partColorKeys_;
     QHash<QString, int> partColorPositionByKey_;

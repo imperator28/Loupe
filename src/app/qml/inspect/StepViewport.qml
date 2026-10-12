@@ -163,6 +163,9 @@ Item {
 
     onControllerChanged: {
         updateCaptureViewportSize()
+        // A viewport created later -- Export's or Drawing's on first entry -- starts in the
+        // mode already chosen elsewhere rather than in Solid.
+        if (controller) renderMode = controller.renderMode
     }
 
     Connections {
@@ -1785,7 +1788,16 @@ Item {
         function onComponentPropertiesChanged() { root.applyAppearance() }
         function onActiveNodeIdChanged() { root.applyRenderMode() }
     }
-    onRenderModeChanged: applyRenderMode()
+    onRenderModeChanged: {
+        applyRenderMode()
+        if (controller && controller.renderMode !== renderMode) controller.renderMode = renderMode
+    }
+    Connections {
+        target: root.controller
+        function onRenderModeChanged() {
+            if (root.renderMode !== root.controller.renderMode) root.renderMode = root.controller.renderMode
+        }
+    }
     onDisplayOnlyNodeIdChanged: {
         materializePending()
         applyRenderMode()

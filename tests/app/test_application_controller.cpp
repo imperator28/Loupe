@@ -32,6 +32,7 @@ private slots:
     void forwardsWorkerMeshToViewer();
     void replaysGeometryWithoutBlockingTheCaller();
     void fitViewNotifiesViewport();
+    void renderModeIsSharedAndClamped();
     void isolatesHidesAndRestoresTheActiveComponentForViewerPresentation();
     void openingDocumentResetsTransientInspectionState();
     void reopensUnchangedStepFromLocalSnapshotCache();
@@ -205,6 +206,20 @@ void ApplicationControllerTest::replaysGeometryWithoutBlockingTheCaller()
 
     QCOMPARE(meshSpy.count(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 3'000);
+}
+
+void ApplicationControllerTest::renderModeIsSharedAndClamped()
+{
+    // One mode for every viewport, so switching workspace keeps it.
+    loupe::app::ApplicationController controller;
+    QSignalSpy spy(&controller, &loupe::app::ApplicationController::renderModeChanged);
+    QCOMPARE(controller.renderMode(), 0);
+    controller.setRenderMode(1);
+    controller.setRenderMode(1);
+    QCOMPARE(controller.renderMode(), 1);
+    QCOMPARE(spy.count(), 1);
+    controller.setRenderMode(7);
+    QCOMPARE(controller.renderMode(), 2);
 }
 
 void ApplicationControllerTest::fitViewNotifiesViewport()
