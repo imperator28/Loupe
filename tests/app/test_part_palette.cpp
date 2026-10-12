@@ -16,12 +16,15 @@ private slots:
     void neighbouringPartsAreStillDistinguishable();
     void colorsAreReproducibleAndSeedsChangeThem();
     void shuffleReordersTheSamePartsReproducibly();
+    void vividSeparatesNeighboursStrongly();
 };
 
 namespace {
 
 constexpr int kSampleSize = 32;
 constexpr PartPaletteStyle kStyles[] = {PartPaletteStyle::CoolShades, PartPaletteStyle::WarmShades, PartPaletteStyle::Muted};
+constexpr PartPaletteStyle kAllStyles[] = {PartPaletteStyle::CoolShades, PartPaletteStyle::WarmShades, PartPaletteStyle::Muted,
+                                           PartPaletteStyle::Vivid};
 
 } // namespace
 
@@ -30,6 +33,7 @@ void PartPaletteTest::namesMapToStyles()
     QCOMPARE(loupe::app::render::partPaletteStyleFromName(QStringLiteral("shades")), PartPaletteStyle::CoolShades);
     QCOMPARE(loupe::app::render::partPaletteStyleFromName(QStringLiteral("warm")), PartPaletteStyle::WarmShades);
     QCOMPARE(loupe::app::render::partPaletteStyleFromName(QStringLiteral("muted")), PartPaletteStyle::Muted);
+    QCOMPARE(loupe::app::render::partPaletteStyleFromName(QStringLiteral("vivid")), PartPaletteStyle::Vivid);
     QVERIFY(!loupe::app::render::partPaletteStyleFromName(QStringLiteral("file")));
     QVERIFY(!loupe::app::render::partPaletteStyleFromName(QString{}));
 }
@@ -73,7 +77,7 @@ void PartPaletteTest::neighbouringPartsAreStillDistinguishable()
 
 void PartPaletteTest::colorsAreReproducibleAndSeedsChangeThem()
 {
-    for (const auto style : kStyles) {
+    for (const auto style : kAllStyles) {
         QCOMPARE(loupe::app::render::partPaletteColor(style, 7, 0), loupe::app::render::partPaletteColor(style, 7, 0));
         QCOMPARE(loupe::app::render::partPaletteColor(style, 7, 12345), loupe::app::render::partPaletteColor(style, 7, 12345));
         QVERIFY(loupe::app::render::partPaletteColor(style, 7, 0) != loupe::app::render::partPaletteColor(style, 7, 12345));
@@ -94,6 +98,23 @@ void PartPaletteTest::shuffleReordersTheSamePartsReproducibly()
     sortedShuffle.sort();
     sortedKeys.sort();
     QCOMPARE(sortedShuffle, sortedKeys);
+}
+
+void PartPaletteTest::vividSeparatesNeighboursStrongly()
+{
+    // The high-contrast style exists to make adjacent parts unmistakable, so its neighbours
+    // must sit well apart -- several times the low-contrast styles' floor -- and its colours
+    // must actually be saturated, not quietly gamut-clipped back toward grey.
+    double nearest = 1.0;
+    for (int position = 0; position + 1 < kSampleSize; ++position) {
+        nearest = std::min(nearest, loupe::app::render::oklabDistance(
+            loupe::app::render::partPaletteColor(PartPaletteStyle::Vivid, position, 0),
+            loupe::app::render::partPaletteColor(PartPaletteStyle::Vivid, position + 1, 0)));
+    }
+    QVERIFY2(nearest >= 0.15, qPrintable(QString::number(nearest)));
+    const auto grey = QColor(QStringLiteral("#9AA2B2"));
+    for (int position = 0; position < kSampleSize; ++position)
+        QVERIFY(loupe::app::render::oklabDistance(loupe::app::render::partPaletteColor(PartPaletteStyle::Vivid, position, 0), grey) > 0.08);
 }
 
 QTEST_GUILESS_MAIN(PartPaletteTest)

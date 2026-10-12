@@ -8,7 +8,7 @@ namespace {
 [[nodiscard]] bool isPartColorMode(const QString& mode)
 {
     return mode == QStringLiteral("file") || mode == QStringLiteral("shades") || mode == QStringLiteral("warm")
-        || mode == QStringLiteral("muted");
+        || mode == QStringLiteral("muted") || mode == QStringLiteral("vivid");
 }
 
 } // namespace

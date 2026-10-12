@@ -11,13 +11,14 @@ namespace loupe::app::render {
 
 // Automatic per-part colours for assemblies whose file gives the parts none (or gives
 // every part the same one). The point is to tell neighbouring parts apart, not to
-// decorate, so every style is deliberately low in contrast: colours are generated in
-// OKLCH, where a fixed lightness band and a small chroma stay visually even, instead of
-// stepping through hues at full saturation.
+// decorate, so the default styles are deliberately low in contrast: colours are generated
+// in OKLCH, where a fixed lightness band and a small chroma stay visually even. Vivid is
+// the exception, for when telling parts apart matters more than calm.
 enum class PartPaletteStyle {
     CoolShades, // one slate-blue hue, varying lightness
     WarmShades, // one sand hue, varying lightness
     Muted,      // soft hues around the wheel at an even, low chroma
+    Vivid,      // high contrast: saturated hues around the wheel, two lightness levels
 };
 
 [[nodiscard]] std::optional<PartPaletteStyle> partPaletteStyleFromName(const QString& name);

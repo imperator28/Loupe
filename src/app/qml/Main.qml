@@ -104,7 +104,8 @@ ApplicationWindow {
         { value: "file", label: qsTr("File Colours") },
         { value: "shades", label: qsTr("Auto: Cool Shades") },
         { value: "warm", label: qsTr("Auto: Warm Shades") },
-        { value: "muted", label: qsTr("Auto: Muted") }
+        { value: "muted", label: qsTr("Auto: Muted") },
+        { value: "vivid", label: qsTr("Auto: High Contrast") }
     ]
 
     menuBar: Inspect.ThemedMenuBar {
