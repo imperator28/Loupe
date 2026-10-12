@@ -4,6 +4,8 @@
 #include "app/render/MeshGeometry.h"
 #include "app/models/ThemePreference.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QPalette>
@@ -56,6 +58,22 @@ int main(int argc, char* argv[])
     engine.loadFromModule("Loupe.App", "Main");
     if (engine.rootObjects().isEmpty()) {
         return 1;
+    }
+    // --self-check: start exactly as a user's launch does -- real platform plugin, the whole
+    // QML UI -- then confirm the worker sits beside the executable, and exit. Release CI runs
+    // it on the packaged folder, so a package that cannot start (a missing Qt plugin, a
+    // missing worker) fails the build instead of reaching a tester. Getting this far already
+    // proves the platform plugin loaded: without one, Qt aborts in the constructor above.
+    if (QCoreApplication::arguments().contains(QStringLiteral("--self-check"))) {
+#ifdef Q_OS_WIN
+        const auto worker = QStringLiteral("loupe-worker.exe");
+#else
+        const auto worker = QStringLiteral("loupe-worker");
+#endif
+        const bool workerPresent = QFileInfo::exists(QDir(QCoreApplication::applicationDirPath()).filePath(worker));
+        qInfo("Loupe self-check: platform '%s', UI loaded, worker %s",
+              qPrintable(QGuiApplication::platformName()), workerPresent ? "present" : "MISSING");
+        return workerPresent ? 0 : 2;
     }
     return application.exec();
 }
