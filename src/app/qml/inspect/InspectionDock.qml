@@ -11,6 +11,7 @@ ElevatedPanel {
         { key: "fit", icon: "fit", label: qsTr("Fit") },
         { key: "isolate", icon: "isolate", label: qsTr("Isolate"), active: viewerPresentation === AppState.Isolate },
         { key: "hide", icon: "hide", label: qsTr("Hide") },
+        { key: "transparent", icon: "transparent", label: qsTr("Transparent") },
         { key: "section", icon: "section", label: qsTr("Section") },
         { key: "measure", icon: "measure", label: qsTr("Measure") },
         { key: "capture", icon: "capture", label: qsTr("Capture") }

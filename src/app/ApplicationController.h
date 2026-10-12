@@ -179,6 +179,11 @@ public:
     Q_INVOKABLE void restoreVisibility();
     Q_INVOKABLE void restoreFullAssembly();
     Q_INVOKABLE bool isNodeVisible(const QString& nodeId) const;
+    // Semi-transparent instead of hidden: toggles the selection, or makes everything but
+    // the selection transparent. Show All and Restore undo either.
+    Q_INVOKABLE void toggleTransparentSelection();
+    Q_INVOKABLE void makeOthersTransparent();
+    Q_INVOKABLE bool isNodeTransparent(const QString& nodeId) const;
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId, const QString& scope);
     Q_INVOKABLE bool setActiveAppearanceColor(const QString& color, const QString& scope);

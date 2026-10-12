@@ -4,7 +4,7 @@ void MAIN()
     if (clipEnabled && retainedSign * signedDistance < 0.0)
         discard;
 
-    BASE_COLOR = vec4(baseColor.rgb, baseColor.a);
+    BASE_COLOR = vec4(baseColor.rgb, baseColor.a * ghostOpacity);
     EMISSIVE_COLOR = emissiveFactor;
     ROUGHNESS = roughnessValue;
     // A low F0 (about 0.005 rather than plastic's 0.04). With the key light riding on the

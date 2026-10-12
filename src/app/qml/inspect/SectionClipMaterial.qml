@@ -10,6 +10,11 @@ CustomMaterial {
     property vector3d sectionNormal: Qt.vector3d(0, 0, 1)
     property real sectionOffset: 0
     property real retainedSign: 1
+    // Below 1 the part is drawn see-through, for context. Blended only then, so an opaque
+    // part keeps the opaque pass and its depth write.
+    property real ghostOpacity: 1.0
+    sourceBlend: ghostOpacity < 1.0 ? CustomMaterial.SrcAlpha : CustomMaterial.NoBlend
+    destinationBlend: ghostOpacity < 1.0 ? CustomMaterial.OneMinusSrcAlpha : CustomMaterial.NoBlend
 
     shadingMode: CustomMaterial.Shaded
     fragmentShader: "shaders/section-clip.frag"

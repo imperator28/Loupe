@@ -145,6 +145,7 @@ Dialog {
                         GuideRow { input: qsTr("Shift + F"); action: qsTr("Fit selection") }
                         GuideRow { input: qsTr("I"); action: qsTr("Isolate selection") }
                         GuideRow { input: qsTr("H / Shift + H"); action: qsTr("Hide / Hide others") }
+                        GuideRow { input: qsTr("T / Shift + T"); action: qsTr("Make transparent / Make others transparent") }
                         GuideRow { input: qsTr("Ctrl/Cmd + Shift + H"); action: qsTr("Show all") }
                         GuideRow { input: qsTr("M / S"); action: qsTr("Measure / Section") }
                         GuideRow { input: qsTr("Esc"); action: qsTr("Cancel a section drag, restore visibility, or close a tool") }

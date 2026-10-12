@@ -23,7 +23,7 @@ Loupe is deliberately focused on the inspection controls engineers use repeatedl
 | Tool | Control level |
 | --- | --- |
 | **Open and review** | Open `.step` and `.stp` files from the picker or by dropping them onto the app. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
-| **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide, show all, and recolor a single occurrence or a shared definition. |
+| **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide or make semi-transparent, show all, and recolor a single occurrence or a shared definition. |
 | **Visual inspection** | Choose orthographic or perspective projection, use the view cube for canonical views, and switch among Solid, Solid + Edges, and Edges Only. Edges are generated from CAD topology rather than display triangles. |
 | **Part colours** | Keep the file's colours, or give every part an automatic low-contrast colour (cool shades, warm shades, or muted) with Shuffle -- useful when a file leaves parts uncoloured or gives them all one default colour. Display only. |
 | **Materials and mass** | Assign materials to an occurrence or definition, manage a persistent custom material library, and calculate mass for a body, subassembly, or multi-selection. Standard materials cover common consumer-electronics use cases including aluminum, zinc alloy, copper, PP, HDPE, PA, PMMA, PC, FR4 PCBA, silicone, and HNBR rubber. |
@@ -92,6 +92,7 @@ Useful shortcuts:
 | `F` / `Shift+F` | Fit assembly / fit selection |
 | `I` | Isolate or restore |
 | `H` / `Shift+H` | Hide selection / hide others |
+| `T` / `Shift+T` | Make selection transparent / make others transparent |
 | `Ctrl/Cmd+Shift+H` | Show all |
 | `M` | Open Measure |
 | `S` | Open Section |
