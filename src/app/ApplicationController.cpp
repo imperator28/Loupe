@@ -1271,6 +1271,14 @@ void ApplicationController::setPartColorSeed(const int seed)
     partColorsUpdated();
 }
 
+void ApplicationController::setRenderMode(const int mode)
+{
+    const auto clamped = std::clamp(mode, 0, 2);
+    if (renderMode_ == clamped) return;
+    renderMode_ = clamped;
+    emit renderModeChanged();
+}
+
 void ApplicationController::shufflePartColors()
 {
     // Never back to 0, which is the unshuffled tree order.
