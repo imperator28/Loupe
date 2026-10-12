@@ -123,16 +123,24 @@ using ShapeSequence = NCollection_HSequence<TopoDS_Shape>;
     const gp_Pnt2d middle = adaptor.Value(0.5 * (first + last));
     const gp_Pnt2d end = adaptor.Value(last);
 
-    const auto fitted = circleThrough(start, middle, end);
+    // Fit through the start and the points a third and two thirds along, not start, middle
+    // and end: a closed curve -- a whole hole stored as one spline, as ECAD part libraries
+    // routinely write them -- has its start and end on the same point, which left the
+    // circle undefined. Every such hole fell through to tessellation (on a four-hole
+    // connector, 100 segments and no arcs). These three never coincide on a real curve.
+    const auto fitted = circleThrough(start, adaptor.Value(first + (last - first) / 3.0),
+                                      adaptor.Value(first + 2.0 * (last - first) / 3.0));
     if (!fitted) return std::nullopt;
     const auto& [centre, radius] = *fitted;
     if (!std::isfinite(radius) || radius <= tolerance) return std::nullopt;
 
     // A nearly straight curve also "fits" a circle -- an enormous one -- and every
     // sample sits on it within tolerance. Recovering that as an arc gains nothing
-    // and risks a wildly wrong bulge, so treat it as not circular.
+    // and risks a wildly wrong bulge, so treat it as not circular. Measured against the
+    // span through the middle, since a closed curve has no chord between its ends.
     const double chord = start.Distance(end);
-    if (chord > 0.0 && radius > chord * 1000.0) return std::nullopt;
+    const double span = std::max(chord, start.Distance(middle));
+    if (span > 0.0 && radius > span * 1000.0) return std::nullopt;
 
     for (int index = 0; index <= arcRecoverySamples; ++index) {
         const double parameter = first + (last - first) * index / arcRecoverySamples;
