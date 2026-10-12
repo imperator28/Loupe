@@ -654,6 +654,28 @@ bool ApplicationController::isNodeVisible(const QString& nodeId) const
     return visibilityModel_.isVisible(nodeId);
 }
 
+void ApplicationController::toggleTransparentSelection()
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty()) return;
+    const bool allTransparent = std::ranges::all_of(selected, [this](const QString& nodeId) { return visibilityModel_.isGhosted(nodeId); });
+    visibilityModel_.setGhosted(selected, !allTransparent);
+}
+
+void ApplicationController::makeOthersTransparent()
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty()) return;
+    visibilityModel_.ghostComplements(selected);
+    viewerPresentation_ = ViewerPresentation::Ghost;
+    emit viewerPresentationChanged();
+}
+
+bool ApplicationController::isNodeTransparent(const QString& nodeId) const
+{
+    return visibilityModel_.isGhosted(nodeId);
+}
+
 void ApplicationController::connectWorker()
 {
     if (workerClient_.connectToServer(serverName_, 100)) {

@@ -446,8 +446,15 @@ Item {
                 && !sectionFinalizing
     }
 
+    // Transparent parts are context in the full-assembly views. A single-part preview
+    // (Export's standalone file, the Drawing view) shows its part as it is.
+    function nodeTransparent(nodeId) {
+        return !requireDisplayFilter && controller && controller.isNodeTransparent(nodeId)
+    }
+
     function applySolidState(model, sliceOnlyFinal) {
         const shown = nodeShown(model.nodeId)
+        model.transparent = nodeTransparent(model.nodeId)
         model.visible = renderMode !== 2 && !sliceOnlyFinal && shown
         // Picking follows the user's own hide, not the display mode. A ray
         // pick still reports a model that is merely not drawn, so leaving
@@ -457,7 +464,9 @@ Item {
         // `visible`: in Edges Only, and while a 2D slice is showing, the
         // solid is not drawn but its edges are, and those must stay
         // selectable.
-        model.pickable = shown
+        // A transparent part lets clicks through to what is behind it -- seeing past it to
+        // the part in focus is the point.
+        model.pickable = shown && !model.transparent
     }
 
     function applyEdgeState(edgeModel, section, sliceOnlyFinal) {
@@ -470,7 +479,7 @@ Item {
         const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
         const sectionPreview = section && section.enabled && section.interacting
         edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
-                && nodeShown(edgeModel.nodeId)
+                && nodeShown(edgeModel.nodeId) && !nodeTransparent(edgeModel.nodeId)
     }
 
     function applyRenderMode() {
@@ -979,6 +988,7 @@ Item {
                                         || root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId))
             property bool hovered: !selected && root.hoveredNodeId === nodeId
             property bool inspectionHovered: hovered && !root.measurementActive && root.componentHoverEnabled
+            property bool transparent: false
             pickable: true
             materials: [sectionMaterial]
             SectionClipMaterial {
@@ -994,6 +1004,7 @@ Item {
                 sectionNormal: root.effectiveSectionNormal
                 sectionOffset: root.controller ? root.controller.section.effectiveOffset : 0
                 retainedSign: root.controller && root.controller.section.flipped ? -1 : 1
+                ghostOpacity: modelItem.transparent ? 0.45 : 1.0
             }
         }
     }
@@ -1649,6 +1660,8 @@ Item {
         }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide others"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Restore"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
         ThemedMenuSeparator { theme: componentContextMenu.theme }
@@ -1667,6 +1680,8 @@ Item {
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Hide"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
     }
 
@@ -1742,6 +1757,8 @@ Item {
     Shortcut { sequence: "I"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.toggleIsolateActiveNode() }
     Shortcut { sequence: "H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.hideActiveNode() }
     Shortcut { sequence: "Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.hideOtherNodes() }
+    Shortcut { sequence: "T"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.toggleTransparentSelection() }
+    Shortcut { sequence: "Shift+T"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.makeOthersTransparent() }
     Shortcut { sequence: "Ctrl+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
     Shortcut { sequence: "Meta+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
     Shortcut { sequence: "M"; enabled: !root.presentationOnly; onActivated: root.toolRequested("measure") }

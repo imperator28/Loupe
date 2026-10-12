@@ -350,6 +350,7 @@ Item {
                     else if (tool === "isolate") {
                         root.controller.toggleIsolateActiveNode()
                     } else if (tool === "hide") root.controller.hideActiveNode()
+                    else if (tool === "transparent") root.controller.toggleTransparentSelection()
                     else if (tool === "section" || tool === "measure" || tool === "capture") root.showTask(tool)
                 }
             }
@@ -382,6 +383,8 @@ Item {
         }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide others"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make others transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Restore visibility"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
     }

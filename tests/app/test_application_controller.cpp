@@ -33,6 +33,7 @@ private slots:
     void replaysGeometryWithoutBlockingTheCaller();
     void fitViewNotifiesViewport();
     void renderModeIsSharedAndClamped();
+    void transparencyTogglesTheSelectionAndOthers();
     void isolatesHidesAndRestoresTheActiveComponentForViewerPresentation();
     void openingDocumentResetsTransientInspectionState();
     void reopensUnchangedStepFromLocalSnapshotCache();
@@ -220,6 +221,36 @@ void ApplicationControllerTest::renderModeIsSharedAndClamped()
     QCOMPARE(spy.count(), 1);
     controller.setRenderMode(7);
     QCOMPARE(controller.renderMode(), 2);
+}
+
+namespace {
+QStringList geometryNodeIds(const loupe::app::ApplicationController& controller);
+} // namespace
+
+void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
+{
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-transparent.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    QSignalSpy visibility(&controller, &loupe::app::ApplicationController::visibilityChanged);
+
+    controller.setActiveNodeId(parts.at(0));
+    controller.toggleTransparentSelection();
+    QVERIFY(controller.isNodeTransparent(parts.at(0)));
+    QVERIFY(!controller.isNodeTransparent(parts.at(1)));
+    QVERIFY(controller.isNodeVisible(parts.at(0)));
+    QVERIFY(visibility.count() > 0);
+    controller.toggleTransparentSelection();
+    QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+
+    controller.makeOthersTransparent();
+    QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+    QVERIFY(controller.isNodeTransparent(parts.at(1)));
+    controller.showAllNodes();
+    QVERIFY(!controller.isNodeTransparent(parts.at(1)));
 }
 
 void ApplicationControllerTest::fitViewNotifiesViewport()

@@ -1,5 +1,7 @@
 #include "app/models/VisibilityModel.h"
 
+#include <algorithm>
+
 namespace loupe::app::models {
 
 VisibilityModel::VisibilityModel(QObject* parent)
@@ -73,15 +75,36 @@ void VisibilityModel::isolate(const QStringList& nodeIds)
 
 void VisibilityModel::ghostComplements(const QString& nodeId)
 {
-    if (!current_.contains(nodeId)) {
-        return;
-    }
+    ghostComplements(QStringList{nodeId});
+}
+
+void VisibilityModel::ghostComplements(const QStringList& nodeIds)
+{
+    if (std::ranges::none_of(nodeIds, [this](const QString& nodeId) { return current_.contains(nodeId); })) return;
     previous_ = current_;
     for (auto it = current_.begin(); it != current_.end(); ++it) {
         it->visible = true;
-        it->ghosted = it.key() != nodeId;
+        it->ghosted = !nodeIds.contains(it.key());
     }
     emit presentationChanged();
+}
+
+void VisibilityModel::setGhosted(const QStringList& nodeIds, const bool ghosted)
+{
+    const auto before = current_;
+    bool changed = false;
+    for (const auto& nodeId : nodeIds) {
+        const auto found = current_.find(nodeId);
+        if (found == current_.end() || found->ghosted == ghosted) continue;
+        found->ghosted = ghosted;
+        // Making a hidden part transparent means wanting to see it.
+        if (ghosted) found->visible = true;
+        changed = true;
+    }
+    if (changed) {
+        previous_ = before;
+        emit presentationChanged();
+    }
 }
 
 void VisibilityModel::restorePrevious()

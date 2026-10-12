@@ -187,6 +187,24 @@ ApplicationWindow {
                     onTriggered: { appTheme.mode = "Dark"; root.themePreference.mode = "Dark" }
                 }
             }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: qsTr("Make Selection Transparent")
+                enabled: root.controller.activeNodeId.length > 0
+                onTriggered: root.controller.toggleTransparentSelection()
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: qsTr("Make Others Transparent")
+                enabled: root.controller.activeNodeId.length > 0
+                onTriggered: root.controller.makeOthersTransparent()
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: qsTr("Show All")
+                onTriggered: root.controller.showAllNodes()
+            }
+            Inspect.ThemedMenuSeparator { theme: appTheme }
             Inspect.ThemedMenu {
                 theme: appTheme
                 title: qsTr("Part Colours")

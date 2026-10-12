@@ -34,6 +34,11 @@ Item {
             f: "M10 8 A2 2 0 1 0 10.01 8 Z",
             t: ""
         },
+        "transparent": {
+            s: "M3 3 H12 V12 H3 Z M8 8 H17 V17 H8 Z",
+            f: "",
+            t: "M8 8 H17 V17 H8 Z"
+        },
         "section": {
             s: "M4 4 H16 V16 H4 Z M4 12.5 L16 7.5",
             f: "",
