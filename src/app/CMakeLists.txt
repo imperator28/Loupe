@@ -14,6 +14,8 @@ qt_add_executable(loupe-app
     models/SelectionModel.h
     models/VisibilityModel.cpp
     models/VisibilityModel.h
+    models/RemainingTimeEstimator.cpp
+    models/RemainingTimeEstimator.h
     models/UnitReviewModel.cpp
     models/UnitReviewModel.h
     models/MaterialLibraryModel.cpp

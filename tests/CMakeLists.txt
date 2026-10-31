@@ -94,6 +94,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
@@ -197,6 +199,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
@@ -371,6 +375,20 @@ target_include_directories(loupe-part-palette-tests PRIVATE "${PROJECT_SOURCE_DI
 loupe_enable_warnings(loupe-part-palette-tests)
 add_test(NAME part-palette COMMAND loupe-part-palette-tests)
 set_tests_properties(part-palette PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-remaining-time-tests
+    app/test_remaining_time_estimator.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
+)
+target_link_libraries(loupe-remaining-time-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-remaining-time-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-remaining-time-tests)
+add_test(NAME remaining-time COMMAND loupe-remaining-time-tests)
+set_tests_properties(remaining-time PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )

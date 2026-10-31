@@ -516,18 +516,24 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                       {QStringLiteral("stage"), stage}, {QStringLiteral("fraction"), fraction}});
             };
             try {
+                // Each stage's share of the bar is its typical share of the time, measured on
+                // a 200-part 21 MB assembly and a 12-part 1.5 MB one (within a few percent of
+                // each other): parse ~10%, translate ~21%, preview ~17%, refine ~50%. The bar
+                // once gave translation 45% and refinement 19%, so the remaining-time estimate
+                // started at half the truth and then crept up the whole way.
                 progress(QStringLiteral("Reading STEP file"), 0.01);
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Translating XCAF assembly"), 0.10);
-                auto imported = import::StepImporter{}.read(path.toStdString());
+                auto imported = import::StepImporter{}.read(path.toStdString(), [&progress](const double fraction) {
+                    progress(QStringLiteral("Translating XCAF assembly"), 0.10 + 0.21 * fraction);
+                });
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Building assembly tree and colors"), 0.55);
+                progress(QStringLiteral("Building assembly tree and colors"), 0.31);
                 const auto unitDecision = loupe::units::decide(imported.unitEvidence, toUnitOverride(unit, factor, reason));
                 auto documentSession = std::make_shared<DocumentSession>(DocumentSession{std::move(imported), unitDecision});
                 const auto& sessionImport = documentSession->imported;
                 const auto snapshot = encodeSnapshot(sessionImport, unitDecision);
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Preparing viewport geometry"), 0.65);
+                progress(QStringLiteral("Preparing viewport geometry"), 0.32);
                 post({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                       {QStringLiteral("snapshotBase64"), QString::fromLatin1(snapshot.toBase64())}});
                 treeReadyMs = elapsed.elapsed();
@@ -540,10 +546,21 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 // OCCT's normalised native coordinates back to those numbers first.
                 const auto nativeToMillimeters = unitDecision.sourceToMillimeters
                     * loupe::exporting::detail::nativeUnitRebase(sessionImport);
+                // How long each body took in the preview pass. Refinement repeats the same work
+                // body by body at finer tolerance, so these weight its progress: a uniform step
+                // per body let one large part stall the bar while the estimate climbed.
+                std::vector<double> previewSeconds(shapeCount, 0.0);
                 const auto sendProfile = [&](const TessellationProfile& profile, const double start, const double end) {
+                    const bool preview = profile.refinement == kPreviewProfile.refinement;
+                    double totalWeight = 0.0;
+                    for (const auto seconds : previewSeconds) totalWeight += seconds;
+                    const bool weighted = !preview && totalWeight > 0.0;
+                    double doneWeight = 0.0;
                     QSet<QString> preparedDefinitions;
                     for (std::size_t index = 0; index < shapeCount; ++index) {
                         if (job->canceled.load()) return false;
+                        QElapsedTimer bodyTimer;
+                        bodyTimer.start();
                         const auto& shape = sessionImport.native->shapes[index];
                         const auto nodeId = QString::fromStdString(sessionImport.native->shapeNodeIds[index]);
                         const auto definitionId = QString::fromStdString(sessionImport.native->definitionIds[index]);
@@ -590,16 +607,18 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                                       {QStringLiteral("planarFaceCount"), topology.planarFaceCount}});
                             }
                         }
+                        if (preview) previewSeconds[index] = static_cast<double>(bodyTimer.nsecsElapsed()) * 1.0e-9;
+                        doneWeight += weighted ? previewSeconds[index] : 1.0;
                         const auto fraction = shapeCount == 0 ? end
-                            : start + (end - start) * static_cast<double>(index + 1) / static_cast<double>(shapeCount);
+                            : start + (end - start) * std::min(1.0, doneWeight / (weighted ? totalWeight : static_cast<double>(shapeCount)));
                         progress(profile.progressStage, fraction);
                     }
                     return true;
                 };
-                if (!sendProfile(kPreviewProfile, 0.65, 0.80)) { finish(); return; }
+                if (!sendProfile(kPreviewProfile, 0.32, 0.48)) { finish(); return; }
                 previewReadyMs = elapsed.elapsed();
-                progress(QStringLiteral("Preview ready - refining geometry"), 0.80);
-                if (!sendProfile(kRefinedProfile, 0.80, 0.99)) { finish(); return; }
+                progress(QStringLiteral("Preview ready - refining geometry"), 0.48);
+                if (!sendProfile(kRefinedProfile, 0.48, 0.99)) { finish(); return; }
                 if (!job->canceled.load()) {
                     retain(documentSession);
                     post({{QStringLiteral("type"), QStringLiteral("importMetrics")},

@@ -6,6 +6,8 @@
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Message_ProgressIndicator.hxx>
+#include <Message_ProgressScope.hxx>
 #include <NCollection_Sequence.hxx>
 #include <STEPCAFControl_Reader.hxx>
 #include <TCollection_AsciiString.hxx>
@@ -30,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace loupe::import {
@@ -236,9 +239,35 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     }
 }
 
+// Forwards OCCT's progress to a callback, at most once per half percent.
+class CallbackProgress final : public Message_ProgressIndicator {
+public:
+    explicit CallbackProgress(TransferProgress callback) : callback_(std::move(callback)) {}
+
+    void Show(const Message_ProgressScope&, const bool isForce) override
+    {
+        const auto position = GetPosition();
+        if (!isForce && position - lastReported_ < 0.005) return;
+        lastReported_ = position;
+        // STEPCAFControl_Reader gives translating the shapes the first quarter of its range
+        // and names, colours and layers the rest, but the shapes are nearly all of the time:
+        // 86-94% on a 200-part and a 12-part file. Re-spread it so the reported fraction
+        // tracks time, which is what a remaining-time estimate needs.
+        const auto clamped = std::clamp(position, 0.0, 1.0);
+        callback_(clamped <= kShapeShare ? clamped / kShapeShare * kShapeTime
+                                         : kShapeTime + (clamped - kShapeShare) / (1.0 - kShapeShare) * (1.0 - kShapeTime));
+    }
+
+private:
+    static constexpr double kShapeShare = 0.25;
+    static constexpr double kShapeTime = 0.9;
+    TransferProgress callback_;
+    double lastReported_{-1.0};
+};
+
 } // namespace
 
-ImportResult StepImporter::read(const std::filesystem::path& file) const
+ImportResult StepImporter::read(const std::filesystem::path& file, const TransferProgress& transferProgress) const
 {
     STEPCAFControl_Reader reader;
     reader.SetNameMode(true);
@@ -253,7 +282,10 @@ ImportResult StepImporter::read(const std::filesystem::path& file) const
     auto native = std::make_shared<NativeDocument>();
     const auto transferStarted = std::chrono::steady_clock::now();
     XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", native->document);
-    if (!reader.Transfer(native->document)) throw std::runtime_error("STEP transfer failed");
+    occ::handle<CallbackProgress> progress;
+    if (transferProgress) progress = new CallbackProgress(transferProgress);
+    if (!reader.Transfer(native->document, progress.IsNull() ? Message_ProgressRange() : progress->Start()))
+        throw std::runtime_error("STEP transfer failed");
     const auto transferFinished = std::chrono::steady_clock::now();
 
     ImportResult result;

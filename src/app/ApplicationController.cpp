@@ -709,6 +709,7 @@ void ApplicationController::resetImportProgress()
     preservePreviewOnCancel_ = false;
     previewGeometryReceived_ = false;
     importElapsed_.restart();
+    importRemaining_.reset();
     importProgressTimer_.start();
     emit importProgressChanged();
 }
@@ -718,6 +719,7 @@ void ApplicationController::setImportProgress(const QString& stage, const double
     importStage_ = stage;
     importProgress_ = std::max(importProgress_, std::clamp(fraction, 0.0, 1.0));
     importElapsedSeconds_ = importElapsed_.elapsed() / 1'000;
+    importRemaining_.report(importElapsed_.elapsed(), importProgress_);
     if (importProgress_ >= 1.0) {
         importInProgress_ = false;
         importProgressTimer_.stop();
@@ -860,8 +862,8 @@ void ApplicationController::saveGeometryCache()
 
 qint64 ApplicationController::importEtaSeconds() const noexcept
 {
-    if (importProgress_ < 0.12 || importProgress_ >= 0.995 || importElapsedSeconds_ < 1) return -1;
-    return static_cast<qint64>((static_cast<double>(importElapsedSeconds_) / importProgress_) * (1.0 - importProgress_));
+    if (!importInProgress_ || importProgress_ >= 0.995) return -1;
+    return importRemaining_.remainingSeconds(importElapsed_.elapsed());
 }
 
 void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)

@@ -15,6 +15,13 @@ Item {
     property string treeHoveredNodeId: ""
     signal openFileRequested()
 
+    // -1: not enough to go on yet; 0: the projected finish has passed and work continues.
+    function remainingText(seconds) {
+        if (seconds < 0) return qsTr("estimating remaining time")
+        if (seconds === 0) return qsTr("almost done")
+        return qsTr("about %1 s remaining").arg(seconds)
+    }
+
     function showTask(tool) {
         if (root.activeTask === tool) {
             root.taskPanelVisible = !root.taskPanelVisible
@@ -276,7 +283,7 @@ Item {
                     width: parent.width
                     visible: root.controller && root.controller.importInProgress
                     text: root.controller ? qsTr("%1%  •  %2 s  •  %3").arg(Math.round(root.controller.importProgress * 100)).arg(root.controller.importElapsedSeconds)
-                        .arg(root.controller.importEtaSeconds >= 0 ? qsTr("about %1 s remaining").arg(root.controller.importEtaSeconds) : qsTr("estimating remaining time")) : ""
+                        .arg(root.remainingText(root.controller.importEtaSeconds)) : ""
                     color: root.subduedForeground
                     horizontalAlignment: Text.AlignHCenter
                 }
@@ -327,8 +334,7 @@ Item {
                             Layout.fillWidth: true
                             text: root.controller ? qsTr("%1%  •  %2 s  •  %3")
                                 .arg(Math.round(root.controller.importProgress * 100)).arg(root.controller.importElapsedSeconds)
-                                .arg(root.controller.importEtaSeconds >= 0 ? qsTr("about %1 s remaining").arg(root.controller.importEtaSeconds)
-                                                                            : qsTr("estimating remaining time")) : ""
+                                .arg(root.remainingText(root.controller.importEtaSeconds)) : ""
                             color: root.subduedForeground
                         }
                         ThemedButton {

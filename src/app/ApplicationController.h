@@ -17,6 +17,7 @@
 #include "app/tools/CaptureController.h"
 #include "app/models/AssemblyTreeModel.h"
 #include "app/models/MaterialLibraryModel.h"
+#include "app/models/RemainingTimeEstimator.h"
 #include "app/models/VisibilityModel.h"
 #include "app/cache/OverrideStore.h"
 #include "app/drawing/DrawingWorkspaceController.h"
@@ -314,6 +315,7 @@ private:
     QHash<QString, int> edgeRevisionByNode_;
     int geometryRevisionCounter_{};
     QElapsedTimer importElapsed_;
+    models::RemainingTimeEstimator importRemaining_;
     QTimer importProgressTimer_{this};
     double modelExtentMm_{};
     ViewerPresentation viewerPresentation_{ViewerPresentation::Full};

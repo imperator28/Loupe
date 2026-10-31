@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Pinch-to-zoom shifted the view (macOS trackpad).** Zoom scaled about the
+  viewport centre, or in perspective toward the last orbit pivot -- an invisible
+  point that is off-centre after orbiting about a picked face -- so the part
+  under your fingers slid away. Pinch and wheel zoom now keep the point under the
+  pointer fixed, and trackpad scrolling reported during a pinch no longer pans.
+- **The import time estimate was wrong and grew while you waited.** It was
+  recomputed every second from fixed progress milestones, so whenever progress
+  paused the estimate rose (16 s became 17 s two seconds later), and the
+  milestones gave translation 45% of the bar and mesh refinement 19%, when they
+  take about 21% and 50% of the time. The bar now follows measured time shares
+  (translation reports real progress, refinement is weighted per part by its
+  preview time), and the estimate counts down between updates instead of
+  growing. On a 200-part, 16 s import it now stays within about 1.5 s of the
+  truth throughout; before, it read 2 s with 10 s still to go.
+
 ## v0.1.4
 
 Fixes and additions from review of 0.1.3, tested through three pre-releases.
