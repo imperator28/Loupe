@@ -206,29 +206,51 @@ QtObject {
         apply()
     }
 
-    function zoom(delta) {
-        const factor = Math.pow(0.998, delta)
-        if (projectionMode === "orthographic") {
-            orthographicMagnification = Math.max(minimumMagnification,
-                                                 Math.min(maximumMagnification, orthographicMagnification / factor))
-        } else {
-            const offset = cameraOffset()
-            distance = Math.max(minimumDistance, Math.min(maximumDistance, vectorLength(offset) * factor))
-            cameraPosition = add(activePivot, scaled(normalized(offset, orientation.times(Qt.vector3d(0, 0, 1))), distance))
-        }
-        apply()
+    // A wheel step, as a zoom factor: positive deltas move closer.
+    function zoom(delta, screenX, screenY) {
+        zoomByFactor(1.0 / Math.pow(0.998, delta), screenX, screenY)
     }
 
-    function zoomByFactor(factor) {
+    // Zoom by `factor` (above 1 is closer), keeping the scene under (screenX, screenY) fixed on
+    // screen. Without a screen point it anchors on the viewport centre.
+    //
+    // Before this, zoom scaled about the screen centre in orthographic, and in perspective it
+    // moved the camera toward activePivot -- which, after orbiting about a picked point, is off
+    // the view axis, so the camera slid sideways. Either way the part under the user's fingers
+    // moved away during a pinch, which reads as the view shifting on its own. Anchoring on the
+    // pointer is how every other macOS pinch behaves.
+    function zoomByFactor(factor, screenX, screenY) {
         if (!isFinite(factor) || factor <= 0) return
+        const anchorX = (screenX === undefined || !isFinite(screenX)) ? 0 : screenX - viewportWidth * 0.5
+        const anchorY = (screenY === undefined || !isFinite(screenY)) ? 0 : screenY - viewportHeight * 0.5
+        const back = orientation.times(Qt.vector3d(0, 0, 1))
+        let worldPerPixelBefore = 0
+        let worldPerPixelAfter = 0
         if (projectionMode === "orthographic") {
+            worldPerPixelBefore = 1.0 / Math.max(minimumMagnification, orthographicMagnification)
             orthographicMagnification = Math.max(minimumMagnification,
                                                  Math.min(maximumMagnification, orthographicMagnification * factor))
+            worldPerPixelAfter = 1.0 / Math.max(minimumMagnification, orthographicMagnification)
         } else {
+            // Dolly along the view axis, never toward an off-axis pivot.
+            const pixelScale = 2.0 * Math.tan(perspectiveFieldOfView * Math.PI / 360.0) / Math.max(1, viewportHeight)
             const offset = cameraOffset()
-            distance = Math.max(minimumDistance, Math.min(maximumDistance, vectorLength(offset) / factor))
-            cameraPosition = add(activePivot, scaled(normalized(offset, orientation.times(Qt.vector3d(0, 0, 1))), distance))
+            const depthBefore = Math.max(minimumDistance, offset.x * back.x + offset.y * back.y + offset.z * back.z)
+            const depthAfter = Math.max(minimumDistance, Math.min(maximumDistance, depthBefore / factor))
+            cameraPosition = add(cameraPosition, scaled(back, depthAfter - depthBefore))
+            worldPerPixelBefore = depthBefore * pixelScale
+            worldPerPixelAfter = depthAfter * pixelScale
         }
+        // What sat under the anchor was anchor * worldPerPixelBefore from the axis and must stay
+        // there: slide camera and pivot together, exactly as a pan would.
+        const right = orientation.times(Qt.vector3d(1, 0, 0))
+        const up = orientation.times(Qt.vector3d(0, 1, 0))
+        const shift = worldPerPixelBefore - worldPerPixelAfter
+        const translation = add(scaled(right, anchorX * shift), scaled(up, -anchorY * shift))
+        cameraPosition = add(cameraPosition, translation)
+        activePivot = add(activePivot, translation)
+        if (hasPendingPivot) pendingPivot = add(pendingPivot, translation)
+        distance = Math.max(minimumDistance, vectorLength(cameraOffset()))
         apply()
     }
 }

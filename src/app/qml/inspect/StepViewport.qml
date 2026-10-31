@@ -1425,6 +1425,13 @@ Item {
                                                        wheel.angleDelta.y,
                                                        zoomModifier)
             if (mode === "pan") {
+                // macOS can report the fingers' drift as scrolling while it also reports
+                // them pinching; panning from that during a pinch is a view shift the user
+                // never asked for.
+                if (touchGestures.active) {
+                    wheel.accepted = true
+                    return
+                }
                 // Never pixelDelta directly: it is always (0,0) on Windows, so
                 // panning with it would move nothing at all there.
                 const delta = pointerInputRouter.wheelPanDelta(wheel.pixelDelta.x,
@@ -1434,7 +1441,8 @@ Item {
                 navigation.pan(delta.x, delta.y)
             } else {
                 navigation.zoom(pointerInputRouter.wheelZoomDelta(wheel.pixelDelta.y,
-                                                                  wheel.angleDelta.y))
+                                                                  wheel.angleDelta.y),
+                                wheel.x, wheel.y)
             }
             wheel.accepted = true
         }
@@ -1526,7 +1534,8 @@ Item {
         }
         onActiveScaleChanged: {
             if (!active || lastScale <= 0) return
-            navigation.zoomByFactor(activeScale / lastScale)
+            // Anchored where the pinch is: on a trackpad that is the pointer.
+            navigation.zoomByFactor(activeScale / lastScale, centroid.position.x, centroid.position.y)
             lastScale = activeScale
         }
         // A trackpad has no translation gesture of its own to report here. macOS
