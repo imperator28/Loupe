@@ -1,4 +1,7 @@
 #include "app/ApplicationController.h"
+#include "app/DocumentTabs.h"
+#include "app/platform/FileAssociation.h"
+#include "app/platform/FileOpenRouter.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/MeshGeometry.h"
@@ -49,22 +52,36 @@ int main(int argc, char* argv[])
     application.setPalette(palette);
     qmlRegisterUncreatableMetaObject(loupe::app::staticMetaObject, "Loupe.App", 1, 0, "AppState", "Application state only");
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");
+    qmlRegisterType<loupe::app::DocumentTabs>("Loupe.App", 1, 0, "DocumentTabs");
     qmlRegisterType<loupe::app::models::ThemePreference>("Loupe.App", 1, 0, "ThemePreference");
     qmlRegisterType<loupe::app::platform::WindowChrome>("Loupe.App", 1, 0, "WindowChrome");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
+
+    qmlRegisterType<loupe::app::platform::FileAssociation>("Loupe.App", 1, 0, "FileAssociation");
+
+    // STEP files from the command line (Windows "Open with", a default-app double-click),
+    // from macOS Finder, or from a later launch while this one runs (#8). A later launch
+    // with files hands them over and exits, so they open as tabs here.
+    const bool selfCheck = QCoreApplication::arguments().contains(QStringLiteral("--self-check"));
+    const auto launchFiles = loupe::app::platform::FileOpenRouter::stepFilesIn(QCoreApplication::arguments());
+    if (!selfCheck && loupe::app::platform::FileOpenRouter::forwardToRunningInstance(launchFiles)) return 0;
+    loupe::app::platform::FileOpenRouter fileOpenRouter;
+    if (!selfCheck) fileOpenRouter.listenForOtherInstances();
 
     QQmlApplicationEngine engine;
     engine.loadFromModule("Loupe.App", "Main");
     if (engine.rootObjects().isEmpty()) {
         return 1;
     }
+    fileOpenRouter.setWindow(engine.rootObjects().constFirst());
+    fileOpenRouter.open(launchFiles);
     // --self-check: start exactly as a user's launch does -- real platform plugin, the whole
     // QML UI -- then confirm the worker sits beside the executable, and exit. Release CI runs
     // it on the packaged folder, so a package that cannot start (a missing Qt plugin, a
     // missing worker) fails the build instead of reaching a tester. Getting this far already
     // proves the platform plugin loaded: without one, Qt aborts in the constructor above.
-    if (QCoreApplication::arguments().contains(QStringLiteral("--self-check"))) {
+    if (selfCheck) {
 #ifdef Q_OS_WIN
         const auto worker = QStringLiteral("loupe-worker.exe");
 #else

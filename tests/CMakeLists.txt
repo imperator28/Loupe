@@ -97,6 +97,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
@@ -196,12 +198,16 @@ add_test(NAME worker-client COMMAND loupe-worker-client-tests)
 
 add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.h"
@@ -249,6 +255,7 @@ else()
     if(WIN32)
         # WindowChrome.cpp calls DwmSetWindowAttribute (native title-bar theme).
         target_link_libraries(loupe-qml-smoke-tests PRIVATE dwmapi)
+        target_link_libraries(loupe-qml-smoke-tests PRIVATE shell32)
     endif()
 endif()
 target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Quick3D Qt6::Network Qt6::Sql Qt6::Test)
@@ -375,6 +382,20 @@ target_include_directories(loupe-part-palette-tests PRIVATE "${PROJECT_SOURCE_DI
 loupe_enable_warnings(loupe-part-palette-tests)
 add_test(NAME part-palette COMMAND loupe-part-palette-tests)
 set_tests_properties(part-palette PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-file-open-tests
+    app/test_file_open_router.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileOpenRouter.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileOpenRouter.h"
+)
+target_link_libraries(loupe-file-open-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
+target_include_directories(loupe-file-open-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-file-open-tests)
+add_test(NAME file-open COMMAND loupe-file-open-tests)
+set_tests_properties(file-open PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )

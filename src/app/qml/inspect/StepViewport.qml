@@ -1831,17 +1831,17 @@ Item {
         onPlanarRotateRequested: function(degrees) { navigation.roll(degrees) }
     }
 
-    Shortcut { sequence: "F"; enabled: !root.presentationOnly; onActivated: root.fitCamera() }
-    Shortcut { sequence: "Shift+F"; enabled: !root.presentationOnly; onActivated: root.fitSelection() }
-    Shortcut { sequence: "I"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.toggleIsolateActiveNode() }
-    Shortcut { sequence: "H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.hideActiveNode() }
-    Shortcut { sequence: "Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.hideOtherNodes() }
-    Shortcut { sequence: "T"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.toggleTransparentSelection() }
-    Shortcut { sequence: "Shift+T"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.makeOthersTransparent() }
-    Shortcut { sequence: "Ctrl+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
-    Shortcut { sequence: "Meta+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
-    Shortcut { sequence: "M"; enabled: !root.presentationOnly; onActivated: root.toolRequested("measure") }
-    Shortcut { sequence: "S"; enabled: !root.presentationOnly; onActivated: root.toolRequested("section") }
+    Shortcut { sequence: "F"; enabled: root.visible && (!root.presentationOnly); onActivated: root.fitCamera() }
+    Shortcut { sequence: "Shift+F"; enabled: root.visible && (!root.presentationOnly); onActivated: root.fitSelection() }
+    Shortcut { sequence: "I"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.toggleIsolateActiveNode() }
+    Shortcut { sequence: "H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.hideActiveNode() }
+    Shortcut { sequence: "Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.hideOtherNodes() }
+    Shortcut { sequence: "T"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.toggleTransparentSelection() }
+    Shortcut { sequence: "Shift+T"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.makeOthersTransparent() }
+    Shortcut { sequence: "Ctrl+Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.showAllNodes() }
+    Shortcut { sequence: "Meta+Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.showAllNodes() }
+    Shortcut { sequence: "M"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("measure") }
+    Shortcut { sequence: "S"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("section") }
     // root.visible matters as much as presentationOnly: every workspace in the stack is
     // instantiated, so Inspect's viewport kept these enabled while Export was on screen. Two
     // enabled "1" shortcuts is an ambiguous sequence, and Qt fires neither -- which is why
@@ -1854,7 +1854,7 @@ Item {
                onActivated: root.renderMode = 2 }
     Shortcut {
         sequences: [StandardKey.Copy]
-        enabled: !root.presentationOnly && root.controller && !root.controller.capture.inProgress
+        enabled: root.visible && (!root.presentationOnly && root.controller && !root.controller.capture.inProgress)
                  && !root.isTextEditFocused()
         onActivated: root.copyAsTransparentPicture()
     }
@@ -1862,12 +1862,12 @@ Item {
     // there is exactly one shortcut registration for it at window scope.
     Shortcut {
         sequence: "Esc"
-        enabled: !root.presentationOnly && sectionArrowInput.dragging
+        enabled: root.visible && (!root.presentationOnly && sectionArrowInput.dragging)
         onActivated: sectionArrowInput.cancelDrag()
     }
     Shortcut {
         sequence: "Esc"
-        enabled: !root.presentationOnly && !sectionArrowInput.dragging
+        enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")

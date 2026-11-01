@@ -16,13 +16,26 @@ The work is organised into three workspaces: **Inspect** for review and measurem
 
 The desktop targets are Windows 11 x64, Apple Silicon macOS, and Intel macOS. Geometry and export operations use the imported CAD document rather than treating display meshes as source data. Native CI gates build and test the release preset for Windows and Apple Silicon on every push, and every tag additionally publishes an Intel macOS build; signing, notarization, installer packaging, and legal distribution review remain separate release steps.
 
+## Opening STEP Files with Loupe
+
+To open `.step` and `.stp` files with a double-click:
+
+- **macOS:** select a STEP file in Finder, choose File → Get Info, pick Loupe under
+  *Open with*, and click **Change All…**.
+- **Windows:** Loupe ships as a zip, so it registers itself: choose File → **Register
+  Loupe for STEP Files…**. Windows then opens Default Apps, where you confirm Loupe for
+  `.step` and `.stp` (Windows does not let an app make itself the default).
+
+If Loupe is already running, a double-clicked file opens as a new tab in the existing
+window.
+
 ## Inspection Tools
 
 Loupe is deliberately focused on the inspection controls engineers use repeatedly, rather than becoming a full CAD authoring system.
 
 | Tool | Control level |
 | --- | --- |
-| **Open and review** | Open `.step` and `.stp` files from the picker or by dropping them onto the app. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
+| **Open and review** | Open `.step` and `.stp` files from the picker, by dropping them onto the app, or by double-clicking them once Loupe is their default app (see below). Each file opens in its own tab, which keeps its view, selection and export queue while you work in another. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
 | **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide or make semi-transparent, show all, and recolor a single occurrence or a shared definition. |
 | **Visual inspection** | Choose orthographic or perspective projection, use the view cube for canonical views, and switch among Solid, Solid + Edges, and Edges Only. Edges are generated from CAD topology rather than display triangles. |
 | **Part colours** | Keep the file's colours, or give every part an automatic low-contrast colour (cool shades, warm shades, or muted) with Shuffle -- useful when a file leaves parts uncoloured or gives them all one default colour. Display only. |
@@ -99,7 +112,9 @@ Useful shortcuts:
 | `M` | Open Measure |
 | `S` | Open Section |
 | `1`, `2`, `3` | Solid, Solid + Edges, Edges Only |
-| `Ctrl/Cmd+O` | Open STEP |
+| `Ctrl/Cmd+O` | Open STEP (in a new tab if one is already open) |
+| `Ctrl/Cmd+W` | Close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Escape` | Cancel the active manipulation or task state |
 
 The in-app **View > Interaction** guide contains this same mouse, trackpad, and keyboard reference.

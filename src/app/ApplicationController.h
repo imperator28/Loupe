@@ -99,6 +99,9 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
+    // The open file's name, for its tab and the window title; empty before one is opened.
+    Q_PROPERTY(QString documentName READ documentName NOTIFY documentNameChanged)
+    Q_PROPERTY(QString documentPath READ documentPath NOTIFY documentNameChanged)
     Q_PROPERTY(QObject* exportWorkspace READ exportWorkspaceController CONSTANT)
     Q_PROPERTY(QObject* drawingWorkspace READ drawingWorkspaceController CONSTANT)
     // Taken from the project version at build time, so the About dialog cannot drift from
@@ -138,6 +141,8 @@ public:
     [[nodiscard]] double importProgress() const noexcept { return importProgress_; }
     [[nodiscard]] qint64 importElapsedSeconds() const noexcept { return importElapsedSeconds_; }
     [[nodiscard]] qint64 importEtaSeconds() const noexcept;
+    [[nodiscard]] QString documentName() const;
+    [[nodiscard]] const QString& documentPath() const noexcept { return documentPath_; }
     [[nodiscard]] bool importInProgress() const noexcept { return importInProgress_; }
     [[nodiscard]] bool previewReady() const noexcept { return previewGeometryReceived_; }
     [[nodiscard]] const QString& effectiveUnit() const noexcept { return effectiveUnit_; }
@@ -225,6 +230,7 @@ signals:
     void cacheHitChanged();
     void modelExtentChanged();
     void fitRequested();
+    void documentNameChanged();
     void viewNormalToFaceRequested();
     void viewerPresentationChanged();
     void visibilityChanged();
@@ -319,6 +325,7 @@ private:
     QHash<QString, int> edgeRevisionByNode_;
     int geometryRevisionCounter_{};
     QElapsedTimer importElapsed_;
+    QString documentPath_;
     models::RemainingTimeEstimator importRemaining_;
     QTimer importProgressTimer_{this};
     double modelExtentMm_{};

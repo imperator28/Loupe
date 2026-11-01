@@ -1,6 +1,12 @@
 qt_add_executable(loupe-app
     main.cpp
     ApplicationController.cpp
+    DocumentTabs.cpp
+    DocumentTabs.h
+    platform/FileAssociation.cpp
+    platform/FileAssociation.h
+    platform/FileOpenRouter.cpp
+    platform/FileOpenRouter.h
     ApplicationController.h
     export/ExportWorkspaceController.cpp
     export/ExportWorkspaceController.h
@@ -88,6 +94,9 @@ if(APPLE)
         # with the About dialog.
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        # Declares .step/.stp as documents Loupe opens, so Finder offers it in Open With
+        # and Get Info > Change All (#8).
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/Info.plist.in"
     )
     target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.mm)
     find_library(loupe_appkit_framework AppKit REQUIRED)
@@ -118,6 +127,8 @@ else()
         # WindowChrome.cpp calls DwmSetWindowAttribute to keep the native
         # title bar's dark/light mode in sync with the in-app theme toggle.
         target_link_libraries(loupe-app PRIVATE dwmapi)
+        # FileAssociation tells Explorer the registered file types changed (SHChangeNotify).
+        target_link_libraries(loupe-app PRIVATE shell32)
         # Without this the target links as a console-subsystem app, so a
         # console window tags along beside the QML window on every launch,
         # showing qDebug/qWarning output. qt_add_executable links Qt's

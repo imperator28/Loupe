@@ -11,6 +11,7 @@
 #include <QUrl>
 
 #include "app/ApplicationController.h"
+#include "app/DocumentTabs.h"
 #include "app/models/AssemblyTreeModel.h"
 #include "core/domain/AssemblyTypes.h"
 #include "fixtures/FixtureFactory.h"
@@ -21,6 +22,8 @@ class ApplicationControllerTest final : public QObject
 
 private slots:
     void inspectIsDefaultWorkspace();
+    void tabsOpenAFileIntoAnEmptyTabOrANewOne();
+    void closingTabsAlwaysLeavesOneAndKeepsANeighbourActive();
     void resolvesStandardViewsAgainstDocumentUpAxis();
     void rejectsUnknownUpAxisAndViewName();
     void emptyDocumentShowsDocumentInspector();
@@ -50,6 +53,60 @@ private slots:
     void autoPartColoursGiveEachDefinitionItsOwnColour();
     void autoPartColoursTreatOneSharedFileColourAsNone();
 };
+
+void ApplicationControllerTest::tabsOpenAFileIntoAnEmptyTabOrANewOne()
+{
+    loupe::app::DocumentTabs tabs(QStringLiteral(LOUPE_WORKER_PATH));
+    QCOMPARE(tabs.count(), 1);
+    auto* first = tabs.active();
+    QVERIFY(first != nullptr);
+    // Nothing open: the file goes into the current tab.
+    QCOMPARE(tabs.documentForOpening(), first);
+    QCOMPARE(tabs.count(), 1);
+
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("tab-one.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    first->openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(first->documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QCOMPARE(tabs.data(tabs.index(0), loupe::app::DocumentTabs::NameRole).toString(), QStringLiteral("tab-one.step"));
+
+    // Something open: a second file gets its own tab, made active, leaving the first as it was.
+    QSignalSpy added(&tabs, &loupe::app::DocumentTabs::documentAdded);
+    auto* second = tabs.documentForOpening();
+    QVERIFY(second != first);
+    QCOMPARE(tabs.count(), 2);
+    QCOMPARE(tabs.activeIndex(), 1);
+    QCOMPARE(tabs.active(), second);
+    QCOMPARE(added.count(), 1);
+    QCOMPARE(first->documentState(), loupe::app::DocumentState::TreeReady);
+    QVERIFY(!tabs.isBusy(0));
+}
+
+void ApplicationControllerTest::closingTabsAlwaysLeavesOneAndKeepsANeighbourActive()
+{
+    loupe::app::DocumentTabs tabs(QStringLiteral(LOUPE_WORKER_PATH));
+    auto* first = tabs.active();
+    auto* second = tabs.add();
+    auto* third = tabs.add();
+    QCOMPARE(tabs.count(), 3);
+    QCOMPARE(tabs.active(), third);
+
+    // Closing a tab before the active one keeps the same document active.
+    tabs.setActiveIndex(2);
+    tabs.close(0);
+    QCOMPARE(tabs.count(), 2);
+    QCOMPARE(tabs.active(), third);
+    QCOMPARE(tabs.documentAt(0), second);
+    // Closing the active tab moves to its neighbour.
+    tabs.close(1);
+    QCOMPARE(tabs.active(), second);
+    // Closing the last tab leaves a fresh empty one.
+    tabs.close(0);
+    QCOMPARE(tabs.count(), 1);
+    QVERIFY(tabs.active() != nullptr);
+    QVERIFY(tabs.active() != second);
+    QCOMPARE(tabs.active()->documentState(), loupe::app::DocumentState::Empty);
+    Q_UNUSED(first);
+}
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
 {

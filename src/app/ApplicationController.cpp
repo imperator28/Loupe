@@ -477,6 +477,10 @@ void ApplicationController::openFile(const QUrl& file)
     setActiveNodeId({});
     assemblyTreeModel_.replaceSnapshot({});
     pendingPath_ = sourceFile.absoluteFilePath();
+    if (documentPath_ != pendingPath_) {
+        documentPath_ = pendingPath_;
+        emit documentNameChanged();
+    }
     pendingSource_ = cache::SourceFingerprint::fromFile(pendingPath_);
     if (!pendingSource_) {
         setErrorMessage(tr("Loupe could not read the selected file."));
@@ -876,6 +880,11 @@ void ApplicationController::saveGeometryCache()
     const cache::UnitDecision unit{effectiveUnit_, 1.0};
     const auto key = cache::CacheKey::from(*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit);
     static_cast<void>(cacheStore_->put(key, geometryCacheArchive_, {*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit}));
+}
+
+QString ApplicationController::documentName() const
+{
+    return documentPath_.isEmpty() ? QString{} : QFileInfo(documentPath_).fileName();
 }
 
 qint64 ApplicationController::importEtaSeconds() const noexcept

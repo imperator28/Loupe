@@ -4,6 +4,18 @@
 
 ### New
 
+- **Tabs** (#9): each STEP file opens in its own tab, with its own worker, view,
+  selection, section and export queue, all kept while you work in another tab.
+  A file goes into the current tab if it is empty, else a new one. Close with
+  the tab's ×, a middle-click or Ctrl/Cmd+W (closing a tab mid-export asks
+  first); switch with Ctrl+Tab.
+- **Open STEP files from the OS** (#8): Loupe opens a file passed on the command
+  line (Windows "Open with" and default-app launches) and files sent by macOS
+  Finder, and declares `.step`/`.stp` in its macOS bundle so Finder offers it.
+  On Windows, File → Register Loupe for STEP Files… adds it to Open With and
+  Default Apps (per-user, no admin rights). A second launch while Loupe runs
+  hands its files to the running window as new tabs instead of opening a second
+  window.
 - **View normal to face** (#10): right-click a face, View → Normal to Face, or
   **Ctrl/Cmd+8** over a face. The view turns to look straight at it, centred on
   the face, keeping the zoom; a flat face uses its exact normal, a hole or

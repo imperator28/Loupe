@@ -17,15 +17,16 @@ ApplicationWindow {
         { state: AppState.Export, label: qsTr("Export") },
         { state: AppState.Drawing, label: qsTr("Drawing") }
     ]
-    readonly property int workspaceIndex: {
+    function workspaceIndexOf(document) {
         for (let index = 0; index < root.workspaces.length; ++index)
-            if (root.workspaces[index].state === root.controller.workspace) return index
+            if (document && root.workspaces[index].state === document.workspace) return index
         return 0
     }
+    readonly property int workspaceIndex: workspaceIndexOf(root.controller)
     width: 1280
     height: 800
     visible: true
-    title: qsTr("Loupe")
+    title: root.controller.documentName.length > 0 ? qsTr("%1 — Loupe").arg(root.controller.documentName) : qsTr("Loupe")
     color: appTheme.surface
     palette.window: appTheme.surface
     palette.windowText: appTheme.onSurface
@@ -44,9 +45,12 @@ ApplicationWindow {
     palette.link: appTheme.accent
     palette.toolTipBase: appTheme.surfaceRaised
     palette.toolTipText: appTheme.onSurface
-    property ApplicationController controller: ApplicationController {}
+    // One document per tab (#9). The menus, toolbar and dialogs act on the active one.
+    property DocumentTabs documents: DocumentTabs {}
+    readonly property ApplicationController controller: documents.active
     property ThemePreference themePreference: ThemePreference {}
     property WindowChrome windowChrome: WindowChrome {}
+    property FileAssociation fileAssociation: FileAssociation {}
     readonly property color themeForeground: appTheme.foreground
     readonly property color themeMuted: appTheme.muted
 
@@ -61,9 +65,32 @@ ApplicationWindow {
 
     function openDroppedUrls(urls) {
         if (!canOpenDroppedUrls(urls)) return false
-        controller.setWorkspace(AppState.Inspect)
-        controller.openFile(urls[0])
+        root.openStepFile(urls[0])
         return true
+    }
+
+    // Into the current tab if nothing is open there, else a new tab.
+    function openStepFile(fileUrl) {
+        const document = root.documents.documentForOpening()
+        document.setWorkspace(AppState.Inspect)
+        document.openFile(fileUrl)
+        return document
+    }
+
+    // Closing a tab mid-export would cancel the export, so that asks first.
+    function requestCloseTab(index) {
+        if (root.documents.isBusy(index)) {
+            closeBusyTab.tabIndex = index
+            closeBusyTab.open()
+            return
+        }
+        root.documents.close(index)
+    }
+
+    function applyPartColorPreferences(document) {
+        document.partColorMode = themePreference.partColorMode
+        document.recolorFileColors = themePreference.recolorFileColors
+        document.partColorSeed = themePreference.partColorSeed
     }
 
     SystemPalette {
@@ -83,9 +110,11 @@ ApplicationWindow {
     Component.onCompleted: {
         appTheme.mode = themePreference.mode
         windowChrome.applyAppearance(root, appTheme.dark)
-        controller.partColorMode = themePreference.partColorMode
-        controller.recolorFileColors = themePreference.recolorFileColors
-        controller.partColorSeed = themePreference.partColorSeed
+        root.applyPartColorPreferences(root.documents.documentAt(0))
+    }
+    Connections {
+        target: root.documents
+        function onDocumentAdded(document) { root.applyPartColorPreferences(document) }
     }
     Connections {
         target: root.themePreference
@@ -94,10 +123,15 @@ ApplicationWindow {
     // The controller owns part colours for the session; the preference remembers them.
     Connections {
         target: root.controller
+        // Part colours are an appearance setting, so a change in one tab applies to all.
         function onPartColorsChanged() {
             root.themePreference.partColorMode = root.controller.partColorMode
             root.themePreference.recolorFileColors = root.controller.recolorFileColors
             root.themePreference.partColorSeed = root.controller.partColorSeed
+            for (let index = 0; index < root.documents.count; ++index) {
+                const document = root.documents.documentAt(index)
+                if (document !== root.controller) root.applyPartColorPreferences(document)
+            }
         }
     }
     readonly property var partColorModes: [
@@ -119,6 +153,45 @@ ApplicationWindow {
                     text: qsTr("Open STEP…")
                     shortcut: StandardKey.Open
                     onTriggered: openStepDialog.open()
+                }
+            }
+            // Windows only: Loupe ships without an installer, so this is how it becomes an app
+            // that can open STEP files. Windows then asks the user to confirm the default.
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                visible: root.fileAssociation.supported
+                height: visible ? implicitHeight : 0
+                text: root.fileAssociation.registered ? qsTr("Make Loupe the Default for STEP Files…")
+                                                      : qsTr("Register Loupe for STEP Files…")
+                onTriggered: {
+                    if (!root.fileAssociation.registered) root.fileAssociation.registerForStepFiles()
+                    root.fileAssociation.openDefaultAppsSettings()
+                }
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                action: Action {
+                    text: qsTr("Close Tab")
+                    shortcut: StandardKey.Close
+                    onTriggered: root.requestCloseTab(root.documents.activeIndex)
+                }
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                action: Action {
+                    text: qsTr("Next Tab")
+                    shortcut: StandardKey.NextChild
+                    enabled: root.documents.count > 1
+                    onTriggered: root.documents.activeIndex = (root.documents.activeIndex + 1) % root.documents.count
+                }
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                action: Action {
+                    text: qsTr("Previous Tab")
+                    shortcut: StandardKey.PreviousChild
+                    enabled: root.documents.count > 1
+                    onTriggered: root.documents.activeIndex = (root.documents.activeIndex + root.documents.count - 1) % root.documents.count
                 }
             }
             Inspect.ThemedMenuSeparator { theme: appTheme }
@@ -271,7 +344,10 @@ ApplicationWindow {
         }
     }
 
-    header: ToolBar {
+    header: ColumnLayout {
+        spacing: 0
+        ToolBar {
+        Layout.fillWidth: true
         implicitHeight: appTheme.toolbarHeight
         palette.buttonText: appTheme.onSurface
         palette.text: appTheme.onSurface
@@ -329,25 +405,163 @@ ApplicationWindow {
         }
     }
 
+        // Document tabs: shown once a file is open, or when there is more than one tab.
+        Rectangle {
+            id: tabStrip
+            objectName: "documentTabStrip"
+            Layout.fillWidth: true
+            visible: root.documents.count > 1 || root.controller.documentName.length > 0
+            implicitHeight: visible ? appTheme.rowCompact + appTheme.spacing2 * 2 : 0
+            color: appTheme.surface
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: appTheme.border
+            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: appTheme.spacing3
+                anchors.rightMargin: appTheme.spacing3
+                spacing: appTheme.spacing1
+                Repeater {
+                    model: root.documents
+                    delegate: Rectangle {
+                        id: tab
+                        required property int index
+                        required property string name
+                        required property QtObject document
+                        readonly property bool active: index === root.documents.activeIndex
+                        Layout.preferredHeight: appTheme.rowCompact
+                        Layout.maximumWidth: 240
+                        Layout.preferredWidth: tabLabel.implicitWidth + closeTab.implicitWidth + appTheme.spacing3 * 2
+                        radius: appTheme.radius2
+                        color: active ? appTheme.surfaceRaised : tabHover.hovered ? appTheme.surfaceSubtle : "transparent"
+                        border.color: active ? appTheme.border : "transparent"
+                        HoverHandler { id: tabHover }
+                        TapHandler {
+                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                            onTapped: function(eventPoint, button) {
+                                if (button === Qt.MiddleButton) root.requestCloseTab(tab.index)
+                                else root.documents.activeIndex = tab.index
+                            }
+                        }
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: appTheme.spacing3
+                            anchors.rightMargin: appTheme.spacing1
+                            spacing: appTheme.spacing1
+                            Label {
+                                id: tabLabel
+                                Layout.fillWidth: true
+                                text: tab.name.length > 0 ? tab.name : qsTr("New tab")
+                                color: tab.active ? appTheme.foreground : appTheme.muted
+                                font.weight: tab.active ? Font.DemiBold : Font.Normal
+                                elide: Text.ElideMiddle
+                            }
+                            Inspect.ThemedToolButton {
+                                id: closeTab
+                                theme: appTheme
+                                text: "×"
+                                Accessible.name: qsTr("Close %1").arg(tabLabel.text)
+                                onClicked: root.requestCloseTab(tab.index)
+                            }
+                        }
+                        Inspect.ThemedToolTip {
+                            theme: appTheme
+                            text: tab.document ? tab.document.documentPath : ""
+                            visible: tabHover.hovered && text.length > 0
+                        }
+                    }
+                }
+                Inspect.ThemedToolButton {
+                    theme: appTheme
+                    text: "+"
+                    Accessible.name: qsTr("Open a STEP file in a new tab")
+                    onClicked: {
+                        root.documents.add()
+                        openStepDialog.open()
+                    }
+                }
+                Item { Layout.fillWidth: true }
+            }
+        }
+    }
+
+    // A full set of workspaces per tab, kept alive while hidden, so switching tabs keeps
+    // each document's camera, selection, section and export queue.
     StackLayout {
         anchors.fill: parent
-        // Index order must match root.workspaces.
-        currentIndex: root.workspaceIndex
+        currentIndex: root.documents.activeIndex
 
-        Inspect.InspectWorkspace {
-            controller: root.controller
-            theme: appTheme
-            preferences: root.themePreference
-            onOpenFileRequested: openStepDialog.open()
+        Repeater {
+            model: root.documents
+            delegate: StackLayout {
+                id: documentView
+                required property QtObject document
+                // Index order must match root.workspaces.
+                currentIndex: root.workspaceIndexOf(documentView.document)
+
+                Inspect.InspectWorkspace {
+                    controller: documentView.document
+                    theme: appTheme
+                    preferences: root.themePreference
+                    onOpenFileRequested: openStepDialog.open()
+                }
+                Export.ExportWorkspace {
+                    controller: documentView.document
+                    theme: appTheme
+                }
+                Drawing.DrawingWorkspace {
+                    objectName: "drawingWorkspace"
+                    controller: documentView.document
+                    theme: appTheme
+                }
+            }
         }
-        Export.ExportWorkspace {
-            controller: root.controller
-            theme: appTheme
-        }
-        Drawing.DrawingWorkspace {
-            objectName: "drawingWorkspace"
-            controller: root.controller
-            theme: appTheme
+    }
+
+    Popup {
+        id: closeBusyTab
+        property int tabIndex: -1
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(440, Overlay.overlay.width - appTheme.spacing6 * 2)
+        padding: appTheme.spacing6
+        background: Inspect.ElevatedPanel { theme: appTheme; cornerRadius: appTheme.radius4 }
+        contentItem: ColumnLayout {
+            spacing: appTheme.spacing3
+            Label {
+                text: qsTr("Close this tab?")
+                font.bold: true
+                font.pixelSize: 16
+                color: root.themeForeground
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: qsTr("An export or drawing run is still going in this tab. Closing it stops the run.")
+                color: root.themeForeground
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    text: qsTr("Keep open")
+                    onClicked: closeBusyTab.close()
+                }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    primary: true
+                    text: qsTr("Stop and close")
+                    onClicked: {
+                        closeBusyTab.close()
+                        root.documents.close(closeBusyTab.tabIndex)
+                    }
+                }
+            }
         }
     }
 
@@ -497,6 +711,6 @@ ApplicationWindow {
 
     OpenStepDialog {
         id: openStepDialog
-        controller: root.controller
+        onStepFileChosen: function(file) { root.openStepFile(file) }
     }
 }
