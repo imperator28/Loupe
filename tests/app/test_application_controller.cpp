@@ -24,6 +24,7 @@ private slots:
     void inspectIsDefaultWorkspace();
     void tabsOpenAFileIntoAnEmptyTabOrANewOne();
     void exportsTheAssemblyWithoutItsHiddenParts();
+    void treeRowsReportHiddenAndPartlyHidden();
     void closingTabsAlwaysLeavesOneAndKeepsANeighbourActive();
     void resolvesStandardViewsAgainstDocumentUpAxis();
     void rejectsUnknownUpAxisAndViewName();
@@ -280,10 +281,11 @@ void ApplicationControllerTest::renderModeIsSharedAndClamped()
     // One mode for every viewport, so switching workspace keeps it.
     loupe::app::ApplicationController controller;
     QSignalSpy spy(&controller, &loupe::app::ApplicationController::renderModeChanged);
-    QCOMPARE(controller.renderMode(), 0);
-    controller.setRenderMode(1);
-    controller.setRenderMode(1);
+    // Solid + Edges by default (#13).
     QCOMPARE(controller.renderMode(), 1);
+    controller.setRenderMode(0);
+    controller.setRenderMode(0);
+    QCOMPARE(controller.renderMode(), 0);
     QCOMPARE(spy.count(), 1);
     controller.setRenderMode(7);
     QCOMPARE(controller.renderMode(), 2);
@@ -346,6 +348,34 @@ void ApplicationControllerTest::exportsTheAssemblyWithoutItsHiddenParts()
     reread.openFile(QUrl::fromLocalFile(destination));
     QTRY_VERIFY_WITH_TIMEOUT(!reread.importInProgress() && reread.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
     QCOMPARE(geometryNodeIds(reread).size(), 1);
+}
+
+void ApplicationControllerTest::treeRowsReportHiddenAndPartlyHidden()
+{
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-tree-visibility.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    const auto root = controller.assemblyTreeModel()->data(controller.assemblyTreeModel()->index(0, 0),
+                                                           loupe::app::models::AssemblyTreeModel::StableIdRole).toString();
+    QCOMPARE(controller.nodeVisibilityState(root), 0);
+
+    const auto revision = controller.visibilityRevision();
+    controller.setNodeHidden(parts.at(0), true);
+    QVERIFY(controller.visibilityRevision() > revision);
+    QCOMPARE(controller.nodeVisibilityState(parts.at(0)), 2);
+    QCOMPARE(controller.nodeVisibilityState(parts.at(1)), 0);
+    QCOMPARE(controller.nodeVisibilityState(root), 1);
+
+    controller.setNodeHidden(root, true);
+    QCOMPARE(controller.nodeVisibilityState(root), 2);
+    controller.setNodeHidden(root, false);
+    QCOMPARE(controller.nodeVisibilityState(root), 0);
+    // Showing the assembly is one undoable step.
+    controller.restoreVisibility();
+    QCOMPARE(controller.nodeVisibilityState(root), 2);
 }
 
 void ApplicationControllerTest::fitViewNotifiesViewport()

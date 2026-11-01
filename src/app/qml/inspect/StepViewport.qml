@@ -1730,17 +1730,16 @@ Item {
         ThemedMenuSeparator { theme: componentContextMenu.theme }
         ThemedMenuItem {
             theme: componentContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Exit isolate")
                   : root.selectionActionText(qsTr("Isolate"), qsTr("Isolate %1 selected"))
             enabled: root.controller && root.controller.activeNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide others"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Restore"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
         ThemedMenuSeparator { theme: componentContextMenu.theme }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Properties"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.toolRequested("properties") }
     }
@@ -1753,7 +1752,7 @@ Item {
         ThemedMenuSeparator { theme: exportComponentContextMenu.theme }
         ThemedMenuItem {
             theme: exportComponentContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Exit isolate")
                   : root.selectionActionText(qsTr("Isolate"), qsTr("Isolate %1 selected"))
             enabled: root.controller && root.controller.activeNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
@@ -1835,7 +1834,6 @@ Item {
     Shortcut { sequence: "Shift+F"; enabled: root.visible && (!root.presentationOnly); onActivated: root.fitSelection() }
     Shortcut { sequence: "I"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.toggleIsolateActiveNode() }
     Shortcut { sequence: "H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.hideActiveNode() }
-    Shortcut { sequence: "Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.hideOtherNodes() }
     Shortcut { sequence: "T"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.toggleTransparentSelection() }
     Shortcut { sequence: "Shift+T"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.makeOthersTransparent() }
     Shortcut { sequence: "Ctrl+Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.showAllNodes() }

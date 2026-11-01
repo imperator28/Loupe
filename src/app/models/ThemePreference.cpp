@@ -27,6 +27,7 @@ ThemePreference::ThemePreference(QObject* parent)
     if (isPartColorMode(partColorMode)) partColorMode_ = partColorMode;
     recolorFileColors_ = settings.value(QStringLiteral("appearance/recolorFileColors"), false).toBool();
     partColorSeed_ = settings.value(QStringLiteral("appearance/partColorSeed"), 0).toInt();
+    renderMode_ = std::clamp(settings.value(QStringLiteral("appearance/renderMode"), 1).toInt(), 0, 2);
     treePanelWidth_ = std::clamp(settings.value(QStringLiteral("layout/treePanelWidth"), 248).toInt(), 160, 1200);
 }
 
@@ -61,6 +62,15 @@ void ThemePreference::setPartColorSeed(const int seed)
     partColorSeed_ = seed;
     QSettings{}.setValue(QStringLiteral("appearance/partColorSeed"), partColorSeed_);
     emit partColorsChanged();
+}
+
+void ThemePreference::setRenderMode(const int mode)
+{
+    const auto clamped = std::clamp(mode, 0, 2);
+    if (renderMode_ == clamped) return;
+    renderMode_ = clamped;
+    QSettings{}.setValue(QStringLiteral("appearance/renderMode"), renderMode_);
+    emit renderModeChanged();
 }
 
 void ThemePreference::setTreePanelWidth(const int width)

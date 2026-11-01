@@ -366,6 +366,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         emit drawingPreviewReady(QString::fromUtf8(previewJson), revision, approximate);
     });
     connect(&visibilityModel_, &models::VisibilityModel::presentationChanged, this, [this] {
+        ++visibilityRevision_;
         emit visibilityChanged();
         emit viewerPresentationChanged();
     });
@@ -899,6 +900,23 @@ void ApplicationController::saveGeometryCache()
     const cache::UnitDecision unit{effectiveUnit_, 1.0};
     const auto key = cache::CacheKey::from(*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit);
     static_cast<void>(cacheStore_->put(key, geometryCacheArchive_, {*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit}));
+}
+
+int ApplicationController::nodeVisibilityState(const QString& nodeId) const
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (parts.isEmpty()) return 0;
+    const auto hidden = std::count_if(parts.cbegin(), parts.cend(),
+                                      [this](const QString& part) { return !visibilityModel_.isVisible(part); });
+    return hidden == 0 ? 0 : hidden == parts.size() ? 2 : 1;
+}
+
+void ApplicationController::setNodeHidden(const QString& nodeId, const bool hidden)
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (parts.isEmpty()) return;
+    if (hidden) visibilityModel_.hide(parts);
+    else visibilityModel_.show(parts);
 }
 
 int ApplicationController::hiddenPartCount() const

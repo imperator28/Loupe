@@ -192,6 +192,10 @@ Item {
                         required property string name
                         required property string stableId
                         required property int definitionQuantity
+                        // 0 shown, 1 partly hidden, 2 hidden (#14). Reads the revision so it
+                        // updates whenever anything is hidden or shown.
+                        readonly property int visibilityState: root.controller && root.controller.visibilityRevision >= 0
+                            ? root.controller.nodeVisibilityState(stableId) : 0
                         highlighted: root.controller && root.controller.selectedNodeIds.indexOf(stableId) >= 0
                         implicitHeight: root.theme.rowCompact
                         // Keep the label centered against the complete selection
@@ -274,7 +278,10 @@ Item {
                             Label {
                                 id: treeLabel
                                 Layout.fillWidth: true
-                                rightPadding: root.theme.spacing6
+                                rightPadding: root.theme.spacing1
+                                // A hidden part reads as absent; a partly hidden assembly as dimmed.
+                                opacity: treeDelegate.visibilityState === 2 ? 0.42 : 1
+                                font.italic: treeDelegate.visibilityState === 2
                                 text: definitionQuantity > 0 ? qsTr("%1  %2x").arg(name).arg(definitionQuantity) : name
                                 color: root.foreground
                                 elide: Text.ElideRight
@@ -285,6 +292,32 @@ Item {
                                     theme: root.theme
                                     text: treeLabel.text
                                     visible: treeHover.hovered && treeLabel.truncated
+                                }
+                            }
+
+                            // Always shown for a hidden or partly hidden row; on hover otherwise.
+                            ThemedToolButton {
+                                id: visibilityToggle
+                                theme: root.theme
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 22
+                                Layout.rightMargin: root.theme.spacing1
+                                opacity: treeDelegate.visibilityState !== 0 || treeHover.hovered || hovered ? 1 : 0
+                                enabled: opacity > 0
+                                Accessible.name: treeDelegate.visibilityState === 2
+                                                 ? qsTr("Show %1").arg(treeDelegate.name) : qsTr("Hide %1").arg(treeDelegate.name)
+                                onClicked: root.controller.setNodeHidden(treeDelegate.stableId, treeDelegate.visibilityState !== 2)
+                                contentItem: ToolIcon {
+                                    name: treeDelegate.visibilityState === 0 ? "eye" : "hide"
+                                    color: root.foreground
+                                    opacity: treeDelegate.visibilityState === 1 ? 0.55 : 1
+                                }
+                                ThemedToolTip {
+                                    theme: root.theme
+                                    text: treeDelegate.visibilityState === 2 ? qsTr("Hidden — click to show")
+                                          : treeDelegate.visibilityState === 1 ? qsTr("Partly hidden — click to hide all")
+                                                                               : qsTr("Hide")
+                                    visible: visibilityToggle.hovered
                                 }
                             }
                         }
@@ -303,7 +336,9 @@ Item {
                                     if (root.controller.selectedNodeIds.indexOf(stableId) < 0)
                                         root.controller.setActiveNodeId(stableId)
                                     treeContextMenu.targetNodeId = stableId
-                                    treeContextMenu.popup(eventPoint.position.x, eventPoint.position.y)
+                                    // At the cursor: the position here is the row's own, and the
+                                    // menu belongs to another item, so it opened offset upward.
+                                    treeContextMenu.popup()
                                     return
                                 }
                                 const modifiers = eventPoint.modifiers
@@ -534,16 +569,15 @@ Item {
         ThemedMenuSeparator { theme: treeContextMenu.theme }
         ThemedMenuItem {
             theme: treeContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Exit isolate") : qsTr("Isolate")
             enabled: treeContextMenu.targetNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide others"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make others transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
-        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Restore visibility"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
     }
 
     Loader {

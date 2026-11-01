@@ -69,6 +69,8 @@ class ApplicationController : public QObject {
     Q_PROPERTY(bool canRestoreVisibility READ canRestoreVisibility NOTIFY visibilityChanged)
     // Export the assembly without the parts that are hidden (#7).
     Q_PROPERTY(int hiddenPartCount READ hiddenPartCount NOTIFY visibilityChanged)
+    // Bumped on every visibility change, so QML can re-read per-node states (#14).
+    Q_PROPERTY(int visibilityRevision READ visibilityRevision NOTIFY visibilityChanged)
     Q_PROPERTY(bool assemblyExportInProgress READ assemblyExportInProgress NOTIFY assemblyExportChanged)
     Q_PROPERTY(QString assemblyExportMessage READ assemblyExportMessage NOTIFY assemblyExportChanged)
     Q_PROPERTY(bool assemblyExportSucceeded READ assemblyExportSucceeded NOTIFY assemblyExportChanged)
@@ -145,6 +147,12 @@ public:
     [[nodiscard]] ViewerPresentation viewerPresentation() const noexcept { return viewerPresentation_; }
     [[nodiscard]] bool canRestoreVisibility() const noexcept { return visibilityModel_.canRestore(); }
     [[nodiscard]] int hiddenPartCount() const;
+    [[nodiscard]] int visibilityRevision() const noexcept { return visibilityRevision_; }
+    // For the assembly tree: 0 shown, 1 partly hidden (an assembly with some parts hidden),
+    // 2 hidden.
+    Q_INVOKABLE [[nodiscard]] int nodeVisibilityState(const QString& nodeId) const;
+    // Hide or show a part or a whole assembly, undoable as one step.
+    Q_INVOKABLE void setNodeHidden(const QString& nodeId, bool hidden);
     [[nodiscard]] bool assemblyExportInProgress() const noexcept { return activeAssemblyExportRequestId_ != 0; }
     [[nodiscard]] const QString& assemblyExportMessage() const noexcept { return assemblyExportMessage_; }
     [[nodiscard]] bool assemblyExportSucceeded() const noexcept { return assemblyExportSucceeded_; }
@@ -315,6 +323,7 @@ private:
     std::uint64_t activeRequestId_{};
     std::uint64_t activeExportRequestId_{};
     std::uint64_t activeAssemblyExportRequestId_{};
+    int visibilityRevision_{};
     QString assemblyExportMessage_;
     bool assemblyExportSucceeded_{false};
     std::uint64_t activeDrawingRequestId_{};
@@ -368,7 +377,7 @@ private:
     QSet<QString> importedFaceColors_;
     bool importedUncolouredFace_{false};
     bool fileColorsUniform_{false};
-    int renderMode_{};
+    int renderMode_{1}; // Solid + Edges
     // Part definitions in tree order, then each one's position in the palette walk.
     QStringList partColorKeys_;
     QHash<QString, int> partColorPositionByKey_;

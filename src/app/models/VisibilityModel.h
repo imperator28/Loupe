@@ -15,6 +15,8 @@ public:
     void hide(const QString& nodeId);
     void hide(const QStringList& nodeIds);
     void show(const QString& nodeId);
+    // Show several at once, undoable as one step like hide.
+    void show(const QStringList& nodeIds);
     void isolate(const QString& nodeId);
     void isolate(const QStringList& nodeIds);
     void ghostComplements(const QString& nodeId);

@@ -98,6 +98,13 @@ ApplicationWindow {
         assemblyExportDialog.open()
     }
 
+    // A new document starts from the remembered appearance: the last display style chosen
+    // anywhere (#13), and the part colours.
+    function applyNewDocumentPreferences(document) {
+        document.renderMode = themePreference.renderMode
+        applyPartColorPreferences(document)
+    }
+
     function applyPartColorPreferences(document) {
         document.partColorMode = themePreference.partColorMode
         document.recolorFileColors = themePreference.recolorFileColors
@@ -121,11 +128,11 @@ ApplicationWindow {
     Component.onCompleted: {
         appTheme.mode = themePreference.mode
         windowChrome.applyAppearance(root, appTheme.dark)
-        root.applyPartColorPreferences(root.documents.documentAt(0))
+        root.applyNewDocumentPreferences(root.documents.documentAt(0))
     }
     Connections {
         target: root.documents
-        function onDocumentAdded(document) { root.applyPartColorPreferences(document) }
+        function onDocumentAdded(document) { root.applyNewDocumentPreferences(document) }
     }
     Connections {
         target: root.themePreference
@@ -134,6 +141,7 @@ ApplicationWindow {
     // The controller owns part colours for the session; the preference remembers them.
     Connections {
         target: root.controller
+        function onRenderModeChanged() { root.themePreference.renderMode = root.controller.renderMode }
         // Part colours are an appearance setting, so a change in one tab applies to all.
         function onPartColorsChanged() {
             root.themePreference.partColorMode = root.controller.partColorMode

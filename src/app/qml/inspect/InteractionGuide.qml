@@ -144,7 +144,7 @@ Dialog {
                         GuideRow { input: qsTr("F"); action: qsTr("Fit assembly") }
                         GuideRow { input: qsTr("Shift + F"); action: qsTr("Fit selection") }
                         GuideRow { input: qsTr("I"); action: qsTr("Isolate selection") }
-                        GuideRow { input: qsTr("H / Shift + H"); action: qsTr("Hide / Hide others") }
+                        GuideRow { input: qsTr("H"); action: qsTr("Hide") }
                         GuideRow { input: qsTr("T / Shift + T"); action: qsTr("Make transparent / Make others transparent") }
                         GuideRow { input: qsTr("Ctrl + F"); action: qsTr("Find a part in the assembly tree") }
                         GuideRow { input: qsTr("Ctrl + 8"); action: qsTr("View normal to the face under the pointer") }

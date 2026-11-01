@@ -34,6 +34,12 @@ Item {
             f: "M10 8 A2 2 0 1 0 10.01 8 Z",
             t: ""
         },
+        // "hide" without its strike: shown, for the tree's visibility toggle.
+        "eye": {
+            s: "M2.6 10 C5.1 5.9 14.9 5.9 17.4 10 C14.9 14.1 5.1 14.1 2.6 10 Z",
+            f: "M10 8 A2 2 0 1 0 10.01 8 Z",
+            t: ""
+        },
         "transparent": {
             s: "M3 3 H12 V12 H3 Z M8 8 H17 V17 H8 Z",
             f: "",

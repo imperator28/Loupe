@@ -105,7 +105,7 @@ Useful shortcuts:
 | --- | --- |
 | `F` / `Shift+F` | Fit assembly / fit selection |
 | `I` | Isolate or restore |
-| `H` / `Shift+H` | Hide selection / hide others |
+| `H` | Hide selection (Isolate, `I`, shows only the selection) |
 | `T` / `Shift+T` | Make selection transparent / make others transparent |
 | `Ctrl/Cmd+F` | Find a part in the assembly tree (Enter / Shift+Enter: next / previous) |
 | `Ctrl/Cmd+8` | View normal to the face under the pointer (again: its other side) |

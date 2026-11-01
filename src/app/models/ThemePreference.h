@@ -12,6 +12,8 @@ class ThemePreference : public QObject {
     Q_PROPERTY(QString partColorMode READ partColorMode WRITE setPartColorMode NOTIFY partColorsChanged)
     Q_PROPERTY(bool recolorFileColors READ recolorFileColors WRITE setRecolorFileColors NOTIFY partColorsChanged)
     Q_PROPERTY(int partColorSeed READ partColorSeed WRITE setPartColorSeed NOTIFY partColorsChanged)
+    // The display style (0 Solid, 1 Solid + Edges, 2 Edges Only) newly opened files start in.
+    Q_PROPERTY(int renderMode READ renderMode WRITE setRenderMode NOTIFY renderModeChanged)
     // Width of Inspect's assembly tree panel, which the user can drag.
     Q_PROPERTY(int treePanelWidth READ treePanelWidth WRITE setTreePanelWidth NOTIFY treePanelWidthChanged)
 
@@ -26,6 +28,8 @@ public:
     void setRecolorFileColors(bool recolor);
     [[nodiscard]] int partColorSeed() const noexcept { return partColorSeed_; }
     void setPartColorSeed(int seed);
+    [[nodiscard]] int renderMode() const noexcept { return renderMode_; }
+    void setRenderMode(int mode);
     [[nodiscard]] int treePanelWidth() const noexcept { return treePanelWidth_; }
     void setTreePanelWidth(int width);
 
@@ -33,6 +37,7 @@ signals:
     void modeChanged();
     void partColorsChanged();
     void treePanelWidthChanged();
+    void renderModeChanged();
 
 private:
     QString mode_{QStringLiteral("System")};
@@ -40,6 +45,7 @@ private:
     bool recolorFileColors_{false};
     int partColorSeed_{};
     int treePanelWidth_{248};
+    int renderMode_{1};
 };
 
 } // namespace loupe::app::models
