@@ -40,13 +40,13 @@ ThemePreference::ThemePreference(QObject* parent)
     recolorFileColors_ = settings.value(QStringLiteral("appearance/recolorFileColors"), false).toBool();
     partColorSeed_ = settings.value(QStringLiteral("appearance/partColorSeed"), 0).toInt();
     renderMode_ = std::clamp(settings.value(QStringLiteral("appearance/renderMode"), 1).toInt(), 0, 2);
-    const auto panelGroup = QStringLiteral("layout/panels/");
-    for (const auto& key : settings.allKeys()) {
-        if (!key.startsWith(panelGroup)) continue;
-        const auto name = key.mid(panelGroup.size());
+    // One value for every panel, rather than a key each: listing a group's keys is not
+    // reliable across settings backends (it came back empty from the Windows registry).
+    const auto storedWidths = settings.value(QStringLiteral("layout/panelWidths")).toMap();
+    for (auto it = storedWidths.cbegin(); it != storedWidths.cend(); ++it) {
         bool valid = false;
-        const auto width = settings.value(key).toInt(&valid);
-        if (isPanelKey(name) && valid) panelWidths_.insert(name, std::clamp(width, kMinimumPanelWidth, kMaximumPanelWidth));
+        const auto width = it.value().toInt(&valid);
+        if (isPanelKey(it.key()) && valid) panelWidths_.insert(it.key(), std::clamp(width, kMinimumPanelWidth, kMaximumPanelWidth));
     }
     // 0.1.5-beta's tree width, from before every panel could be resized.
     if (!panelWidths_.contains(QStringLiteral("inspectTree")) && settings.contains(QStringLiteral("layout/treePanelWidth"))) {
@@ -103,7 +103,7 @@ void ThemePreference::setPanelWidth(const QString& key, const int width)
     const auto clamped = std::clamp(width, kMinimumPanelWidth, kMaximumPanelWidth);
     if (panelWidths_.value(key).toInt() == clamped && panelWidths_.contains(key)) return;
     panelWidths_.insert(key, clamped);
-    QSettings{}.setValue(QStringLiteral("layout/panels/") + key, clamped);
+    QSettings{}.setValue(QStringLiteral("layout/panelWidths"), panelWidths_);
     emit panelWidthsChanged();
 }
 
@@ -112,7 +112,7 @@ void ThemePreference::clearPanelWidth(const QString& key)
     if (!isPanelKey(key) || !panelWidths_.contains(key)) return;
     panelWidths_.remove(key);
     QSettings settings;
-    settings.remove(QStringLiteral("layout/panels/") + key);
+    settings.setValue(QStringLiteral("layout/panelWidths"), panelWidths_);
     if (key == QStringLiteral("inspectTree")) settings.remove(QStringLiteral("layout/treePanelWidth"));
     emit panelWidthsChanged();
 }

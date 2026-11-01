@@ -1401,6 +1401,9 @@ void QmlSmokeTest::drawingQueueThumbnailFlattensTheCapturedPreview()
 int main(int argc, char* argv[])
 {
     QGuiApplication application(argc, argv);
+    // Settings of their own, never the app's, and somewhere every platform reads back from.
+    QCoreApplication::setOrganizationName(QStringLiteral("Loupe"));
+    QCoreApplication::setApplicationName(QStringLiteral("LoupeQmlSmokeTests"));
     QmlSmokeTest test;
     return QTest::qExec(&test, argc, argv);
 }
