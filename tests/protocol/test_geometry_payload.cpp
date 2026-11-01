@@ -11,6 +11,7 @@ class GeometryPayloadTest final : public QObject
 
 private slots:
     void meshRoundTrips();
+    void meshFaceAreaSumsTheFaceMeasures();
     void edgeRoundTrips();
     void rejectsOutOfRangeIndices();
     void rejectsTruncatedPayload();
@@ -36,6 +37,24 @@ void GeometryPayloadTest::meshRoundTrips()
     QCOMPARE(mesh.indices, QVector<quint32>({0, 1, 2}));
     QCOMPARE(mesh.topology.size(), 1);
     QCOMPARE(mesh.topology.front().topologyId, 3U);
+}
+
+void GeometryPayloadTest::meshFaceAreaSumsTheFaceMeasures()
+{
+    loupe::protocol::MeshPayload source{7, 3, QStringLiteral("definition"), QStringLiteral("node"), QStringLiteral("segment"), QStringLiteral("#2288CC"), 1,
+                                        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 0.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2, 1, 3, 2},
+                                        {{3, loupe::protocol::TopologyKind::Face, 0, 3, 0.5F, 0.0F},
+                                         {9, loupe::protocol::TopologyKind::Face, 3, 3, 1.25F, 2.0F}}};
+    const auto bytes = loupe::protocol::encodeGeometry(source);
+    QCOMPARE(loupe::protocol::meshFaceArea(bytes), 1.75);
+    QCOMPARE(loupe::protocol::meshFaceArea(bytes.left(bytes.size() - 3)), 0.0);
+    QCOMPARE(loupe::protocol::meshFaceArea({}), 0.0);
+    loupe::protocol::EdgePayload edges{8, 4, QStringLiteral("definition"), QStringLiteral("node"), 0,
+                                       {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F}, {0, 1},
+                                       {{4, loupe::protocol::TopologyKind::Edge, 0, 2, 1.0F, 0.0F}}};
+    QCOMPARE(loupe::protocol::meshFaceArea(loupe::protocol::encodeGeometry(edges)), 0.0);
 }
 
 void GeometryPayloadTest::edgeRoundTrips()

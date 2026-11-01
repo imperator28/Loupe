@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QPointer>
+#include <QSet>
 #include <QUrl>
 
 #include "app/ApplicationController.h"
@@ -54,6 +55,7 @@ private slots:
     void appearanceOverridesMaterialAndSourceColor();
     void reopensSourceWithPersistedAppearanceOverrides();
     void uncolouredPartsCarryNoColourAndContainersShowTheirGeometry();
+    void aMulticolouredPartsSwatchShowsTheColourOfMostOfItsSurface();
     void autoPartColoursGiveEachDefinitionItsOwnColour();
     void autoPartColoursTreatOneSharedFileColourAsNone();
 };
@@ -611,6 +613,32 @@ void ApplicationControllerTest::uncolouredPartsCarryNoColourAndContainersShowThe
     QVERIFY(controller.setActiveAppearanceColor(QStringLiteral("#FF0055"), QStringLiteral("occurrence")));
     controller.setActiveNodeId(rootId);
     QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#FF0055"));
+}
+
+void ApplicationControllerTest::aMulticolouredPartsSwatchShowsTheColourOfMostOfItsSurface()
+{
+    // A part arrives as one segment per face colour. The swatch took whichever segment came
+    // last, so an orange part with one green face showed a green swatch.
+    const auto fixture = loupe::tests::writeMostlyOrangeBoxWithAGreenFace(QStringLiteral("controller-two-colour.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QSet<QString> colours;
+    for (const auto& arguments : meshSpy) colours.insert(arguments.at(2).toString());
+    QCOMPARE(colours, (QSet<QString>{QStringLiteral("#D95900"), QStringLiteral("#00FF00")}));
+
+    const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
+    QCOMPARE(geometry.size(), 1);
+    controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#D95900"));
+
+    // The same after the geometry is replayed from the session's cache, as a workspace
+    // switch or a reopened tab does.
+    const auto beforeReplay = meshSpy.count();
+    controller.replayGeometry();
+    QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() >= beforeReplay + 2, 5'000);
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#D95900"));
 }
 
 namespace {

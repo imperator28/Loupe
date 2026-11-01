@@ -291,6 +291,9 @@ private:
     void replayCachedGeometry(const QByteArray& archive);
     void replayGeometryChunk();
     void noteImportedColor(const QString& nodeId, const QString& color);
+    // Records one face-colour segment of a part and makes the part's imported colour the one
+    // covering the most face area. True when that colour changed.
+    bool noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color, const QByteArray& payload);
     void rebuildPartColorOrder();
     [[nodiscard]] QString autoPartColor(const QString& nodeId) const;
     void partColorsUpdated();
@@ -368,7 +371,15 @@ private:
     QHash<QString, QString> definitionByNode_;
     QHash<QString, QString> materialByNode_;
     QHash<QString, QString> appearanceByNode_;
+    // A part's file colour for its swatch: the colour of most of its surface. A part arrives
+    // as one segment per face colour, so the colour of whichever segment came last (a small
+    // logo face, say) was not the colour the part reads as.
     QHash<QString, QString> importedColorByNode_;
+    struct SegmentColor final {
+        QString color;
+        double areaMm2{};
+    };
+    QHash<QString, QHash<QString, SegmentColor>> segmentColorsByNode_;
     QString partColorMode_{QStringLiteral("file")};
     bool recolorFileColors_{false};
     std::uint32_t partColorSeed_{};

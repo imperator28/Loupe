@@ -80,6 +80,11 @@ public:
         offset_ += static_cast<qsizetype>(length);
         return value;
     }
+    void skip(const qsizetype count)
+    {
+        ensure(count);
+        offset_ += count;
+    }
     void ensureRemaining() const
     {
         if (offset_ != bytes_.size()) {
@@ -273,6 +278,36 @@ GeometryPayload decodeGeometry(const QByteArray& bytes)
         return payload;
     }
     throw ProtocolError("Geometry payload type is invalid");
+}
+
+double meshFaceArea(const QByteArray& bytes) noexcept
+{
+    try {
+        Reader reader(bytes);
+        if (reader.u32() != kMagic || reader.u16() != kVersion) return 0.0;
+        if (reader.u8() != static_cast<quint8>(GeometryType::Mesh)) return 0.0;
+        static_cast<void>(reader.u8());
+        static_cast<void>(reader.u64());
+        static_cast<void>(reader.u64());
+        for (int field = 0; field < 4; ++field) static_cast<void>(reader.string());
+        const auto vertexCount = reader.u32();
+        const auto indexCount = reader.u32();
+        const auto topologyCount = reader.u32();
+        if (vertexCount > kMaximumVertices || indexCount > kMaximumIndices || topologyCount > kMaximumTopologyRanges)
+            return 0.0;
+        // Vertices and normals (3 floats each per vertex), then the u32 indices.
+        reader.skip(static_cast<qsizetype>(vertexCount) * 6 * 4 + static_cast<qsizetype>(indexCount) * 4);
+        double area = 0.0;
+        for (quint32 index = 0; index < topologyCount; ++index) {
+            reader.skip(4 + 1 + 4 + 4); // topologyId, kind, firstIndex, indexCount
+            const auto measure = reader.number();
+            reader.skip(4); // radiusMm
+            if (std::isfinite(measure) && measure > 0.0F) area += measure;
+        }
+        return area;
+    } catch (...) {
+        return 0.0;
+    }
 }
 
 } // namespace loupe::protocol

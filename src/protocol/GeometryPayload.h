@@ -51,5 +51,8 @@ using GeometryPayload = std::variant<MeshPayload, EdgePayload>;
 
 [[nodiscard]] QByteArray encodeGeometry(const GeometryPayload& payload);
 [[nodiscard]] GeometryPayload decodeGeometry(const QByteArray& bytes);
+// The summed face area (mm^2) of an encoded mesh payload, read from its topology ranges
+// without decoding the vertex data. 0 for an edge payload or anything malformed.
+[[nodiscard]] double meshFaceArea(const QByteArray& bytes) noexcept;
 
 } // namespace loupe::protocol

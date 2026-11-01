@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "protocol/GeometryPayload.h"
 #include "app/cache/CacheKey.h"
 #include "app/cache/CacheStore.h"
 #include "app/cache/SourceFingerprint.h"
@@ -163,10 +164,8 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             emit importProgressChanged();
         }
         noteImportedColor(nodeId, sourceColor);
-        if (!sourceColor.isEmpty() && importedColorByNode_.value(nodeId) != sourceColor) {
-            importedColorByNode_.insert(nodeId, sourceColor);
-            if (isNodeSelected(nodeId)) emit componentPropertiesChanged();
-        }
+        if (noteSegmentColor(nodeId, segmentKey, sourceColor, meshJson) && isNodeSelected(nodeId))
+            emit componentPropertiesChanged();
         meshRevisionBySegment_.insert(segmentKey, ++geometryRevisionCounter_);
         emit meshReady(nodeId, segmentKey, sourceColor, meshJson);
     });
@@ -542,6 +541,7 @@ void ApplicationController::openFile(const QUrl& file)
     materialByNode_.clear();
     appearanceByNode_.clear();
     importedColorByNode_.clear();
+    segmentColorsByNode_.clear();
     importedFaceColors_.clear();
     importedUncolouredFace_ = false;
     fileColorsUniform_ = false;
@@ -877,7 +877,7 @@ void ApplicationController::replayGeometryChunk()
         if (entry.kind == 1) {
             previewGeometryReceived_ = true;
             noteImportedColor(entry.nodeId, entry.sourceColor);
-            if (!entry.sourceColor.isEmpty()) importedColorByNode_.insert(entry.nodeId, entry.sourceColor);
+            static_cast<void>(noteSegmentColor(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload));
             // A replay re-sends what the viewports were already given, so it keeps the
             // revision; only geometry that arrived from the cache alone gets a new one.
             if (!meshRevisionBySegment_.contains(entry.segmentKey))
@@ -1431,6 +1431,30 @@ void ApplicationController::noteImportedColor(const QString& nodeId, const QStri
     fileColorsUniform_ = uniform;
     emit partColorsChanged();
     if (partPaletteStyle(partColorMode_) && !recolorFileColors_) emit componentPropertiesChanged();
+}
+
+bool ApplicationController::noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color,
+                                             const QByteArray& payload)
+{
+    auto& segments = segmentColorsByNode_[nodeId];
+    // Keyed by segment, so the refined pass replaces the preview's entry rather than adding to it.
+    segments.insert(segmentKey, {color, protocol::meshFaceArea(payload)});
+    QHash<QString, double> areaByColor;
+    for (const auto& segment : std::as_const(segments)) areaByColor[segment.color] += segment.areaMm2;
+    QString dominant;
+    double dominantArea = -1.0;
+    for (auto it = areaByColor.cbegin(); it != areaByColor.cend(); ++it) {
+        // Ties go to the lower colour, so the result does not depend on hash order.
+        if (it.value() > dominantArea || (it.value() == dominantArea && it.key() < dominant)) {
+            dominant = it.key();
+            dominantArea = it.value();
+        }
+    }
+    const auto previous = importedColorByNode_.value(nodeId);
+    // Mostly uncoloured reads as the neutral body, which an absent entry gives.
+    if (dominant.isEmpty()) importedColorByNode_.remove(nodeId);
+    else importedColorByNode_.insert(nodeId, dominant);
+    return importedColorByNode_.value(nodeId) != previous;
 }
 
 void ApplicationController::rebuildPartColorOrder()

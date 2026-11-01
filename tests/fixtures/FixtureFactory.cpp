@@ -14,6 +14,9 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <BRep_Builder.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
@@ -147,6 +150,23 @@ std::filesystem::path writeMultiSolidBodyStep(const std::filesystem::path& file)
     shift.SetTranslation(gp_Vec(30.0, 0.0, 0.0));
     builder.Add(body, BRepBuilderAPI_Transform(BRepPrimAPI_MakeBox(6.0, 6.0, 6.0).Shape(), shift).Shape());
     shapes->AddShape(body, false);
+    return write(document, file, FixtureUnit::Millimeter);
+}
+
+std::filesystem::path writeMostlyOrangeBoxWithAGreenFace(const std::filesystem::path& file)
+{
+    const auto document = makeDocument(FixtureUnit::Millimeter);
+    const auto shapes = XCAFDoc_DocumentTool::ShapeTool(document->Main());
+    const auto colors = XCAFDoc_DocumentTool::ColorTool(document->Main());
+    const TopoDS_Shape box = BRepPrimAPI_MakeBox(40.0, 40.0, 10.0).Shape();
+    const auto label = shapes->AddShape(box, false);
+    colors->SetColor(label, Quantity_Color(0.85, 0.35, 0.0, Quantity_TOC_sRGB), XCAFDoc_ColorGen);
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(box, TopAbs_FACE, faces);
+    // Face 2 is the box's +X side, 40 x 10: after the first (orange) face, so its segment
+    // is not the first to arrive, and a tenth of the surface.
+    const auto face = shapes->AddSubShape(label, faces(2));
+    colors->SetColor(face, Quantity_Color(0.0, 1.0, 0.0, Quantity_TOC_sRGB), XCAFDoc_ColorSurf);
     return write(document, file, FixtureUnit::Millimeter);
 }
 
