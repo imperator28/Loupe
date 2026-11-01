@@ -15,6 +15,7 @@
 
 #include <functional>
 #include <QColor>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
 #include <QDragEnterEvent>
@@ -313,7 +314,6 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
     auto* first = tabs->active();
     auto* second = tabs->add();
     auto* third = tabs->add();
-    Q_UNUSED(third);
 
     const auto tabItems = [&] {
         QList<QQuickItem*> items;
@@ -328,6 +328,38 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
     QTRY_COMPARE_WITH_TIMEOUT(tabItems().size(), 3, 3000);
     const auto centreOf = [](QQuickItem* item) {
         return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+    };
+    // Where every tab sits, and the window's size: a drag aimed at a tab must start once
+    // these stop changing. A fixed wait is not enough on a fresh machine, where the first
+    // text layout (cold font caches) and the window settling can run on past it.
+    const auto tabLayout = [&] {
+        QStringList parts{QStringLiteral("%1x%2").arg(window->width()).arg(window->height())};
+        for (auto* item : tabItems()) {
+            const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+            parts << QStringLiteral("%1,%2 %3x%4").arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height());
+        }
+        return parts.join(QStringLiteral("; "));
+    };
+    const auto waitForSettledTabs = [&] {
+        QString previous;
+        QDeadlineTimer deadline(5000);
+        while (!deadline.hasExpired()) {
+            QTest::qWait(100);
+            const auto current = tabLayout();
+            if (current == previous) return true;
+            previous = current;
+        }
+        return false;
+    };
+    const auto tabOrder = [&] {
+        QStringList order;
+        for (int i = 0; i < tabs->count(); ++i) {
+            const auto* document = tabs->documentAt(i);
+            order << (document == first ? QStringLiteral("first") : document == second ? QStringLiteral("second")
+                                                                 : document == third ? QStringLiteral("third")
+                                                                                     : QStringLiteral("other"));
+        }
+        return order.join(QStringLiteral(", "));
     };
     const auto drag = [&](const QPoint from, const QPoint to) {
         QTest::mousePress(window, Qt::LeftButton, {}, from);
@@ -348,11 +380,13 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
         QCoreApplication::sendEvent(window, &dropEvent);
     }
     // Drag the first tab past the second: they swap.
-    QTest::qWait(300); // let the strip lay the new tabs out
+    QVERIFY2(waitForSettledTabs(), qPrintable(QStringLiteral("tabs never settled: ") + tabLayout()));
     auto items = tabItems();
+    const auto layoutBeforeReorder = tabLayout();
     drag(centreOf(items.at(0)), centreOf(items.at(1)) + QPoint(items.at(1)->width() / 2 - 2, 0));
-    QCOMPARE(tabs->documentAt(1), first);
-    QCOMPARE(tabs->documentAt(0), second);
+    QVERIFY2(tabs->documentAt(1) == first && tabs->documentAt(0) == second,
+             qPrintable(QStringLiteral("order after the drag: %1; tabs before it: %2; tabs now: %3")
+                            .arg(tabOrder(), layoutBeforeReorder, tabLayout())));
 
     // Drag a tab well below the strip and let go: it leaves for a window of its own.
     const auto windowsBefore = QGuiApplication::topLevelWindows().size();
@@ -374,7 +408,7 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
     window->resize(700, 500);
     opened->setPosition(760, 0);
     opened->resize(700, 500);
-    QTest::qWait(300);
+    QVERIFY2(waitForSettledTabs(), qPrintable(QStringLiteral("tabs never settled: ") + tabLayout()));
     const auto onOpened = opened->contentItem()->mapToGlobal(QPointF(300, 0)).toPoint() + QPoint(0, 40);
     items = tabItems();
     const auto moving = tabs->documentAt(0);
@@ -392,7 +426,7 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
     { QFile file(named); QVERIFY(file.open(QIODevice::WriteOnly)); }
     tabs->documentAt(0)->openFile(QUrl::fromLocalFile(named));
     QTRY_COMPARE_WITH_TIMEOUT(tabItems().size(), 1, 3000);
-    QTest::qWait(200);
+    QVERIFY2(waitForSettledTabs(), qPrintable(QStringLiteral("tabs never settled: ") + tabLayout()));
     items = tabItems();
     const auto last = tabs->documentAt(0);
     drag(centreOf(items.at(0)), onOpened - window->position());
