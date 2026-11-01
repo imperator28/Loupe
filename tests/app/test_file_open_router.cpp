@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QFileInfo>
 #include <QLocalSocket>
 #include <QTemporaryDir>
 
@@ -48,7 +49,9 @@ void FileOpenRouterTest::picksStepFilesOutOfTheCommandLine()
     const auto files = FileOpenRouter::stepFilesIn({QStringLiteral("Loupe"), QStringLiteral("--self-check"),
                                                     QStringLiteral("/parts/a.STEP"), QStringLiteral("/parts/b.stp"),
                                                     QStringLiteral("/parts/notes.txt")});
-    QCOMPARE(files, (QStringList{QStringLiteral("/parts/a.STEP"), QStringLiteral("/parts/b.stp")}));
+    // Made absolute the platform's way: on Windows "/parts" is on the current drive.
+    QCOMPARE(files, (QStringList{QFileInfo(QStringLiteral("/parts/a.STEP")).absoluteFilePath(),
+                                 QFileInfo(QStringLiteral("/parts/b.stp")).absoluteFilePath()}));
     QVERIFY(FileOpenRouter::stepFilesIn({QStringLiteral("Loupe")}).isEmpty());
 }
 
