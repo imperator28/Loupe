@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.1.5-beta.1
+
+A testing build of the tickets raised after 0.1.4 (#2, #3, #4, #6, #7, #8, #9,
+#10) and two fixes reported against it. Published as a pre-release. #5 (opening
+native NX, Creo and SOLIDWORKS files) needs a decision on a commercial import
+SDK and is not in this build.
 
 ### New
 
