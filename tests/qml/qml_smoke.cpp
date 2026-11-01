@@ -29,6 +29,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
+#include <QScopeGuard>
 #include <QtTest/QTest>
 #include <qqml.h>
 
@@ -81,6 +82,7 @@ private slots:
     // drop into this test's own window does not (checked below).
     void tabsDragToReorderAndOffTheStripIntoANewWindow();
     void mainLoads();
+    void sidePanelsDragWithinTheirLimitsAndRemember();
     void exportPickerCheckboxUpdatesDraft();
     void inspectionTaskPanelsLoad();
     void captureProgressStaysInCapturePanel();
@@ -173,6 +175,128 @@ void QmlSmokeTest::mainLoads()
     QVERIFY(dropEvent.isAccepted());
     QTRY_COMPARE(controller->documentState(), loupe::app::DocumentState::Invalid);
     QVERIFY(controller->errorMessage().contains(QStringLiteral("does not exist"), Qt::CaseInsensitive));
+}
+
+void QmlSmokeTest::sidePanelsDragWithinTheirLimitsAndRemember()
+{
+    // Three zones as every workspace lays them out: a picker on the left, a centre with a
+    // minimum, settings on the right. Both sides drag, within limits, and remember.
+    loupe::app::models::ThemePreference preferences;
+    preferences.clearPanelWidth(QStringLiteral("smokePicker"));
+    preferences.clearPanelWidth(QStringLiteral("smokeSettings"));
+    const auto cleanup = qScopeGuard([&] {
+        preferences.clearPanelWidth(QStringLiteral("smokePicker"));
+        preferences.clearPanelWidth(QStringLiteral("smokeSettings"));
+    });
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY2(theme != nullptr, qPrintable(themeComponent.errorString()));
+
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(R"(
+import QtQuick
+import QtQuick.Layouts
+import "inspect" as Inspect
+Item {
+    id: root
+    property QtObject theme
+    property QtObject preferences
+    readonly property real sidePanelRoom: width - 4 * 12 - 420
+    RowLayout {
+        id: row
+        anchors.fill: parent
+        anchors.margins: 12
+        spacing: 12
+        Rectangle { id: left; objectName: "left"; Layout.fillHeight: true; Layout.preferredWidth: leftSplitter.effectiveWidth }
+        Rectangle { objectName: "centre"; Layout.fillHeight: true; Layout.fillWidth: true; Layout.minimumWidth: 420 }
+        Rectangle { id: right; objectName: "right"; Layout.fillHeight: true; Layout.preferredWidth: rightSplitter.effectiveWidth }
+    }
+    Inspect.PanelSplitter {
+        id: leftSplitter; objectName: "leftSplitter"; theme: root.theme; preferences: root.preferences
+        key: "smokePicker"; panel: left; gap: row.spacing
+        defaultWidth: 290; minimumWidth: 220
+        maximumWidth: Math.min(560, root.sidePanelRoom - rightSplitter.staticWidth)
+    }
+    Inspect.PanelSplitter {
+        id: rightSplitter; objectName: "rightSplitter"; theme: root.theme; preferences: root.preferences
+        key: "smokeSettings"; panel: right; panelOnLeft: false; gap: row.spacing
+        defaultWidth: 360; minimumWidth: 300
+        maximumWidth: Math.min(640, root.sidePanelRoom - leftSplitter.effectiveWidth)
+    }
+}
+)"), QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/splitter-harness.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("preferences"), QVariant::fromValue(static_cast<QObject*>(&preferences))},
+    }));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* harness = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(1400, 600);
+    harness->setParentItem(window.contentItem());
+    harness->setSize(QSizeF(1400, 600));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    auto* left = findItemByObjectName(harness, QStringLiteral("left"));
+    auto* right = findItemByObjectName(harness, QStringLiteral("right"));
+    auto* centre = findItemByObjectName(harness, QStringLiteral("centre"));
+    auto* leftSplitter = findItemByObjectName(harness, QStringLiteral("leftSplitter"));
+    auto* rightSplitter = findItemByObjectName(harness, QStringLiteral("rightSplitter"));
+    QVERIFY(left && right && centre && leftSplitter && rightSplitter);
+    QTRY_COMPARE(left->width(), 290.0);
+    QCOMPARE(right->width(), 360.0);
+
+    const auto drag = [&](QQuickItem* splitter, const qreal dx) {
+        const auto start = splitter->mapToScene(QPointF(splitter->width() / 2.0, splitter->height() / 2.0)).toPoint();
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+        for (int step = 1; step <= 5; ++step)
+            QTest::mouseMove(&window, start + QPoint(qRound(dx * step / 5.0), 0));
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, start + QPoint(qRound(dx), 0));
+    };
+    // The divider sits in the gap, not over either panel.
+    QVERIFY(leftSplitter->x() >= left->x() + left->width() + 12 - leftSplitter->width());
+    QVERIFY(leftSplitter->x() + leftSplitter->width() <= centre->x() + 12);
+
+    drag(leftSplitter, 100);
+    QTRY_COMPARE(left->width(), 390.0);
+    QCOMPARE(preferences.panelWidths().value(QStringLiteral("smokePicker")).toInt(), 390);
+    // A right-hand panel widens leftward.
+    drag(rightSplitter, -80);
+    QTRY_COMPARE(right->width(), 440.0);
+    QCOMPARE(preferences.panelWidths().value(QStringLiteral("smokeSettings")).toInt(), 440);
+
+    // Held to its limit, and the centre keeps its minimum.
+    drag(leftSplitter, 2000);
+    QTRY_COMPARE(left->width(), 1400.0 - 4 * 12 - 420 - 440);
+    QCOMPARE(centre->width(), 420.0);
+    drag(leftSplitter, -2000);
+    QTRY_COMPARE(left->width(), 220.0);
+
+    // A narrower window narrows the panels rather than the centre; the widths come back.
+    drag(leftSplitter, 150);
+    QTRY_COMPARE(left->width(), 370.0);
+    harness->setWidth(1100);
+    QTRY_COMPARE(left->width(), 220.0);
+    QTRY_COMPARE(right->width(), 1100.0 - 4 * 12 - 420 - 220);
+    QCOMPARE(centre->width(), 420.0);
+    QCOMPARE(preferences.panelWidths().value(QStringLiteral("smokePicker")).toInt(), 370);
+    harness->setWidth(1400);
+    QTRY_COMPARE(left->width(), 370.0);
+    QTRY_COMPARE(right->width(), 440.0);
+
+    // A double click puts a panel back at its default and forgets the width.
+    const auto leftCentre = leftSplitter->mapToScene(QPointF(leftSplitter->width() / 2.0, leftSplitter->height() / 2.0)).toPoint();
+    QTest::mouseDClick(&window, Qt::LeftButton, Qt::NoModifier, leftCentre);
+    QTRY_COMPARE(left->width(), 290.0);
+    QVERIFY(!preferences.panelWidths().contains(QStringLiteral("smokePicker")));
+
+    // Remembered: a new preferences object reads the stored width back.
+    loupe::app::models::ThemePreference reloaded;
+    QCOMPARE(reloaded.panelWidths().value(QStringLiteral("smokeSettings")).toInt(), 440);
 }
 
 void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()

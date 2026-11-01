@@ -7,6 +7,18 @@
 namespace loupe::app::models {
 namespace {
 
+constexpr int kMinimumPanelWidth = 120;
+constexpr int kMaximumPanelWidth = 2000;
+
+// A settings key segment: letters and digits only, so a key cannot reach another group.
+[[nodiscard]] bool isPanelKey(const QString& key)
+{
+    if (key.isEmpty() || key.size() > 40) return false;
+    return std::all_of(key.cbegin(), key.cend(), [](const QChar character) {
+        return character.isLetterOrNumber() && character.unicode() < 128;
+    });
+}
+
 [[nodiscard]] bool isPartColorMode(const QString& mode)
 {
     return mode == QStringLiteral("file") || mode == QStringLiteral("shades") || mode == QStringLiteral("warm")
@@ -28,7 +40,19 @@ ThemePreference::ThemePreference(QObject* parent)
     recolorFileColors_ = settings.value(QStringLiteral("appearance/recolorFileColors"), false).toBool();
     partColorSeed_ = settings.value(QStringLiteral("appearance/partColorSeed"), 0).toInt();
     renderMode_ = std::clamp(settings.value(QStringLiteral("appearance/renderMode"), 1).toInt(), 0, 2);
-    treePanelWidth_ = std::clamp(settings.value(QStringLiteral("layout/treePanelWidth"), 248).toInt(), 160, 1200);
+    const auto panelGroup = QStringLiteral("layout/panels/");
+    for (const auto& key : settings.allKeys()) {
+        if (!key.startsWith(panelGroup)) continue;
+        const auto name = key.mid(panelGroup.size());
+        bool valid = false;
+        const auto width = settings.value(key).toInt(&valid);
+        if (isPanelKey(name) && valid) panelWidths_.insert(name, std::clamp(width, kMinimumPanelWidth, kMaximumPanelWidth));
+    }
+    // 0.1.5-beta's tree width, from before every panel could be resized.
+    if (!panelWidths_.contains(QStringLiteral("inspectTree")) && settings.contains(QStringLiteral("layout/treePanelWidth"))) {
+        panelWidths_.insert(QStringLiteral("inspectTree"),
+                            std::clamp(settings.value(QStringLiteral("layout/treePanelWidth")).toInt(), kMinimumPanelWidth, kMaximumPanelWidth));
+    }
 }
 
 void ThemePreference::setMode(const QString& mode)
@@ -73,13 +97,24 @@ void ThemePreference::setRenderMode(const int mode)
     emit renderModeChanged();
 }
 
-void ThemePreference::setTreePanelWidth(const int width)
+void ThemePreference::setPanelWidth(const QString& key, const int width)
 {
-    const auto clamped = std::clamp(width, 160, 1200);
-    if (treePanelWidth_ == clamped) return;
-    treePanelWidth_ = clamped;
-    QSettings{}.setValue(QStringLiteral("layout/treePanelWidth"), treePanelWidth_);
-    emit treePanelWidthChanged();
+    if (!isPanelKey(key)) return;
+    const auto clamped = std::clamp(width, kMinimumPanelWidth, kMaximumPanelWidth);
+    if (panelWidths_.value(key).toInt() == clamped && panelWidths_.contains(key)) return;
+    panelWidths_.insert(key, clamped);
+    QSettings{}.setValue(QStringLiteral("layout/panels/") + key, clamped);
+    emit panelWidthsChanged();
+}
+
+void ThemePreference::clearPanelWidth(const QString& key)
+{
+    if (!isPanelKey(key) || !panelWidths_.contains(key)) return;
+    panelWidths_.remove(key);
+    QSettings settings;
+    settings.remove(QStringLiteral("layout/panels/") + key);
+    if (key == QStringLiteral("inspectTree")) settings.remove(QStringLiteral("layout/treePanelWidth"));
+    emit panelWidthsChanged();
 }
 
 } // namespace loupe::app::models

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantMap>
 
 namespace loupe::app::models {
 
@@ -14,8 +15,9 @@ class ThemePreference : public QObject {
     Q_PROPERTY(int partColorSeed READ partColorSeed WRITE setPartColorSeed NOTIFY partColorsChanged)
     // The display style (0 Solid, 1 Solid + Edges, 2 Edges Only) newly opened files start in.
     Q_PROPERTY(int renderMode READ renderMode WRITE setRenderMode NOTIFY renderModeChanged)
-    // Width of Inspect's assembly tree panel, which the user can drag.
-    Q_PROPERTY(int treePanelWidth READ treePanelWidth WRITE setTreePanelWidth NOTIFY treePanelWidthChanged)
+    // The widths the user dragged the workspaces' side panels to, by panel key (e.g.
+    // "inspectTree", "pickerPanel"). A key with no entry is at its default width.
+    Q_PROPERTY(QVariantMap panelWidths READ panelWidths NOTIFY panelWidthsChanged)
 
 public:
     explicit ThemePreference(QObject* parent = nullptr);
@@ -30,13 +32,15 @@ public:
     void setPartColorSeed(int seed);
     [[nodiscard]] int renderMode() const noexcept { return renderMode_; }
     void setRenderMode(int mode);
-    [[nodiscard]] int treePanelWidth() const noexcept { return treePanelWidth_; }
-    void setTreePanelWidth(int width);
+    [[nodiscard]] const QVariantMap& panelWidths() const noexcept { return panelWidths_; }
+    Q_INVOKABLE void setPanelWidth(const QString& key, int width);
+    // Back to the panel's default width.
+    Q_INVOKABLE void clearPanelWidth(const QString& key);
 
 signals:
     void modeChanged();
     void partColorsChanged();
-    void treePanelWidthChanged();
+    void panelWidthsChanged();
     void renderModeChanged();
 
 private:
@@ -44,7 +48,7 @@ private:
     QString partColorMode_{QStringLiteral("file")};
     bool recolorFileColors_{false};
     int partColorSeed_{};
-    int treePanelWidth_{248};
+    QVariantMap panelWidths_;
     int renderMode_{1};
 };
 

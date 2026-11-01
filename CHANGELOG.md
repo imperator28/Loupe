@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.5-beta.4
+
+- **Every side panel can be resized**: drag the divider beside the assembly tree
+  or the component properties in Inspect, the component list or the settings and
+  previews in Export, or the part list or drawing setup in Drawing. Each holds
+  between a minimum and a maximum, the 3D view keeps a usable width, and a
+  smaller window narrows the panels and gives the width back when it grows.
+  Widths are remembered, Export and Drawing share theirs so the two still line
+  up, and a double click restores the default.
+- **The appearance swatch matches a multicoloured part**: it shows the colour
+  covering most of the part, not whichever face colour loaded last.
+- **The tree's eye button is centred** in its row.
+
 ## v0.1.5-beta.3
 
 - **Drag a tab into another window** (#15): drop it on another Loupe window's

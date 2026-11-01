@@ -13,6 +13,10 @@ Item {
 
     property QtObject controller
     property QtObject theme
+    property QtObject preferences: null
+    // The side panels can be dragged wider or narrower; the 3D view keeps at least this.
+    readonly property real centreMinimumWidth: 420
+    readonly property real sidePanelRoom: width - 4 * (theme ? theme.spacing3 : 12) - centreMinimumWidth
     property bool previewsActivated: false
     property bool previewReplayIssued: false
     readonly property QtObject draft: controller ? controller.drawingWorkspace : null
@@ -77,13 +81,14 @@ Item {
     }
 
     RowLayout {
+        id: workspaceRow
         anchors.fill: parent
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing3
 
         DrawingComponentPicker {
             id: componentPicker
-            Layout.preferredWidth: 290
+            Layout.preferredWidth: pickerSplitter.effectiveWidth
             Layout.fillHeight: true
             controller: root.controller
             draft: root.draft
@@ -156,8 +161,10 @@ Item {
         ColumnLayout {
             // The same split as the Export workspace: 290 for the picker, 360 here, and the
             // 3D view takes what is left with a 420 minimum. Matching it rather than picking
-            // new numbers means the two workspaces do not feel like different products.
-            Layout.preferredWidth: 360
+            // new numbers means the two workspaces do not feel like different products; the
+            // widths the user drags them to are shared for the same reason.
+            id: settingsColumn
+            Layout.preferredWidth: settingsSplitter.effectiveWidth
             Layout.fillHeight: true
             spacing: root.theme.spacing3
 
@@ -297,6 +304,33 @@ Item {
                 }
             }
         }
+    }
+
+    Inspect.PanelSplitter {
+        objectName: "pickerSplitter"
+        id: pickerSplitter
+        theme: root.theme
+        preferences: root.preferences
+        // Shared with the other output workspace, so Export and Drawing keep lining up.
+        key: "outputPicker"
+        panel: componentPicker
+        gap: workspaceRow.spacing
+        defaultWidth: 290
+        minimumWidth: 220
+        maximumWidth: Math.min(560, root.sidePanelRoom - settingsSplitter.staticWidth)
+    }
+    Inspect.PanelSplitter {
+        objectName: "settingsSplitter"
+        id: settingsSplitter
+        theme: root.theme
+        preferences: root.preferences
+        key: "outputSettings"
+        panel: settingsColumn
+        panelOnLeft: false
+        gap: workspaceRow.spacing
+        defaultWidth: 360
+        minimumWidth: 300
+        maximumWidth: Math.min(640, root.sidePanelRoom - pickerSplitter.effectiveWidth)
     }
 
     DrawingExportSheet {

@@ -660,11 +660,13 @@ ApplicationWindow {
                 Export.ExportWorkspace {
                     controller: documentView.document
                     theme: appTheme
+                    preferences: root.themePreference
                 }
                 Drawing.DrawingWorkspace {
                     objectName: "drawingWorkspace"
                     controller: documentView.document
                     theme: appTheme
+                    preferences: root.themePreference
                 }
             }
         }

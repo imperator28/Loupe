@@ -161,6 +161,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/InspectWorkspace.qml
         qml/inspect/ViewportNavigation.qml
         qml/inspect/PointerInputRouter.qml
+        qml/inspect/PanelSplitter.qml
         qml/inspect/ProjectionControl.qml
         qml/inspect/SectionManipulator.qml
         qml/inspect/SectionClipMaterial.qml

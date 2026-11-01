@@ -76,7 +76,12 @@ Item {
         function onActiveNodeIdChanged() { Qt.callLater(root.revealActiveNode) }
     }
 
+    // Both side panels can be dragged wider or narrower; the viewport keeps at least this.
+    readonly property real viewportMinimumWidth: 360
+    readonly property real sidePanelRoom: width - 4 * theme.spacing3 - viewportMinimumWidth
+
     RowLayout {
+        id: workspaceRow
         anchors.fill: parent
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing3
@@ -84,10 +89,8 @@ Item {
         ElevatedPanel {
             id: treePanel
             theme: root.theme
-            // Draggable at its right edge, between a usable minimum and half the window, so a
-            // deep assembly's names can be given the room they need.
-            property real dragWidth: root.preferences ? root.preferences.treePanelWidth : 248
-            Layout.preferredWidth: Math.max(180, Math.min(dragWidth, root.width * 0.5))
+            // Draggable at its right edge, so a deep assembly's names get the room they need.
+            Layout.preferredWidth: treeSplitter.effectiveWidth
             Layout.fillHeight: true
 
             ColumnLayout {
@@ -368,41 +371,6 @@ Item {
                 }
             }
 
-            MouseArea {
-                id: treeResizeHandle
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                anchors.right: parent.right
-                anchors.rightMargin: -width / 2
-                width: 8
-                cursorShape: Qt.SplitHCursor
-                hoverEnabled: true
-                preventStealing: true
-                property real startX: 0
-                property real startWidth: 0
-                onPressed: function(mouse) {
-                    startX = mapToItem(root, mouse.x, 0).x
-                    startWidth = treePanel.width
-                }
-                onPositionChanged: function(mouse) {
-                    if (!pressed) return
-                    treePanel.dragWidth = Math.max(180, Math.min(root.width * 0.5,
-                                                                 startWidth + mapToItem(root, mouse.x, 0).x - startX))
-                }
-                onReleased: if (root.preferences) root.preferences.treePanelWidth = Math.round(treePanel.dragWidth)
-                onDoubleClicked: {
-                    treePanel.dragWidth = 248
-                    if (root.preferences) root.preferences.treePanelWidth = 248
-                }
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: 2
-                    color: root.theme.accent
-                    opacity: treeResizeHandle.pressed ? 0.8 : treeResizeHandle.containsMouse ? 0.4 : 0
-                }
-            }
         }
 
         ElevatedPanel {
@@ -566,11 +534,38 @@ Item {
         }
 
         ContextPanel {
-            Layout.preferredWidth: 300
+            id: contextPanel
+            Layout.preferredWidth: contextSplitter.effectiveWidth
             Layout.fillHeight: true
             controller: root.controller
             theme: root.theme
         }
+    }
+
+    PanelSplitter {
+        id: treeSplitter
+        objectName: "inspectTreeSplitter"
+        theme: root.theme
+        preferences: root.preferences
+        key: "inspectTree"
+        panel: treePanel
+        gap: workspaceRow.spacing
+        defaultWidth: 248
+        minimumWidth: 180
+        maximumWidth: Math.min(640, root.sidePanelRoom - contextSplitter.staticWidth)
+    }
+    PanelSplitter {
+        id: contextSplitter
+        objectName: "inspectPropertiesSplitter"
+        theme: root.theme
+        preferences: root.preferences
+        key: "inspectProperties"
+        panel: contextPanel
+        panelOnLeft: false
+        gap: workspaceRow.spacing
+        defaultWidth: 300
+        minimumWidth: 260
+        maximumWidth: Math.min(560, root.sidePanelRoom - treeSplitter.effectiveWidth)
     }
 
     ThemedMenu {
