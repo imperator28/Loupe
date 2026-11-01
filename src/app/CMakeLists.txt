@@ -7,6 +7,8 @@ qt_add_executable(loupe-app
     platform/FileAssociation.h
     platform/FileOpenRouter.cpp
     platform/FileOpenRouter.h
+    platform/WindowManager.cpp
+    platform/WindowManager.h
     ApplicationController.h
     export/ExportWorkspaceController.cpp
     export/ExportWorkspaceController.h

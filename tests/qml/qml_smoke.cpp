@@ -5,6 +5,7 @@
 #include "app/models/AssemblyTreeModel.h"
 #include "app/models/ThemePreference.h"
 #include "app/platform/FileAssociation.h"
+#include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/MeshGeometry.h"
@@ -12,6 +13,7 @@
 #include "app/tools/SectionController.h"
 #include "protocol/GeometryPayload.h"
 
+#include <functional>
 #include <QColor>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -73,6 +75,7 @@ class QmlSmokeTest final : public QObject
 private slots:
     void initTestCase();
     void mainLoads();
+    void tabsDragToReorderAndOffTheStripIntoANewWindow();
     void exportPickerCheckboxUpdatesDraft();
     void inspectionTaskPanelsLoad();
     void captureProgressStaysInCapturePanel();
@@ -95,6 +98,8 @@ void QmlSmokeTest::initTestCase()
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");
     qmlRegisterType<loupe::app::DocumentTabs>("Loupe.App", 1, 0, "DocumentTabs");
     qmlRegisterType<loupe::app::platform::FileAssociation>("Loupe.App", 1, 0, "FileAssociation");
+    static loupe::app::platform::WindowManager windowManager;
+    qmlRegisterSingletonInstance("Loupe.App", 1, 0, "Windows", &windowManager);
     qmlRegisterType<loupe::app::models::ThemePreference>("Loupe.App", 1, 0, "ThemePreference");
     qmlRegisterType<loupe::app::platform::WindowChrome>("Loupe.App", 1, 0, "WindowChrome");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
@@ -163,6 +168,68 @@ void QmlSmokeTest::mainLoads()
     QVERIFY(dropEvent.isAccepted());
     QTRY_COMPARE(controller->documentState(), loupe::app::DocumentState::Invalid);
     QVERIFY(controller->errorMessage().contains(QStringLiteral("does not exist"), Qt::CaseInsensitive));
+}
+
+void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_MAIN_QML_PATH)));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    QTRY_VERIFY_WITH_TIMEOUT(window->isExposed(), 3000);
+    auto* tabs = qobject_cast<loupe::app::DocumentTabs*>(object->property("documents").value<QObject*>());
+    QVERIFY(tabs != nullptr);
+    auto* first = tabs->active();
+    auto* second = tabs->add();
+    auto* third = tabs->add();
+    Q_UNUSED(third);
+
+    const auto tabItems = [&] {
+        QList<QQuickItem*> items;
+        std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+            if (item->objectName() == QStringLiteral("documentTab") && item->isVisible()) items.append(item);
+            for (auto* child : item->childItems()) walk(child);
+        };
+        walk(window->contentItem());
+        std::sort(items.begin(), items.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene({}).x() < b->mapToScene({}).x(); });
+        return items;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(tabItems().size(), 3, 3000);
+    const auto centreOf = [](QQuickItem* item) {
+        return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+    };
+    const auto drag = [&](const QPoint from, const QPoint to) {
+        QTest::mousePress(window, Qt::LeftButton, {}, from);
+        for (int step = 1; step <= 12; ++step) {
+            QTest::mouseMove(window, from + (to - from) * step / 12, 16);
+        }
+        QTest::mouseRelease(window, Qt::LeftButton, {}, to);
+        QTest::qWait(100);
+    };
+
+    // Drag the first tab past the second: they swap.
+    QTest::qWait(300); // let the strip lay the new tabs out
+    auto items = tabItems();
+    drag(centreOf(items.at(0)), centreOf(items.at(1)) + QPoint(items.at(1)->width() / 2 - 2, 0));
+    QCOMPARE(tabs->documentAt(1), first);
+    QCOMPARE(tabs->documentAt(0), second);
+
+    // Drag a tab well below the strip and let go: it leaves for a window of its own.
+    const auto windowsBefore = QGuiApplication::topLevelWindows().size();
+    items = tabItems();
+    drag(centreOf(items.at(2)), centreOf(items.at(2)) + QPoint(0, 260));
+    QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(QGuiApplication::topLevelWindows().size() > windowsBefore, 3000);
+    QQuickWindow* opened = nullptr;
+    for (auto* candidate : QGuiApplication::topLevelWindows())
+        if (candidate != window && candidate->property("documents").isValid()) opened = qobject_cast<QQuickWindow*>(candidate);
+    QVERIFY(opened != nullptr);
+    auto* openedTabs = qobject_cast<loupe::app::DocumentTabs*>(opened->property("documents").value<QObject*>());
+    QCOMPARE(openedTabs->count(), 1);
+    QCOMPARE(openedTabs->active(), third);
+    opened->close();
 }
 
 void QmlSmokeTest::exportPickerCheckboxUpdatesDraft()

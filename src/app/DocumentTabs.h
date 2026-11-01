@@ -40,6 +40,13 @@ public:
     Q_INVOKABLE loupe::app::ApplicationController* documentForOpening();
     // Close a tab, stopping its worker. Closing the last tab leaves one empty tab.
     Q_INVOKABLE void close(int index);
+    // Drag-reorder (#15): move a tab, the active one staying active.
+    Q_INVOKABLE void move(int from, int to);
+    // Drag a tab out (#15): remove the tab without closing its document, which keeps its
+    // worker and state, for another window to adopt. Refused for the last tab.
+    Q_INVOKABLE loupe::app::ApplicationController* take(int index);
+    // Add a document taken from another window, as the active tab.
+    Q_INVOKABLE void adopt(loupe::app::ApplicationController* document);
     // Whether closing the tab would interrupt an export or drawing run.
     Q_INVOKABLE [[nodiscard]] bool isBusy(int index) const;
 
@@ -55,6 +62,7 @@ signals:
 
 private:
     ApplicationController* create();
+    void track(ApplicationController* document);
 
     QString workerExecutable_;
     std::vector<QPointer<ApplicationController>> documents_;

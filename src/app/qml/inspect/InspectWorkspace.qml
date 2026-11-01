@@ -350,6 +350,7 @@ Item {
                     }
                 }
 
+                Component.onCompleted: Qt.callLater(function() { if (assemblyTree.rows > 0) assemblyTree.expandRecursively() })
                 Connections {
                     target: root.controller ? root.controller.assemblyTree : null
                     function onModelReset() { Qt.callLater(function() { assemblyTree.expandRecursively() }) }
@@ -426,6 +427,12 @@ Item {
                         }
                     })
                     item.openFileRequested.connect(function() { root.openFileRequested() })
+                    // A document that arrives already loaded -- a tab dragged into a new
+                    // window (#15) -- has no geometry streaming in, so ask for a replay.
+                    if (root.controller.documentState === AppState.TreeReady) {
+                        Qt.callLater(function() { if (root.controller) root.controller.replayGeometry() })
+                        item.requestFit()
+                    }
                 }
             }
             Column {

@@ -201,6 +201,8 @@ add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
     "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.h"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"

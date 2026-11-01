@@ -2,6 +2,7 @@
 #include "app/DocumentTabs.h"
 #include "app/platform/FileAssociation.h"
 #include "app/platform/FileOpenRouter.h"
+#include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/MeshGeometry.h"
@@ -59,6 +60,8 @@ int main(int argc, char* argv[])
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
 
     qmlRegisterType<loupe::app::platform::FileAssociation>("Loupe.App", 1, 0, "FileAssociation");
+    loupe::app::platform::WindowManager windowManager;
+    qmlRegisterSingletonInstance("Loupe.App", 1, 0, "Windows", &windowManager);
 
     // STEP files from the command line (Windows "Open with", a default-app double-click),
     // from macOS Finder, or from a later launch while this one runs (#8). A later launch

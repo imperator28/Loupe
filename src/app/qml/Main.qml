@@ -125,10 +125,24 @@ ApplicationWindow {
         onDarkChanged: root.windowChrome.applyAppearance(root, dark)
     }
 
+    // Set when this window is opened for a tab dragged out of another one (#15).
+    property QtObject adoptDocument: null
+
+    // Closing a window closes its tabs, stopping their workers; the window itself is
+    // destroyed by the window manager (or is the last one, and the app quits).
+    onClosing: {
+        while (root.documents.count > 1) root.documents.close(0)
+        root.documents.close(0)
+    }
+
     Component.onCompleted: {
         appTheme.mode = themePreference.mode
         windowChrome.applyAppearance(root, appTheme.dark)
         root.applyNewDocumentPreferences(root.documents.documentAt(0))
+        if (root.adoptDocument) {
+            root.documents.adopt(root.adoptDocument)
+            root.documents.close(0)
+        }
     }
     Connections {
         target: root.documents
@@ -450,25 +464,79 @@ ApplicationWindow {
                 color: appTheme.border
             }
             RowLayout {
+                id: tabRow
                 anchors.fill: parent
                 anchors.leftMargin: appTheme.spacing3
                 anchors.rightMargin: appTheme.spacing3
                 spacing: appTheme.spacing1
                 Repeater {
+                    id: tabRepeater
                     model: root.documents
                     delegate: Rectangle {
                         id: tab
+                        objectName: "documentTab"
                         required property int index
                         required property string name
                         required property QtObject document
                         readonly property bool active: index === root.documents.activeIndex
                         Layout.preferredHeight: appTheme.rowCompact
                         Layout.maximumWidth: 240
-                        Layout.preferredWidth: tabLabel.implicitWidth + closeTab.implicitWidth + appTheme.spacing3 * 2
+                        Layout.preferredWidth: tabLabel.implicitWidth + closeTab.width + appTheme.spacing3 * 2
+                        opacity: tabDrag.active && tabDrag.outside ? 0.45 : 1
                         radius: appTheme.radius2
                         color: active ? appTheme.surfaceRaised : tabHover.hovered ? appTheme.surfaceSubtle : "transparent"
                         border.color: active ? appTheme.border : "transparent"
                         HoverHandler { id: tabHover }
+                        // Drag along the strip to reorder; drag off it and let go to move the
+                        // document into a new window of its own, as Chrome does (#15).
+                        DragHandler {
+                            id: tabDrag
+                            target: null
+                            dragThreshold: 6
+                            property bool outside: false
+                            onCentroidChanged: {
+                                if (!active) return
+                                const scene = centroid.scenePosition
+                                const inStrip = tabRow.mapFromItem(null, scene.x, scene.y)
+                                outside = root.documents.count > 1
+                                          && (inStrip.y < -tabStrip.height || inStrip.y > tabStrip.height * 2.5)
+                                tabGhost.x = scene.x - tabGhost.width / 2
+                                tabGhost.y = scene.y - tabGhost.height / 2
+                                tabGhost.text = tabLabel.text
+                                tabGhost.visible = outside
+                                if (outside) return
+                                // The slot before the first other tab whose centre is right of
+                                // the pointer, as a final index: so a tab swaps with a neighbour
+                                // once dragged past that neighbour's centre.
+                                let before = root.documents.count
+                                for (let i = 0; i < root.documents.count; ++i) {
+                                    const other = tabRepeater.itemAt(i)
+                                    if (i !== tab.index && other && inStrip.x < other.x + other.width / 2) { before = i; break }
+                                }
+                                const target = before > tab.index ? before - 1 : before
+                                if (target !== tab.index) root.documents.move(tab.index, target)
+                            }
+                            onActiveChanged: {
+                                if (active) {
+                                    root.documents.activeIndex = tab.index
+                                    return
+                                }
+                                tabGhost.visible = false
+                                if (!outside) return
+                                outside = false
+                                // Everything needed is read first: take() removes this tab's row,
+                                // which destroys this delegate and its access to root.
+                                const scene = centroid.scenePosition
+                                const window = root
+                                const documents = root.documents
+                                const x = root.x + scene.x
+                                const y = root.y + scene.y
+                                const document = documents.take(tab.index)
+                                // If no window could be made, the tab comes straight back.
+                                if (document && !Windows.openWindowWith(document, window, x, y))
+                                    documents.adopt(document)
+                            }
+                        }
                         TapHandler {
                             acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                             onTapped: function(eventPoint, button) {
@@ -492,6 +560,13 @@ ApplicationWindow {
                             Inspect.ThemedToolButton {
                                 id: closeTab
                                 theme: appTheme
+                                // Sized inside the 28 px tab, so its hover highlight stays in it (#16).
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                                Layout.alignment: Qt.AlignVCenter
+                                implicitWidth: 20
+                                implicitHeight: 20
+                                padding: 0
                                 text: "×"
                                 Accessible.name: qsTr("Close %1").arg(tabLabel.text)
                                 onClicked: root.requestCloseTab(tab.index)
@@ -548,6 +623,34 @@ ApplicationWindow {
                     theme: appTheme
                 }
             }
+        }
+    }
+
+    // The tab being dragged out, following the pointer until it is let go.
+    Rectangle {
+        id: tabGhost
+        property alias text: tabGhostLabel.text
+        parent: root.contentItem
+        z: 400
+        visible: false
+        width: tabGhostLabel.implicitWidth + appTheme.spacing4 * 2
+        height: appTheme.rowCompact + appTheme.spacing2
+        radius: appTheme.radius2
+        color: appTheme.surfaceRaised
+        border.color: appTheme.accent
+        Label {
+            id: tabGhostLabel
+            anchors.centerIn: parent
+            color: appTheme.foreground
+            font.weight: Font.DemiBold
+        }
+        Label {
+            anchors.top: parent.bottom
+            anchors.topMargin: 4
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: qsTr("Release to open in a new window")
+            color: appTheme.muted
+            font.pixelSize: appTheme.fontCaption
         }
     }
 

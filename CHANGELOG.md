@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.5-beta.2
+
+Fixes from testing beta 1 (#11-#16).
+
+- **Tabs drag** (#15): drag a tab along the strip to reorder it, or drag it off
+  the strip and let go to move that document into a new window. It moves as it
+  is, with no reload. Closing a window closes its tabs.
+- **Hidden parts show in the tree** (#14): a hidden part is dimmed with an
+  eye-off marker, an assembly with some parts hidden shows a faint one, and each
+  row's eye button hides or shows it.
+- **The display style is remembered** (#13) for files opened afterwards,
+  including after a restart; the default is Solid + Edges.
+- **Clearer visibility menus** (#11): *Hide others* (the same as Isolate) is
+  gone, and the two *Restore* items now read *Undo visibility change* and
+  *Exit isolate*.
+- **The tree's right-click menu opens at the cursor** (#12), not above it.
+- **The tab close button's highlight stays inside the tab** (#16).
+
 ## v0.1.5-beta.1
 
 A testing build of the tickets raised after 0.1.4 (#2, #3, #4, #6, #7, #8, #9,

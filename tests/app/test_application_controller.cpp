@@ -8,6 +8,7 @@
 #include <QColor>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QPointer>
 #include <QUrl>
 
 #include "app/ApplicationController.h"
@@ -26,6 +27,7 @@ private slots:
     void exportsTheAssemblyWithoutItsHiddenParts();
     void treeRowsReportHiddenAndPartlyHidden();
     void closingTabsAlwaysLeavesOneAndKeepsANeighbourActive();
+    void tabsReorderAndMoveBetweenWindowsWithoutReloading();
     void resolvesStandardViewsAgainstDocumentUpAxis();
     void rejectsUnknownUpAxisAndViewName();
     void emptyDocumentShowsDocumentInspector();
@@ -81,6 +83,46 @@ void ApplicationControllerTest::tabsOpenAFileIntoAnEmptyTabOrANewOne()
     QCOMPARE(added.count(), 1);
     QCOMPARE(first->documentState(), loupe::app::DocumentState::TreeReady);
     QVERIFY(!tabs.isBusy(0));
+}
+
+void ApplicationControllerTest::tabsReorderAndMoveBetweenWindowsWithoutReloading()
+{
+    loupe::app::DocumentTabs tabs(QStringLiteral(LOUPE_WORKER_PATH));
+    auto* first = tabs.active();
+    auto* second = tabs.add();
+    auto* third = tabs.add();
+    tabs.setActiveIndex(0);
+
+    // Reorder: dragging the active first tab to the end keeps it active.
+    tabs.move(0, 2);
+    QCOMPARE(tabs.documentAt(0), second);
+    QCOMPARE(tabs.documentAt(2), first);
+    QCOMPARE(tabs.active(), first);
+    QCOMPARE(tabs.activeIndex(), 2);
+    tabs.move(2, 0);
+    QCOMPARE(tabs.documentAt(0), first);
+
+    // Drag out: the document leaves this window's tabs, alive and unchanged, and another
+    // window adopts it.
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("tab-move.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    third->openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(third->documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QPointer<loupe::app::ApplicationController> moving(third);
+    auto* taken = tabs.take(2);
+    QCOMPARE(taken, third);
+    QCOMPARE(tabs.count(), 2);
+    loupe::app::DocumentTabs otherWindow(QStringLiteral(LOUPE_WORKER_PATH));
+    otherWindow.adopt(taken);
+    otherWindow.close(0); // the new window's own empty tab
+    QCoreApplication::processEvents();
+    QVERIFY(moving);
+    QCOMPARE(otherWindow.count(), 1);
+    QCOMPARE(otherWindow.active(), third);
+    QCOMPARE(third->parent(), &otherWindow);
+    QCOMPARE(third->documentState(), loupe::app::DocumentState::TreeReady);
+
+    // The last tab cannot be dragged out of its window.
+    QVERIFY(otherWindow.take(0) == nullptr);
 }
 
 void ApplicationControllerTest::closingTabsAlwaysLeavesOneAndKeepsANeighbourActive()
