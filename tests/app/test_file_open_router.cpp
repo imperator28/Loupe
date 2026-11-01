@@ -74,20 +74,23 @@ void FileOpenRouterTest::aLaterLaunchHandsItsFilesToTheRunningCopy()
     // A second copy that cannot listen must leave the running copy's name alone.
     FileOpenRouter second;
     second.listenForOtherInstances();
+    // Let the running copy accept that probe: a Windows named pipe takes one client at a
+    // time until the server's event loop opens the next instance.
+    QTest::qWait(100);
 
-    // What forwardToRunningInstance sends, done asynchronously: the running copy's server
-    // shares this test's event loop, so the blocking call would wait on itself.
+    // What forwardToRunningInstance sends, done without blocking: the running copy's server
+    // shares this test's event loop, so a blocking call would wait on itself.
     QLocalSocket client;
     client.connectToServer(QStringLiteral("loupe-open-%1").arg(QString::fromLatin1(
         QCryptographicHash::hash(QDir::homePath().toUtf8(), QCryptographicHash::Sha1).toHex().left(12))));
-    QVERIFY(client.waitForConnected(2'000));
+    QTRY_COMPARE_WITH_TIMEOUT(client.state(), QLocalSocket::ConnectedState, 3'000);
     client.write("/parts/forwarded.step\n");
     client.flush();
     QTRY_COMPARE_WITH_TIMEOUT(window.opened.size(), 1, 3'000);
     QCOMPARE(window.opened.first(), QUrl::fromLocalFile(QStringLiteral("/parts/forwarded.step")));
-    QTRY_VERIFY_WITH_TIMEOUT(client.bytesAvailable() > 0 || client.waitForReadyRead(50), 3'000);
+    QTRY_VERIFY_WITH_TIMEOUT(client.bytesAvailable() > 0, 3'000);
     QVERIFY(client.readAll().startsWith("ok"));
 }
 
-QTEST_MAIN(FileOpenRouterTest)
+QTEST_GUILESS_MAIN(FileOpenRouterTest)
 #include "test_file_open_router.moc"

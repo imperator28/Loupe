@@ -397,7 +397,8 @@ target_include_directories(loupe-file-open-tests PRIVATE "${PROJECT_SOURCE_DIR}/
 loupe_enable_warnings(loupe-file-open-tests)
 add_test(NAME file-open COMMAND loupe-file-open-tests)
 set_tests_properties(file-open PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    # Without a console Qt on Windows logs to the debugger, so a failure printed nothing.
+    ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1;QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
