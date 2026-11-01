@@ -190,6 +190,67 @@ QtObject {
         apply()
     }
 
+    // Look straight along -direction at target, the camera on the direction side, keeping
+    // the zoom. For "View normal to face": target is the face's centre, so the face lands in
+    // the middle of the view rather than wherever the old pivot left it.
+    //
+    // Up starts as alignToNormal's world-derived up. Given a straight edge of the face, it
+    // then turns to the nearest of that edge's four in-plane directions, so a rectangular
+    // face reads square on screen instead of at whatever angle world up happens to give it.
+    function viewAlong(direction, target, edgeDirection) {
+        const back = normalized(direction, Qt.vector3d(0, 0, 1))
+        let up = Math.abs(back.y) > 0.95 ? Qt.vector3d(0, 0, -1) : Qt.vector3d(0, 1, 0)
+        if (edgeDirection) {
+            const along = edgeDirection.x * back.x + edgeDirection.y * back.y + edgeDirection.z * back.z
+            const edge = normalized(subtract(edgeDirection, scaled(back, along)), Qt.vector3d(0, 0, 0))
+            if (vectorLength(edge) > 0.5) {
+                const across = back.crossProduct(edge)
+                let best = up
+                let bestAlignment = -2
+                for (const candidate of [edge, scaled(edge, -1), across, scaled(across, -1)]) {
+                    const alignment = candidate.x * up.x + candidate.y * up.y + candidate.z * up.z
+                    if (alignment > bestAlignment) {
+                        bestAlignment = alignment
+                        best = candidate
+                    }
+                }
+                up = best
+            }
+        }
+        // Quaternion.lookAt cannot be used here: it only uses its up argument as a fallback
+        // axis, so the roll comes out as whatever the shortest turn from -Z gives.
+        const trueUp = normalized(subtract(up, scaled(back, up.x * back.x + up.y * back.y + up.z * back.z)),
+                                  Math.abs(back.y) > 0.95 ? Qt.vector3d(0, 0, -1) : Qt.vector3d(0, 1, 0))
+        activePivot = Qt.vector3d(target.x, target.y, target.z)
+        hasPendingPivot = false
+        cameraPosition = add(activePivot, scaled(back, distance))
+        orientation = quaternionFromAxes(trueUp.crossProduct(back), trueUp, back)
+        apply()
+    }
+
+    // The rotation taking the camera's x, y and z axes to right, up and back (orthonormal).
+    function quaternionFromAxes(right, up, back) {
+        const m00 = right.x, m01 = up.x, m02 = back.x
+        const m10 = right.y, m11 = up.y, m12 = back.y
+        const m20 = right.z, m21 = up.z, m22 = back.z
+        const trace = m00 + m11 + m22
+        let w, x, y, z
+        if (trace > 0) {
+            const s = 0.5 / Math.sqrt(trace + 1)
+            w = 0.25 / s; x = (m21 - m12) * s; y = (m02 - m20) * s; z = (m10 - m01) * s
+        } else if (m00 > m11 && m00 > m22) {
+            const s = 2 * Math.sqrt(1 + m00 - m11 - m22)
+            w = (m21 - m12) / s; x = 0.25 * s; y = (m01 + m10) / s; z = (m02 + m20) / s
+        } else if (m11 > m22) {
+            const s = 2 * Math.sqrt(1 + m11 - m00 - m22)
+            w = (m02 - m20) / s; x = (m01 + m10) / s; y = 0.25 * s; z = (m12 + m21) / s
+        } else {
+            const s = 2 * Math.sqrt(1 + m22 - m00 - m11)
+            w = (m10 - m01) / s; x = (m02 + m20) / s; y = (m12 + m21) / s; z = 0.25 * s
+        }
+        return Qt.quaternion(w, x, y, z).normalized()
+    }
+
     function setProjection(mode) {
         const normalizedMode = mode === "perspective" ? "perspective" : "orthographic"
         if (normalizedMode === projectionMode) return

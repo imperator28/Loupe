@@ -32,6 +32,7 @@ private slots:
     void topologyRangesResolveAndCopyCompleteEntities();
     void faceBoundaryExcludesInternalTessellationEdges();
     void faceFrameDistinguishesAFlatFaceFromACurvedOne();
+    void faceViewLooksAlongAPlaneNormalOrACylinderAxis();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -350,6 +351,58 @@ void SceneModelTest::faceFrameDistinguishesAFlatFaceFromACurvedOne()
     // -- is unreachable: the protocol refuses a non-Face range inside a mesh payload, so
     // the kind check in faceFrameFor is belt-and-braces and has no payload to test with.
     QVERIFY(flat.faceFrameFor(99).isEmpty());
+}
+
+void SceneModelTest::faceViewLooksAlongAPlaneNormalOrACylinderAxis()
+{
+    // A 4 x 1 rectangle tilted 30 degrees about x: "normal to face" must give its exact
+    // normal, aim at its centre, and offer its long side to square the view against.
+    const auto angle = static_cast<float>(std::numbers::pi / 6.0);
+    const auto c = std::cos(angle);
+    const auto s = std::sin(angle);
+    loupe::protocol::MeshPayload tiltedPayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"),
+        QStringLiteral("segment"), QStringLiteral("#ffffff"), 1,
+        {0.0F, 0.0F, 0.0F, 4.0F, 0.0F, 0.0F, 4.0F, c, s, 0.0F, c, s},
+        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+        {0, 1, 2, 0, 2, 3},
+        {{31, loupe::protocol::TopologyKind::Face, 0, 6, 4.0F, 0.0F}}};
+    loupe::app::render::MeshGeometry tilted;
+    QVERIFY(tilted.appendWorkerMesh(loupe::protocol::encodeGeometry(tiltedPayload)));
+    const auto tiltedView = tilted.faceViewFor(31);
+    QCOMPARE(tiltedView.value(QStringLiteral("kind")).toString(), QStringLiteral("plane"));
+    const auto normal = tiltedView.value(QStringLiteral("direction")).value<QVector3D>();
+    QVERIFY(std::abs(normal.x()) < 1.0e-6F);
+    QVERIFY(std::abs(normal.y() + s) < 1.0e-6F);
+    QVERIFY(std::abs(normal.z() - c) < 1.0e-6F);
+    const auto centre = tiltedView.value(QStringLiteral("centroid")).value<QVector3D>();
+    QVERIFY(std::abs(centre.x() - 2.0F) < 1.0e-5F && std::abs(centre.y() - c / 2) < 1.0e-5F);
+    const auto edge = tiltedView.value(QStringLiteral("edgeDirection")).value<QVector3D>();
+    QVERIFY(std::abs(std::abs(edge.x()) - 1.0F) < 1.0e-6F);
+
+    // The quarter cylinder from the frame test: no single normal, but an axis (y).
+    QVector<float> vertices;
+    QVector<float> normals;
+    QVector<quint32> indices;
+    for (int column = 0; column < 5; ++column) {
+        const auto columnAngle = static_cast<float>(column) / 4.0F * static_cast<float>(std::numbers::pi / 2.0);
+        for (const auto y : {0.0F, 1.0F}) {
+            vertices << std::cos(columnAngle) << y << std::sin(columnAngle);
+            normals << std::cos(columnAngle) << 0.0F << std::sin(columnAngle);
+        }
+    }
+    for (quint32 column = 0; column + 1 < 5; ++column)
+        indices << column * 2 << column * 2 + 1 << column * 2 + 3 << column * 2 << column * 2 + 3 << column * 2 + 2;
+    loupe::protocol::MeshPayload curvedPayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"),
+        QStringLiteral("segment"), QStringLiteral("#ffffff"), 1, vertices, normals, indices,
+        {{23, loupe::protocol::TopologyKind::Face, 0, static_cast<quint32>(indices.size()), 1.57F, 1.0F}}};
+    loupe::app::render::MeshGeometry curved;
+    QVERIFY(curved.appendWorkerMesh(loupe::protocol::encodeGeometry(curvedPayload)));
+    const auto curvedView = curved.faceViewFor(23);
+    QCOMPARE(curvedView.value(QStringLiteral("kind")).toString(), QStringLiteral("axis"));
+    const auto axis = curvedView.value(QStringLiteral("direction")).value<QVector3D>();
+    QVERIFY(std::abs(std::abs(axis.y()) - 1.0F) < 1.0e-5F);
+
+    QVERIFY(tilted.faceViewFor(99).isEmpty());
 }
 
 int main(int argc, char* argv[])

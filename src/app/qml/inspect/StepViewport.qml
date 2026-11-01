@@ -84,6 +84,9 @@ Item {
             ? controller.section.effectiveNormal : Qt.vector3d(0, 0, 1)
     readonly property vector3d removedSectionNormal: sceneSectionManipulator.removedSideNormal(
             effectiveSectionNormal, controller && controller.section.flipped)
+    // The direction from the scene toward the camera.
+    readonly property vector3d viewDirection: navigation.revision >= 0
+        ? navigation.orientation.times(Qt.vector3d(0, 0, 1)) : Qt.vector3d(0, 0, 1)
     readonly property vector3d sceneCenter: Qt.vector3d((sceneMinimum.x + sceneMaximum.x) * 0.5,
                                                         (sceneMinimum.y + sceneMaximum.y) * 0.5,
                                                         (sceneMinimum.z + sceneMaximum.z) * 0.5)
@@ -854,6 +857,68 @@ Item {
         }
     }
 
+    // The face a right-click landed on, for the menu's "View normal to face", and the last
+    // face clicked at all, for the shortcut when the pointer is not over a face.
+    property var contextFacePick: null
+    property var lastFacePick: null
+    property var lastNormalView: null
+
+    // Right-click: a part that is already selected keeps the selection, so the menu acts on
+    // every selected part, as the tree's right-click does. Only an unselected part replaces
+    // the selection, and empty space leaves it alone.
+    function contextPickAt(x, y) {
+        const hit = view.pick(x, y)
+        root.contextFacePick = null
+        if (!hit.objectHit || !hit.objectHit.nodeId) return false
+        root.contextFacePick = root.facePickFromHit(hit)
+        if (root.contextFacePick) root.lastFacePick = root.contextFacePick
+        if (root.controller.isNodeSelected(hit.objectHit.nodeId)) return true
+        return root.pickAt(x, y, false)
+    }
+
+    function rememberFaceAt(x, y) {
+        const pick = root.facePickFromHit(view.pick(x, y))
+        if (pick) root.lastFacePick = pick
+    }
+
+    // Menu text for an action on the selection: the plain wording for one part, and the
+    // count for several, so it is clear the action is not just for the part clicked.
+    function selectionActionText(single, several) {
+        const count = root.controller ? root.controller.selectedNodeIds.length : 0
+        return count > 1 ? several.arg(count) : single
+    }
+
+    // Turn the view to look straight at a picked face, keeping the zoom. A flat face is seen
+    // along its exact normal, a cylinder along its axis, anything else along the normal at
+    // the picked point. Asked again for the same face while looking at it, it shows the
+    // face's other side.
+    function viewNormalToFacePick(pick) {
+        if (!pick || !pick.sourceGeometry) return false
+        const face = pick.sourceGeometry.faceViewFor(pick.topologyId)
+        const resolved = face && face.direction !== undefined
+        let direction = resolved ? face.direction : pick.normal
+        const target = face && face.centroid !== undefined ? face.centroid : pick.point
+        const back = navigation.orientation.times(Qt.vector3d(0, 0, 1))
+        // An axis has no outside; take the end that turns the view least.
+        if (resolved && face.kind === "axis" && direction.dotProduct(back) < 0) direction = direction.times(-1)
+        if (root.lastNormalView && root.lastNormalView.nodeId === pick.nodeId
+                && root.lastNormalView.topologyId === pick.topologyId && direction.dotProduct(back) > 0.9999)
+            direction = direction.times(-1)
+        navigation.viewAlong(direction, target, face && face.edgeDirection !== undefined ? face.edgeDirection : null)
+        root.lastNormalView = { nodeId: pick.nodeId, topologyId: pick.topologyId }
+        return true
+    }
+
+    function viewNormalToFaceAt(x, y) {
+        return root.viewNormalToFacePick(root.facePickFromHit(view.pick(x, y)))
+    }
+
+    // The shortcut and menu command: the face under the pointer, else the last one clicked.
+    function viewNormalToFace() {
+        if (input.containsMouse && root.viewNormalToFaceAt(input.mouseX, input.mouseY)) return true
+        return root.viewNormalToFacePick(root.lastFacePick)
+    }
+
     function reportFaceFrameAt(x, y) {
         const pick = root.facePickFromHit(view.pick(x, y))
         if (!pick) return
@@ -1395,9 +1460,10 @@ Item {
                         || (mouse.modifiers & Qt.ControlModifier)
                         || (mouse.modifiers & Qt.MetaModifier)
                 root.pickAt(mouse.x, mouse.y, additive)
+                root.rememberFaceAt(mouse.x, mouse.y)
             }
             if (!dragging && pressButton === Qt.RightButton && root.contextActionsEnabled) {
-                if (root.componentContextActionsEnabled && root.pickAt(mouse.x, mouse.y, false)) {
+                if (root.componentContextActionsEnabled && root.contextPickAt(mouse.x, mouse.y)) {
                     if (root.presentationOnly) exportComponentContextMenu.popup(mouse.x, mouse.y)
                     else componentContextMenu.popup(mouse.x, mouse.y)
                 }
@@ -1660,16 +1726,18 @@ Item {
         id: componentContextMenu
         theme: root.theme
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Fit selection"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.fitSelection() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("View normal to face"); enabled: root.contextFacePick !== null; onTriggered: root.viewNormalToFacePick(root.contextFacePick) }
         ThemedMenuSeparator { theme: componentContextMenu.theme }
         ThemedMenuItem {
             theme: componentContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore")
+                  : root.selectionActionText(qsTr("Isolate"), qsTr("Isolate %1 selected"))
             enabled: root.controller && root.controller.activeNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide others"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Restore"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
@@ -1681,15 +1749,17 @@ Item {
         id: exportComponentContextMenu
         theme: root.theme
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Fit selection"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.fitSelection() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("View normal to face"); enabled: root.contextFacePick !== null; onTriggered: root.viewNormalToFacePick(root.contextFacePick) }
         ThemedMenuSeparator { theme: exportComponentContextMenu.theme }
         ThemedMenuItem {
             theme: exportComponentContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore")
+                  : root.selectionActionText(qsTr("Isolate"), qsTr("Isolate %1 selected"))
             enabled: root.controller && root.controller.activeNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
-        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Hide"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
     }
@@ -1810,6 +1880,9 @@ Item {
         function onMeshReady(nodeId, segmentKey, sourceColor, meshJson) { root.appendMesh(nodeId, segmentKey, sourceColor, meshJson) }
         function onEdgeReady(nodeId, edgeJson) { root.appendEdges(nodeId, edgeJson) }
         function onFitRequested() { root.fitSelection() }
+        function onViewNormalToFaceRequested() {
+            if (root.visible && root.contextActionsEnabled && root.componentContextActionsEnabled) root.viewNormalToFace()
+        }
         function onVisibilityChanged() { root.applyPresentation() }
         function onComponentPropertiesChanged() { root.applyAppearance() }
         function onActiveNodeIdChanged() { root.applyRenderMode() }

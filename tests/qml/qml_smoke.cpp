@@ -78,6 +78,7 @@ private slots:
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
     void viewportDrawsAFacingFaceInItsPickedColour();
+    void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
@@ -349,6 +350,81 @@ void QmlSmokeTest::viewportDrawsAFacingFaceInItsPickedColour()
         QTRY_VERIFY_WITH_TIMEOUT(difference() <= 8, 5000);
         QVERIFY2(difference() <= 8, qPrintable(QStringLiteral("%1 rendered as %2").arg(picked, rendered.name())));
     }
+}
+
+void QmlSmokeTest::viewportRightClickKeepsTheSelectionAndViewsNormalToAFace()
+{
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"surface", "surfaceRaised", "surfaceSubtle", "control", "border", "onSurface", "foreground",
+                            "muted", "accent", "selection", "selectedBody", "selectedEdge", "edge", "neutralBody"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#000000")));
+    theme->insert(QStringLiteral("dark"), false);
+
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(400, 400);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(400, 400));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // A 20 mm square plate tilted 30 degrees about x, centred on the origin, as one face.
+    const auto tilt = std::numbers::pi / 6.0;
+    const auto c = static_cast<float>(std::cos(tilt));
+    const auto sn = static_cast<float>(std::sin(tilt));
+    loupe::protocol::MeshPayload plate;
+    plate.requestId = 1;
+    plate.nodeId = plate.definitionId = QStringLiteral("plate");
+    plate.segmentKey = QStringLiteral("plate:0");
+    for (const auto& [u, v] : {std::pair{-10.0F, -10.0F}, {10.0F, -10.0F}, {10.0F, 10.0F}, {-10.0F, 10.0F}}) {
+        plate.vertices << u << v * c << v * sn;
+        plate.normals << 0.0F << -sn << c;
+    }
+    plate.indices = {0, 1, 2, 0, 2, 3};
+    plate.topology = {{5, loupe::protocol::TopologyKind::Face, 0, 6, 400.0F, 0.0F}};
+    QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, plate.nodeId), Q_ARG(QString, plate.segmentKey),
+                                      Q_ARG(QString, QStringLiteral("#3070C0")), Q_ARG(QByteArray, loupe::protocol::encodeGeometry(plate))));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "fitCamera"));
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("hasSceneBounds").toBool(), 3000);
+
+    const auto contextPickAt = [&](const double x, const double y) {
+        QVariant hit;
+        QMetaObject::invokeMethod(viewport, "contextPickAt", Q_RETURN_ARG(QVariant, hit), Q_ARG(QVariant, x), Q_ARG(QVariant, y));
+        return hit.toBool();
+    };
+    // Right-clicking a part that is in a multi-selection keeps the whole selection.
+    controller.selectNode(QStringLiteral("plate"), false);
+    controller.selectNode(QStringLiteral("other"), true);
+    QTRY_VERIFY_WITH_TIMEOUT(contextPickAt(200, 200), 3000);
+    QCOMPARE(controller.selectedNodeIds(), (QStringList{QStringLiteral("plate"), QStringLiteral("other")}));
+    // Empty space leaves it alone too.
+    QVERIFY(!contextPickAt(2, 2));
+    QCOMPARE(controller.selectedNodeIds().size(), 2);
+    // A part outside the selection replaces it, as before.
+    controller.selectNode(QStringLiteral("other"), false);
+    QVERIFY(contextPickAt(200, 200));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("plate")});
+
+    // Normal to face: straight down the plate's normal, then its other side.
+    const QVector3D normal(0.0F, -sn, c);
+    QVariant done;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
+    QVERIFY(done.toBool());
+    auto direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY2((direction - normal).length() < 1.0e-4F, qPrintable(QStringLiteral("%1 %2 %3").arg(direction.x()).arg(direction.y()).arg(direction.z())));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
+    direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY((direction + normal).length() < 1.0e-4F);
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()

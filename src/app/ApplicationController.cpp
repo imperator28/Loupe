@@ -589,6 +589,11 @@ void ApplicationController::fitView()
     emit fitRequested();
 }
 
+void ApplicationController::viewNormalToFace()
+{
+    emit viewNormalToFaceRequested();
+}
+
 void ApplicationController::isolateActiveNode()
 {
     const auto selected = geometryNodesForSelection();

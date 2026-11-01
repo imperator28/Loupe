@@ -2,7 +2,20 @@
 
 ## Unreleased
 
+### New
+
+- **View normal to face** (#10): right-click a face, View → Normal to Face, or
+  **Ctrl/Cmd+8** over a face. The view turns to look straight at it, centred on
+  the face, keeping the zoom; a flat face uses its exact normal, a hole or
+  cylinder its axis, and the view is squared to the face's longest straight
+  edge. Asking again shows the face's other side.
+
 ### Fixes
+
+- **Right-click dropped a multi-selection** (#6). Right-clicking a part that is
+  already selected now keeps the selection, so Hide, Isolate and Make
+  transparent apply to every selected part, and the menu says how many
+  ("Hide 5 selected"). Right-clicking empty space no longer clears it.
 
 - **Pinch-to-zoom shifted the view (macOS trackpad).** Zoom scaled about the
   viewport centre, or in perspective toward the last orbit pivot -- an invisible

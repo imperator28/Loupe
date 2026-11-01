@@ -165,6 +165,9 @@ public:
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();
     Q_INVOKABLE void fitView();
+    // View > Normal to Face. The visible viewport answers: the face under the pointer, else
+    // the face last clicked there.
+    Q_INVOKABLE void viewNormalToFace();
     Q_INVOKABLE void replayGeometry();
     // Which payload a viewport is being handed. Bumped only when a segment's geometry
     // genuinely changes (a refinement pass, a reimport), and left alone by a replay, so a
@@ -222,6 +225,7 @@ signals:
     void cacheHitChanged();
     void modelExtentChanged();
     void fitRequested();
+    void viewNormalToFaceRequested();
     void viewerPresentationChanged();
     void visibilityChanged();
     void importProgressChanged();

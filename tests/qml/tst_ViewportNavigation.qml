@@ -177,6 +177,34 @@ Item {
                    after.x + ", " + after.y)
         }
 
+        // "Normal to face": straight down the face normal, centred on it, zoom kept, and up
+        // squared to the face's edge rather than left at an arbitrary roll.
+        function test_viewAlongLooksStraightAtTheFaceAndSquaresItUp() {
+            const navigation = createTemporaryObject(navigationComponent, root)
+            navigation.reset()
+            navigation.zoomByFactor(2.5)
+            const magnification = navigation.orthographicMagnification
+            const angle = Math.PI / 6
+            const normal = Qt.vector3d(0, -Math.sin(angle), Math.cos(angle))
+            const target = Qt.vector3d(40, -12, 7)
+            // An edge 10 degrees off the x axis within the face.
+            const edge = Qt.vector3d(Math.cos(Math.PI / 18), Math.sin(Math.PI / 18) * Math.cos(angle),
+                                     Math.sin(Math.PI / 18) * Math.sin(angle))
+
+            navigation.viewAlong(normal, target, edge)
+
+            verify(fuzzyVector(navigation.orientation.times(Qt.vector3d(0, 0, 1)), normal, 0.00001))
+            verify(fuzzyVector(navigation.activePivot, target, 0.00001))
+            compare(navigation.orthographicMagnification, magnification)
+            const right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
+            const up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
+            const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z
+            // The edge lies along one screen axis.
+            verify(Math.abs(Math.abs(dot(right, edge)) - 1) < 0.00001 || Math.abs(Math.abs(dot(up, edge)) - 1) < 0.00001)
+            // And up stays the upright choice, not upside down.
+            verify(up.y > 0)
+        }
+
         function test_alignToNormalAimsCameraAtPivot() {
             const navigation = createTemporaryObject(navigationComponent, root)
             navigation.reset()

@@ -34,6 +34,12 @@ public:
     // gives the normal at a point, which cannot tell a flat face from a curved one, and
     // "normal to this face" is only a meaningful view when the face is flat.
     Q_INVOKABLE [[nodiscard]] QVariantMap faceFrameFor(quint32 topologyId) const;
+    // The direction to look along to see a face straight on, for "View normal to face".
+    // A flat face gives its exact normal ("plane"), a cylindrical one its axis ("axis"),
+    // and anything else nothing, leaving the caller the normal at the picked point. Also
+    // the face's area centre to aim at and, when the face has one, its longest straight
+    // boundary edge, which the caller can square the view up against.
+    Q_INVOKABLE [[nodiscard]] QVariantMap faceViewFor(quint32 topologyId) const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
     Q_INVOKABLE bool copySectionOverlayFrom(QObject* source);
     Q_INVOKABLE void clearMesh();

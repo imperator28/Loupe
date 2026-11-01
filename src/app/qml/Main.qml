@@ -189,6 +189,16 @@ ApplicationWindow {
             }
             Inspect.ThemedMenuItem {
                 theme: appTheme
+                // Ctrl+8 (Cmd+8 on macOS): the binding SOLIDWORKS users know for Normal To.
+                action: Action {
+                    text: qsTr("Normal to Face")
+                    shortcut: "Ctrl+8"
+                    enabled: root.controller.documentState !== AppState.Empty
+                    onTriggered: root.controller.viewNormalToFace()
+                }
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("Make Selection Transparent")
                 enabled: root.controller.activeNodeId.length > 0
                 onTriggered: root.controller.toggleTransparentSelection()
