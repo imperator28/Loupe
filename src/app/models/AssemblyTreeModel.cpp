@@ -14,23 +14,60 @@ void AssemblyTreeModel::replaceSnapshot(const std::vector<SnapshotNode>& nodes)
     if (!initialized_) {
         beginResetModel();
         nodes_ = nodes;
+        rebuildIndex();
         initialized_ = true;
         endResetModel();
         return;
     }
     emit layoutAboutToBeChanged();
     nodes_ = nodes;
+    rebuildIndex();
     emit layoutChanged();
+}
+
+// Children, rows and positions looked up once per snapshot. Scanning every node for each
+// rowCount/index call, as this used to, made the tree's cost grow with the square of the
+// part count, and search with it.
+void AssemblyTreeModel::rebuildIndex()
+{
+    childrenByParent_.clear();
+    nodeIndexById_.clear();
+    rowByNode_.assign(nodes_.size(), -1);
+    for (int index = 0; index < static_cast<int>(nodes_.size()); ++index)
+        nodeIndexById_.insert(nodes_.at(static_cast<std::size_t>(index)).stableId, index);
+    for (int index = 0; index < static_cast<int>(nodes_.size()); ++index) {
+        auto& siblings = childrenByParent_[nodes_.at(static_cast<std::size_t>(index)).parentStableId];
+        rowByNode_[static_cast<std::size_t>(index)] = static_cast<int>(siblings.size());
+        siblings.push_back(index);
+    }
 }
 
 QModelIndex AssemblyTreeModel::indexForStableId(const QString& stableId) const
 {
-    const auto it = std::find_if(nodes_.begin(), nodes_.end(), [&stableId](const SnapshotNode& node) { return node.stableId == stableId; });
-    if (it == nodes_.end()) {
+    const auto it = nodeIndexById_.constFind(stableId);
+    if (it == nodeIndexById_.cend()) {
         return {};
     }
-    const auto nodeIndex = static_cast<int>(std::distance(nodes_.begin(), it));
-    return createIndex(rowForNode(nodeIndex), 0, nodeIndex);
+    return createIndex(rowForNode(it.value()), 0, it.value());
+}
+
+QStringList AssemblyTreeModel::findNodes(const QString& text) const
+{
+    const auto needle = text.trimmed();
+    QStringList matches;
+    if (needle.isEmpty()) return matches;
+    // Depth-first from the roots: the snapshot's own order need not be the tree's.
+    std::vector<int> pending = childrenOf(-1);
+    std::reverse(pending.begin(), pending.end());
+    while (!pending.empty()) {
+        const auto nodeIndex = pending.back();
+        pending.pop_back();
+        const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
+        if (node.name.contains(needle, Qt::CaseInsensitive)) matches.append(node.stableId);
+        const auto& children = childrenOf(nodeIndex);
+        pending.insert(pending.end(), children.rbegin(), children.rend());
+    }
+    return matches;
 }
 
 QModelIndex AssemblyTreeModel::index(const int row, const int column, const QModelIndex& parent) const
@@ -38,7 +75,7 @@ QModelIndex AssemblyTreeModel::index(const int row, const int column, const QMod
     if (column != 0 || row < 0) {
         return {};
     }
-    const auto children = childrenOf(parent.isValid() ? parent.internalId() : -1);
+    const auto& children = childrenOf(parent.isValid() ? static_cast<int>(parent.internalId()) : -1);
     if (row >= static_cast<int>(children.size())) {
         return {};
     }
@@ -51,17 +88,16 @@ QModelIndex AssemblyTreeModel::parent(const QModelIndex& child) const
         return {};
     }
     const auto& node = nodes_.at(child.internalId());
-    const auto it = std::find_if(nodes_.begin(), nodes_.end(), [&node](const SnapshotNode& candidate) { return candidate.stableId == node.parentStableId; });
-    if (it == nodes_.end()) {
+    const auto it = nodeIndexById_.constFind(node.parentStableId);
+    if (node.parentStableId.isEmpty() || it == nodeIndexById_.cend()) {
         return {};
     }
-    const auto parentIndex = static_cast<int>(std::distance(nodes_.begin(), it));
-    return createIndex(rowForNode(parentIndex), 0, parentIndex);
+    return createIndex(rowForNode(it.value()), 0, it.value());
 }
 
 int AssemblyTreeModel::rowCount(const QModelIndex& parent) const
 {
-    return static_cast<int>(childrenOf(parent.isValid() ? parent.internalId() : -1).size());
+    return static_cast<int>(childrenOf(parent.isValid() ? static_cast<int>(parent.internalId()) : -1).size());
 }
 
 int AssemblyTreeModel::columnCount(const QModelIndex&) const
@@ -98,25 +134,15 @@ QHash<int, QByteArray> AssemblyTreeModel::roleNames() const
 
 int AssemblyTreeModel::rowForNode(const int nodeIndex) const
 {
-    const auto& node = nodes_.at(static_cast<std::size_t>(nodeIndex));
-    const auto siblings = childrenOf(node.parentStableId.isEmpty() ? -1 : [&] {
-        const auto it = std::find_if(nodes_.begin(), nodes_.end(), [&node](const SnapshotNode& candidate) { return candidate.stableId == node.parentStableId; });
-        return it == nodes_.end() ? -1 : static_cast<int>(std::distance(nodes_.begin(), it));
-    }());
-    const auto it = std::find(siblings.begin(), siblings.end(), nodeIndex);
-    return it == siblings.end() ? -1 : static_cast<int>(std::distance(siblings.begin(), it));
+    return rowByNode_.at(static_cast<std::size_t>(nodeIndex));
 }
 
-std::vector<int> AssemblyTreeModel::childrenOf(const int parentIndex) const
+const std::vector<int>& AssemblyTreeModel::childrenOf(const int parentIndex) const
 {
+    static const std::vector<int> none;
     const QString parentId = parentIndex < 0 ? QString{} : nodes_.at(static_cast<std::size_t>(parentIndex)).stableId;
-    std::vector<int> children;
-    for (int index = 0; index < static_cast<int>(nodes_.size()); ++index) {
-        if (nodes_.at(static_cast<std::size_t>(index)).parentStableId == parentId) {
-            children.push_back(index);
-        }
-    }
-    return children;
+    const auto it = childrenByParent_.constFind(parentId);
+    return it == childrenByParent_.cend() ? none : it.value();
 }
 
 } // namespace loupe::app::models

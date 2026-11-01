@@ -8,6 +8,8 @@ Item {
     id: root
     property QtObject controller
     property QtObject theme
+    // Remembers the tree panel's width; optional, so tests can load this without one.
+    property QtObject preferences: null
     readonly property color foreground: theme ? theme.foreground : "transparent"
     readonly property color subduedForeground: theme ? theme.muted : "transparent"
     property string activeTask: ""
@@ -20,6 +22,30 @@ Item {
         if (seconds < 0) return qsTr("estimating remaining time")
         if (seconds === 0) return qsTr("almost done")
         return qsTr("about %1 s remaining").arg(seconds)
+    }
+
+    // Tree search: every node whose name matches, in tree order, and the one shown.
+    property var treeMatches: []
+    property int treeMatchIndex: -1
+
+    function runTreeSearch(text) {
+        root.treeMatches = root.controller && root.controller.assemblyTree
+            ? root.controller.assemblyTree.findNodes(text) : []
+        root.treeMatchIndex = root.treeMatches.length > 0 ? 0 : -1
+        root.showTreeMatch()
+    }
+
+    function stepTreeMatch(step) {
+        if (root.treeMatches.length === 0) return
+        root.treeMatchIndex = (root.treeMatchIndex + step + root.treeMatches.length) % root.treeMatches.length
+        root.showTreeMatch()
+    }
+
+    // Selecting the match also expands its branch, scrolls to it (revealActiveNode) and
+    // highlights it in the viewport, as clicking its row would.
+    function showTreeMatch() {
+        if (root.treeMatchIndex < 0 || !root.controller) return
+        root.controller.selectNode(root.treeMatches[root.treeMatchIndex], false)
     }
 
     function showTask(tool) {
@@ -58,18 +84,98 @@ Item {
         ElevatedPanel {
             id: treePanel
             theme: root.theme
-            Layout.preferredWidth: 248
+            // Draggable at its right edge, between a usable minimum and half the window, so a
+            // deep assembly's names can be given the room they need.
+            property real dragWidth: root.preferences ? root.preferences.treePanelWidth : 248
+            Layout.preferredWidth: Math.max(180, Math.min(dragWidth, root.width * 0.5))
             Layout.fillHeight: true
 
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: root.theme.spacing3
                 spacing: root.theme.spacing2
-                Label {
-                    text: qsTr("Assembly tree")
-                    color: root.foreground
-                    font.bold: true
+                RowLayout {
                     Layout.fillWidth: true
+                    spacing: root.theme.spacing1
+                    Label {
+                        text: qsTr("Assembly tree")
+                        color: root.foreground
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+                    ThemedToolButton {
+                        theme: root.theme
+                        text: "⊞"
+                        Accessible.name: qsTr("Expand all")
+                        enabled: assemblyTree.rows > 0
+                        onClicked: assemblyTree.expandRecursively()
+                        ThemedToolTip { theme: root.theme; text: qsTr("Expand all"); visible: parent.hovered }
+                    }
+                    ThemedToolButton {
+                        theme: root.theme
+                        text: "⊟"
+                        Accessible.name: qsTr("Collapse all")
+                        enabled: assemblyTree.rows > 0
+                        // Keep the top level open: collapsing the root would leave one row.
+                        onClicked: { assemblyTree.collapseRecursively(); assemblyTree.expand(0) }
+                        ThemedToolTip { theme: root.theme; text: qsTr("Collapse all"); visible: parent.hovered }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: root.theme.spacing1
+                    ThemedTextField {
+                        id: treeSearch
+                        theme: root.theme
+                        Layout.fillWidth: true
+                        placeholderText: Qt.platform.os === "osx" ? qsTr("Find part (⌘F)") : qsTr("Find part (Ctrl+F)")
+                        Accessible.name: qsTr("Find part by name")
+                        enabled: root.controller && root.controller.documentState === AppState.TreeReady
+                        onTextChanged: treeSearchDelay.restart()
+                        // Enter steps to the next match, Shift+Enter back; a search still
+                        // waiting on its typing delay runs first.
+                        function step(event) {
+                            if (treeSearchDelay.running) {
+                                treeSearchDelay.stop()
+                                root.runTreeSearch(text)
+                            } else {
+                                root.stepTreeMatch((event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+                            }
+                        }
+                        Keys.onReturnPressed: function(event) { step(event) }
+                        Keys.onEnterPressed: function(event) { step(event) }
+                        Keys.onEscapePressed: text = ""
+                        Timer {
+                            id: treeSearchDelay
+                            interval: 150
+                            onTriggered: root.runTreeSearch(treeSearch.text)
+                        }
+                    }
+                    Label {
+                        visible: treeSearch.text.trim().length > 0
+                        text: root.treeMatches.length === 0 ? qsTr("None")
+                              : qsTr("%1/%2").arg(root.treeMatchIndex + 1).arg(root.treeMatches.length)
+                        color: root.treeMatches.length === 0 ? root.theme.error : root.subduedForeground
+                    }
+                    ThemedToolButton {
+                        theme: root.theme
+                        visible: root.treeMatches.length > 1
+                        text: "▴"
+                        Accessible.name: qsTr("Previous match")
+                        onClicked: root.stepTreeMatch(-1)
+                    }
+                    ThemedToolButton {
+                        theme: root.theme
+                        visible: root.treeMatches.length > 1
+                        text: "▾"
+                        Accessible.name: qsTr("Next match")
+                        onClicked: root.stepTreeMatch(1)
+                    }
+                }
+                Shortcut {
+                    sequences: [StandardKey.Find]
+                    enabled: root.visible && treeSearch.enabled
+                    onActivated: { treeSearch.forceActiveFocus(); treeSearch.selectAll() }
                 }
                 TreeView {
                     id: assemblyTree
@@ -139,8 +245,11 @@ Item {
                             implicitHeight: root.theme.rowCompact
                             spacing: root.theme.spacing1
 
+                            // 12 px a level for the first four, 4 px beyond: a deep branch keeps
+                            // its names readable instead of being indented off the panel.
                             Item {
-                                Layout.preferredWidth: root.theme.spacing6 + treeDelegate.depth * 16
+                                Layout.preferredWidth: root.theme.spacing2 + Math.min(treeDelegate.depth, 4) * 12
+                                                       + Math.max(0, treeDelegate.depth - 4) * 4
                                 Layout.preferredHeight: 1
                             }
 
@@ -169,8 +278,14 @@ Item {
                                 text: definitionQuantity > 0 ? qsTr("%1  %2x").arg(name).arg(definitionQuantity) : name
                                 color: root.foreground
                                 elide: Text.ElideRight
-                                horizontalAlignment: Text.AlignHCenter
+                                horizontalAlignment: Text.AlignLeft
                                 verticalAlignment: Text.AlignVCenter
+                                // The whole name when the panel cuts it short.
+                                ThemedToolTip {
+                                    theme: root.theme
+                                    text: treeLabel.text
+                                    visible: treeHover.hovered && treeLabel.truncated
+                                }
                             }
                         }
                         HoverHandler {
@@ -204,6 +319,42 @@ Item {
                     target: root.controller ? root.controller.assemblyTree : null
                     function onModelReset() { Qt.callLater(function() { assemblyTree.expandRecursively() }) }
                     function onLayoutChanged() { Qt.callLater(function() { assemblyTree.expandRecursively() }) }
+                }
+            }
+
+            MouseArea {
+                id: treeResizeHandle
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.right: parent.right
+                anchors.rightMargin: -width / 2
+                width: 8
+                cursorShape: Qt.SplitHCursor
+                hoverEnabled: true
+                preventStealing: true
+                property real startX: 0
+                property real startWidth: 0
+                onPressed: function(mouse) {
+                    startX = mapToItem(root, mouse.x, 0).x
+                    startWidth = treePanel.width
+                }
+                onPositionChanged: function(mouse) {
+                    if (!pressed) return
+                    treePanel.dragWidth = Math.max(180, Math.min(root.width * 0.5,
+                                                                 startWidth + mapToItem(root, mouse.x, 0).x - startX))
+                }
+                onReleased: if (root.preferences) root.preferences.treePanelWidth = Math.round(treePanel.dragWidth)
+                onDoubleClicked: {
+                    treePanel.dragWidth = 248
+                    if (root.preferences) root.preferences.treePanelWidth = 248
+                }
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 2
+                    color: root.theme.accent
+                    opacity: treeResizeHandle.pressed ? 0.8 : treeResizeHandle.containsMouse ? 0.4 : 0
                 }
             }
         }

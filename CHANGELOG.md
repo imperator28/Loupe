@@ -9,6 +9,15 @@
   the face, keeping the zoom; a flat face uses its exact normal, a hole or
   cylinder its axis, and the view is squared to the face's longest straight
   edge. Asking again shows the face's other side.
+- **Find a part by name** (#4): a search field above the assembly tree
+  (**Ctrl/Cmd+F**). Matches as you type, ignoring case; the match is selected,
+  its branch expanded and scrolled to, and it is highlighted in the viewport.
+  Enter / Shift+Enter step through the matches, with a count.
+- **A readable assembly tree** (#2): drag the tree panel's right edge to widen
+  it (remembered; double-click to reset); deep levels indent less, names are
+  left-aligned, a cut-off name shows in full on hover, and Expand all /
+  Collapse all buttons sit above the tree. The tree model also no longer scans
+  every node for each row it draws, which made large assemblies slow.
 
 ### Fixes
 

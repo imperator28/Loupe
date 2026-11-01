@@ -337,6 +337,7 @@ ApplicationWindow {
         Inspect.InspectWorkspace {
             controller: root.controller
             theme: appTheme
+            preferences: root.themePreference
             onOpenFileRequested: openStepDialog.open()
         }
         Export.ExportWorkspace {

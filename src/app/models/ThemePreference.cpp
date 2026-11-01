@@ -2,6 +2,8 @@
 
 #include <QSettings>
 
+#include <algorithm>
+
 namespace loupe::app::models {
 namespace {
 
@@ -25,6 +27,7 @@ ThemePreference::ThemePreference(QObject* parent)
     if (isPartColorMode(partColorMode)) partColorMode_ = partColorMode;
     recolorFileColors_ = settings.value(QStringLiteral("appearance/recolorFileColors"), false).toBool();
     partColorSeed_ = settings.value(QStringLiteral("appearance/partColorSeed"), 0).toInt();
+    treePanelWidth_ = std::clamp(settings.value(QStringLiteral("layout/treePanelWidth"), 248).toInt(), 160, 1200);
 }
 
 void ThemePreference::setMode(const QString& mode)
@@ -58,6 +61,15 @@ void ThemePreference::setPartColorSeed(const int seed)
     partColorSeed_ = seed;
     QSettings{}.setValue(QStringLiteral("appearance/partColorSeed"), partColorSeed_);
     emit partColorsChanged();
+}
+
+void ThemePreference::setTreePanelWidth(const int width)
+{
+    const auto clamped = std::clamp(width, 160, 1200);
+    if (treePanelWidth_ == clamped) return;
+    treePanelWidth_ = clamped;
+    QSettings{}.setValue(QStringLiteral("layout/treePanelWidth"), treePanelWidth_);
+    emit treePanelWidthChanged();
 }
 
 } // namespace loupe::app::models

@@ -802,6 +802,18 @@ void QmlSmokeTest::inspectTreeRevealCallsIntoTheModelWithoutAQmlError()
 
     // And the reveal genuinely resolved the node rather than bailing out at the valid check.
     QVERIFY(treeModel->indexForStableId(QStringLiteral("occ-cover")).isValid());
+
+    // Tree search selects the first match, and stepping walks the rest in tree order.
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "runTreeSearch", Q_ARG(QVariant, QStringLiteral("r"))));
+    QCOMPARE(workspaceObject->property("treeMatches").toStringList(),
+             (QStringList{QStringLiteral("occ-carrier"), QStringLiteral("occ-cover")}));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("occ-carrier")});
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "stepTreeMatch", Q_ARG(QVariant, 1)));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("occ-cover")});
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "stepTreeMatch", Q_ARG(QVariant, 1)));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("occ-carrier")});
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "runTreeSearch", Q_ARG(QVariant, QStringLiteral("gasket"))));
+    QVERIFY(workspaceObject->property("treeMatches").toStringList().isEmpty());
 }
 
 void QmlSmokeTest::drawingPreviewBuildsDrawablePathsFromProjectedGeometry()

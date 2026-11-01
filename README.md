@@ -93,6 +93,7 @@ Useful shortcuts:
 | `I` | Isolate or restore |
 | `H` / `Shift+H` | Hide selection / hide others |
 | `T` / `Shift+T` | Make selection transparent / make others transparent |
+| `Ctrl/Cmd+F` | Find a part in the assembly tree (Enter / Shift+Enter: next / previous) |
 | `Ctrl/Cmd+8` | View normal to the face under the pointer (again: its other side) |
 | `Ctrl/Cmd+Shift+H` | Show all |
 | `M` | Open Measure |
