@@ -299,9 +299,19 @@ Item {
                             ThemedToolButton {
                                 id: visibilityToggle
                                 theme: root.theme
+                                // 24 px square with 2 px padding: exactly the glyph's 20 px box.
+                                // The toolbar's 8/5 px text padding left an 8x12 slot the
+                                // unscaled glyph spilled out of, down and to the right.
                                 Layout.preferredWidth: 24
-                                Layout.preferredHeight: 22
+                                Layout.preferredHeight: 24
+                                Layout.alignment: Qt.AlignVCenter
                                 Layout.rightMargin: root.theme.spacing1
+                                // Each side, not `padding`: ThemedToolButton sets the four sides
+                                // itself, and those win over the shorthand.
+                                leftPadding: 2
+                                rightPadding: 2
+                                topPadding: 2
+                                bottomPadding: 2
                                 opacity: treeDelegate.visibilityState !== 0 || treeHover.hovered || hovered ? 1 : 0
                                 enabled: opacity > 0
                                 Accessible.name: treeDelegate.visibilityState === 2
