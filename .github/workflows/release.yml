@@ -73,7 +73,7 @@ jobs:
       matrix:
         include:
           - name: macOS Apple Silicon release
-            os: macos-14
+            os: macos-15
             configure_preset: macos-arm64-release
             vcpkg_triplet: arm64-osx-release
             vcpkg_cache_path: ~/.cache/vcpkg/archives
