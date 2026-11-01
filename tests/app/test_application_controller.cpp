@@ -23,6 +23,7 @@ class ApplicationControllerTest final : public QObject
 private slots:
     void inspectIsDefaultWorkspace();
     void tabsOpenAFileIntoAnEmptyTabOrANewOne();
+    void exportsTheAssemblyWithoutItsHiddenParts();
     void closingTabsAlwaysLeavesOneAndKeepsANeighbourActive();
     void resolvesStandardViewsAgainstDocumentUpAxis();
     void rejectsUnknownUpAxisAndViewName();
@@ -316,6 +317,35 @@ void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
     QVERIFY(controller.isNodeTransparent(parts.at(1)));
     controller.showAllNodes();
     QVERIFY(!controller.isNodeTransparent(parts.at(1)));
+}
+
+void ApplicationControllerTest::exportsTheAssemblyWithoutItsHiddenParts()
+{
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-strip.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    QCOMPARE(controller.hiddenPartCount(), 0);
+    controller.setActiveNodeId(parts.at(0));
+    controller.hideActiveNode();
+    QCOMPARE(controller.hiddenPartCount(), 1);
+
+    QTemporaryDir output;
+    QVERIFY(output.isValid());
+    const auto destination = QDir(output.path()).filePath(QStringLiteral("stripped.step"));
+    QVERIFY(controller.exportAssemblyWithoutHiddenParts(QUrl::fromLocalFile(destination)));
+    QVERIFY(controller.assemblyExportInProgress());
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.assemblyExportInProgress(), 10'000);
+    QVERIFY2(controller.assemblyExportSucceeded(), qPrintable(controller.assemblyExportMessage()));
+    QVERIFY(QFileInfo::exists(destination));
+
+    // Read back: one of the two parts is left.
+    loupe::app::ApplicationController reread(QStringLiteral(LOUPE_WORKER_PATH));
+    reread.openFile(QUrl::fromLocalFile(destination));
+    QTRY_VERIFY_WITH_TIMEOUT(!reread.importInProgress() && reread.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QCOMPARE(geometryNodeIds(reread).size(), 1);
 }
 
 void ApplicationControllerTest::fitViewNotifiesViewport()

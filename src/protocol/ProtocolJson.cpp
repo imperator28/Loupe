@@ -1,6 +1,7 @@
 #include "protocol/ProtocolTypes.h"
 
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonParseError>
 
@@ -117,6 +118,12 @@ QByteArray encode(const Command& command)
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
                               {QStringLiteral("nodeId"), value.nodeId}, {QStringLiteral("x"), value.x},
                               {QStringLiteral("y"), value.y}, {QStringLiteral("z"), value.z}, {QStringLiteral("mode"), value.mode}});
+        } else if constexpr (std::is_same_v<Value, ExportAssembly>) {
+            return serialize({{QStringLiteral("type"), QStringLiteral("exportAssembly")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
+                              {QStringLiteral("destination"), value.destination},
+                              {QStringLiteral("excludedNodeIds"), QJsonArray::fromStringList(value.excludedNodeIds)},
+                              {QStringLiteral("outputUnit"), value.outputUnit}});
         } else {
             return serialize({{QStringLiteral("type"), QStringLiteral("setVisible")},
                               {QStringLiteral("nodeId"), value.nodeId},
@@ -177,6 +184,20 @@ Command decodeCommand(const QByteArray& bytes)
         const auto x = object.value(QStringLiteral("x")); const auto y = object.value(QStringLiteral("y")); const auto z = object.value(QStringLiteral("z"));
         if (!x.isDouble() || !y.isDouble() || !z.isDouble() || !std::isfinite(x.toDouble()) || !std::isfinite(y.toDouble()) || !std::isfinite(z.toDouble())) fail("Protocol measurement point invalid");
         return MeasureAtPoint{requestId(object), stringField(object, QStringLiteral("nodeId")), x.toDouble(), y.toDouble(), z.toDouble(), stringField(object, QStringLiteral("mode"))};
+    }
+    if (type == QStringLiteral("exportAssembly")) {
+        const auto destination = stringField(object, QStringLiteral("destination"));
+        if (destination.isEmpty()) fail("Protocol assembly export destination invalid");
+        const auto excluded = object.value(QStringLiteral("excludedNodeIds"));
+        if (!excluded.isArray()) fail("Protocol assembly export exclusions invalid");
+        QStringList excludedNodeIds;
+        for (const auto& value : excluded.toArray()) {
+            if (!value.isString()) fail("Protocol assembly export exclusions invalid");
+            excludedNodeIds.append(value.toString());
+        }
+        const auto outputUnit = stringField(object, QStringLiteral("outputUnit"));
+        if (outputUnit != QStringLiteral("mm") && outputUnit != QStringLiteral("in")) fail("Protocol assembly export unit invalid");
+        return ExportAssembly{requestId(object), destination, excludedNodeIds, outputUnit};
     }
     if (type == QStringLiteral("setVisible")) {
         const auto visible = object.value(QStringLiteral("visible"));
@@ -317,6 +338,13 @@ Event decodeEvent(const QByteArray& bytes)
         return DrawingPreviewReady{requestId(object), revision.toInt(),
                                    QByteArray::fromBase64(stringField(object, QStringLiteral("previewBase64")).toLatin1()),
                                    approximate.toBool()};
+    }
+    if (type == QStringLiteral("assemblyExported")) {
+        const auto parts = object.value(QStringLiteral("partCount"));
+        const auto removed = object.value(QStringLiteral("removedCount"));
+        if (!parts.isDouble() || !removed.isDouble() || parts.toInt(-1) < 0 || removed.toInt(-1) < 0)
+            fail("Protocol assembly export result invalid");
+        return AssemblyExported{requestId(object), stringField(object, QStringLiteral("path")), parts.toInt(), removed.toInt()};
     }
     if (type == QStringLiteral("failed")) {
         const auto recoverable = object.value(QStringLiteral("recoverable"));

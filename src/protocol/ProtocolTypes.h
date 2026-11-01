@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 #include <optional>
@@ -21,6 +22,8 @@ struct ExecuteDrawingPlan { std::uint64_t requestId{}; QByteArray planJson; QStr
 struct RequestDrawingPreview { std::uint64_t requestId{}; QByteArray requestJson; int revision{}; };
 struct MeasureAtPoint { std::uint64_t requestId{}; QString nodeId; double x{}; double y{}; double z{}; QString mode; };
 struct SetVisible { QString nodeId; bool visible{}; };
+// The whole open assembly as one STEP file, leaving out the listed nodes (#7).
+struct ExportAssembly { std::uint64_t requestId{}; QString destination; QStringList excludedNodeIds; QString outputUnit; };
 struct Ready { Version version; };
 struct Progress { std::uint64_t requestId{}; QString stage; double fraction{}; };
 struct SnapshotReady { std::uint64_t requestId{}; QByteArray snapshotJson; };
@@ -93,14 +96,15 @@ struct DrawingPreviewReady {
     QByteArray previewJson;
     bool approximate{};
 };
+struct AssemblyExported { std::uint64_t requestId{}; QString path; int partCount{}; int removedCount{}; };
 struct Failed { std::uint64_t requestId{}; QString code; QString message; bool recoverable{}; };
 struct Canceled { std::uint64_t requestId{}; };
 
 using Command = std::variant<OpenFile, Cancel, ExecuteExportPlan, ExecuteDrawingPlan,
-                             RequestDrawingPreview, MeasureAtPoint, SetVisible>;
+                             RequestDrawingPreview, MeasureAtPoint, SetVisible, ExportAssembly>;
 using Event = std::variant<Ready, Progress, SnapshotReady, ComponentMetadata, MeshReady, EdgeReady, ImportMetrics,
                            ExportProgress, ExportRowResult, ExportCompleted, DrawingProgress,
-                           DrawingRowResult, DrawingCompleted, DrawingPreviewReady, Failed, Canceled>;
+                           DrawingRowResult, DrawingCompleted, DrawingPreviewReady, AssemblyExported, Failed, Canceled>;
 
 class ProtocolError final : public std::runtime_error {
 public:

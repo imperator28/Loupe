@@ -13,6 +13,7 @@ add_library(loupe-core STATIC
     export/ExportPlan.cpp
     export/OutputNaming.cpp
     export/ShapeSelection.cpp
+    export/AssemblyExporter.cpp
     export/StepExporter.cpp
     export/StlExporter.cpp
     import/StepImporter.cpp

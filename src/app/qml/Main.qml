@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import Loupe.App
 import "inspect" as Inspect
 import "export" as Export
@@ -87,6 +88,16 @@ ApplicationWindow {
         root.documents.close(index)
     }
 
+    // Export the assembly without its hidden parts (#7): hide what should go (search, Hide,
+    // Isolate), then save the rest as one STEP file with its tree, names and colours.
+    function chooseAssemblyExport() {
+        if (root.controller.suggestedAssemblyExportUrl.toString().length > 0) {
+            assemblyExportDialog.currentFolder = root.controller.suggestedAssemblyExportFolderUrl
+            assemblyExportDialog.selectedFile = root.controller.suggestedAssemblyExportUrl
+        }
+        assemblyExportDialog.open()
+    }
+
     function applyPartColorPreferences(document) {
         document.partColorMode = themePreference.partColorMode
         document.recolorFileColors = themePreference.recolorFileColors
@@ -155,6 +166,16 @@ ApplicationWindow {
                     onTriggered: openStepDialog.open()
                 }
             }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: root.controller.hiddenPartCount > 0
+                      ? qsTr("Export Assembly Without %n Hidden Part(s)…", "", root.controller.hiddenPartCount)
+                      : qsTr("Export Assembly Without Hidden Parts…")
+                enabled: root.controller.documentState === AppState.TreeReady && !root.controller.importInProgress
+                         && !root.controller.assemblyExportInProgress
+                onTriggered: root.chooseAssemblyExport()
+            }
+            Inspect.ThemedMenuSeparator { theme: appTheme }
             // Windows only: Loupe ships without an installer, so this is how it becomes an app
             // that can open STEP files. Windows then asks the user to confirm the default.
             Inspect.ThemedMenuItem {
@@ -707,6 +728,48 @@ ApplicationWindow {
     Inspect.InteractionGuide {
         id: interactionGuide
         theme: appTheme
+    }
+
+    FileDialog {
+        id: assemblyExportDialog
+        title: qsTr("Export assembly without hidden parts")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("STEP files (*.step *.stp)")]
+        defaultSuffix: "step"
+        onAccepted: root.controller.exportAssemblyWithoutHiddenParts(selectedFile)
+    }
+
+    // The outcome of a whole-assembly export, briefly, at the foot of the window.
+    Rectangle {
+        id: assemblyExportNotice
+        objectName: "assemblyExportNotice"
+        z: 300
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: appTheme.spacing6
+        width: Math.min(parent.width - appTheme.spacing6 * 2, noticeText.implicitWidth + appTheme.spacing4 * 2)
+        height: noticeText.implicitHeight + appTheme.spacing3 * 2
+        radius: appTheme.radius3
+        color: appTheme.surfaceRaised
+        border.color: root.controller.assemblyExportSucceeded ? appTheme.accent : appTheme.error
+        visible: false
+        Label {
+            id: noticeText
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, assemblyExportNotice.parent.width - appTheme.spacing6 * 2 - appTheme.spacing4 * 2)
+            text: root.controller.assemblyExportInProgress ? qsTr("Exporting the assembly…") : root.controller.assemblyExportMessage
+            color: root.themeForeground
+            wrapMode: Text.Wrap
+        }
+        Timer { id: noticeTimer; interval: 7000; onTriggered: assemblyExportNotice.visible = false }
+        Connections {
+            target: root.controller
+            function onAssemblyExportChanged() {
+                assemblyExportNotice.visible = root.controller.assemblyExportInProgress
+                                               || root.controller.assemblyExportMessage.length > 0
+                if (!root.controller.assemblyExportInProgress) noticeTimer.restart()
+            }
+        }
     }
 
     OpenStepDialog {

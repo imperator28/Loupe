@@ -16,6 +16,12 @@
   Default Apps (per-user, no admin rights). A second launch while Loupe runs
   hands its files to the running window as new tabs instead of opening a second
   window.
+- **Export the assembly without hidden parts** (#7): File → Export Assembly
+  Without Hidden Parts… writes the whole assembly as one STEP file with its
+  tree, names, placements and colours, leaving out every part you have hidden
+  (find them with search, then Hide or Isolate). A subassembly left empty is
+  dropped, shared parts stay shared, and the file keeps the source's unit.
+  Typical use: strip fasteners or purchased parts before passing a model on.
 - **View normal to face** (#10): right-click a face, View → Normal to Face, or
   **Ctrl/Cmd+8** over a face. The view turns to look straight at it, centred on
   the face, keeping the zoom; a flat face uses its exact normal, a hole or

@@ -4,6 +4,7 @@
 #include "core/drawing/DrawingExporter.h"
 #include "core/drawing/DrawingPlan.h"
 #include "core/drawing/DrawingPreview.h"
+#include "core/export/AssemblyExporter.h"
 #include "core/drawing/DrawingProjector.h"
 #include "core/export/ExportPlan.h"
 #include "core/export/ShapeSelection.h"
@@ -409,6 +410,8 @@ void WorkerServer::readCommands()
                     executeDrawingPlan(value.requestId, value.planJson, value.fingerprint);
                 } else if constexpr (std::is_same_v<Value, protocol::RequestDrawingPreview>) {
                     requestDrawingPreview(value.requestId, value.requestJson, value.revision);
+                } else if constexpr (std::is_same_v<Value, protocol::ExportAssembly>) {
+                    exportAssembly(value.requestId, value.destination, value.excludedNodeIds, value.outputUnit);
                 }
             }, command);
         } catch (const protocol::ProtocolError&) {
@@ -1090,6 +1093,51 @@ void WorkerServer::requestDrawingPreview(const std::uint64_t requestId, const QB
             post({{QStringLiteral("type"), QStringLiteral("failed")},
                   {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                   {QStringLiteral("code"), QStringLiteral("drawing_preview_failed")},
+                  {QStringLiteral("message"), QString::fromUtf8(error.what())},
+                  {QStringLiteral("recoverable"), true}});
+        }
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+void WorkerServer::exportAssembly(const std::uint64_t requestId, const QString& destination,
+                                  const QStringList& excludedNodeIds, const QString& outputUnit)
+{
+    if (!documentSession_) {
+        fail(requestId, QStringLiteral("document_not_ready"),
+             QStringLiteral("Wait for geometry refinement to finish before exporting the assembly"));
+        return;
+    }
+    loupe::exporting::AssemblyExportRequest request;
+    request.destination = std::filesystem::path(destination.toStdWString());
+    for (const auto& nodeId : excludedNodeIds) request.excludedNodeIds.insert(nodeId.toStdString());
+    request.outputUnit = outputUnit == QStringLiteral("in") ? units::LengthUnit::Inch : units::LengthUnit::Millimeter;
+    const auto session = documentSession_;
+    // The same native-to-millimetre factor as display, measurement and part export, so the
+    // re-exported assembly cannot come out at a different size from what was reviewed.
+    request.nativeToMillimeters = session->unitDecision.sourceToMillimeters
+        * loupe::exporting::detail::nativeUnitRebase(session->imported);
+
+    QPointer<WorkerServer> server(this);
+    auto post = [server](QJsonObject event) {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, event = std::move(event)] {
+            if (server) server->send(event);
+        }, Qt::QueuedConnection);
+    };
+    auto* thread = QThread::create([requestId, request, session, post, destination] {
+        try {
+            const auto result = loupe::exporting::AssemblyExporter{}.write(session->imported, request);
+            post({{QStringLiteral("type"), QStringLiteral("assemblyExported")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("path"), destination},
+                  {QStringLiteral("partCount"), result.partCount},
+                  {QStringLiteral("removedCount"), result.removedCount}});
+        } catch (const std::exception& error) {
+            post({{QStringLiteral("type"), QStringLiteral("failed")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("code"), QStringLiteral("assembly_export_failed")},
                   {QStringLiteral("message"), QString::fromUtf8(error.what())},
                   {QStringLiteral("recoverable"), true}});
         }

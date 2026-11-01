@@ -59,6 +59,13 @@ std::uint64_t WorkerClient::requestDrawingPreview(const QByteArray& requestJson,
     return requestId;
 }
 
+std::uint64_t WorkerClient::exportAssembly(const QString& destination, const QStringList& excludedNodeIds, const QString& outputUnit)
+{
+    const auto requestId = nextRequestId_++;
+    writeCommand(protocol::encode(protocol::Command{protocol::ExportAssembly{requestId, destination, excludedNodeIds, outputUnit}}));
+    return requestId;
+}
+
 void WorkerClient::cancel(const std::uint64_t requestId)
 {
     writeCommand(protocol::encode(protocol::Command{protocol::Cancel{requestId}}));
@@ -118,6 +125,8 @@ void WorkerClient::readEvents()
                     emit drawingCompleted(value.requestId, value.succeededCount, value.failedCount);
                 } else if constexpr (std::is_same_v<Value, protocol::DrawingPreviewReady>) {
                     emit drawingPreviewReady(value.requestId, value.revision, value.previewJson, value.approximate);
+                } else if constexpr (std::is_same_v<Value, protocol::AssemblyExported>) {
+                    emit assemblyExported(value.requestId, value.path, value.partCount, value.removedCount);
                 } else if constexpr (std::is_same_v<Value, protocol::Failed>) {
                     emit requestFailed(value.requestId, value.code, value.message, value.recoverable);
                 } else if constexpr (std::is_same_v<Value, protocol::Canceled>) {

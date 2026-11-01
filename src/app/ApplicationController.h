@@ -67,6 +67,13 @@ class ApplicationController : public QObject {
     Q_PROPERTY(double modelExtentMm READ modelExtentMm NOTIFY modelExtentChanged)
     Q_PROPERTY(ViewerPresentation viewerPresentation READ viewerPresentation NOTIFY viewerPresentationChanged)
     Q_PROPERTY(bool canRestoreVisibility READ canRestoreVisibility NOTIFY visibilityChanged)
+    // Export the assembly without the parts that are hidden (#7).
+    Q_PROPERTY(int hiddenPartCount READ hiddenPartCount NOTIFY visibilityChanged)
+    Q_PROPERTY(bool assemblyExportInProgress READ assemblyExportInProgress NOTIFY assemblyExportChanged)
+    Q_PROPERTY(QString assemblyExportMessage READ assemblyExportMessage NOTIFY assemblyExportChanged)
+    Q_PROPERTY(bool assemblyExportSucceeded READ assemblyExportSucceeded NOTIFY assemblyExportChanged)
+    Q_PROPERTY(QUrl suggestedAssemblyExportUrl READ suggestedAssemblyExportUrl NOTIFY documentNameChanged)
+    Q_PROPERTY(QUrl suggestedAssemblyExportFolderUrl READ suggestedAssemblyExportFolderUrl NOTIFY documentNameChanged)
     Q_PROPERTY(QString importStage READ importStage NOTIFY importProgressChanged)
     Q_PROPERTY(double importProgress READ importProgress NOTIFY importProgressChanged)
     Q_PROPERTY(qint64 importElapsedSeconds READ importElapsedSeconds NOTIFY importProgressChanged)
@@ -137,6 +144,16 @@ public:
     [[nodiscard]] double modelExtentMm() const noexcept { return modelExtentMm_; }
     [[nodiscard]] ViewerPresentation viewerPresentation() const noexcept { return viewerPresentation_; }
     [[nodiscard]] bool canRestoreVisibility() const noexcept { return visibilityModel_.canRestore(); }
+    [[nodiscard]] int hiddenPartCount() const;
+    [[nodiscard]] bool assemblyExportInProgress() const noexcept { return activeAssemblyExportRequestId_ != 0; }
+    [[nodiscard]] const QString& assemblyExportMessage() const noexcept { return assemblyExportMessage_; }
+    [[nodiscard]] bool assemblyExportSucceeded() const noexcept { return assemblyExportSucceeded_; }
+    [[nodiscard]] QString suggestedAssemblyExportPath() const;
+    [[nodiscard]] QUrl suggestedAssemblyExportUrl() const;
+    [[nodiscard]] QUrl suggestedAssemblyExportFolderUrl() const;
+    // Writes the whole assembly, tree, names and colours kept, leaving out every hidden
+    // part, in the source file's unit. False if it cannot start.
+    Q_INVOKABLE bool exportAssemblyWithoutHiddenParts(const QUrl& destination);
     [[nodiscard]] const QString& importStage() const noexcept { return importStage_; }
     [[nodiscard]] double importProgress() const noexcept { return importProgress_; }
     [[nodiscard]] qint64 importElapsedSeconds() const noexcept { return importElapsedSeconds_; }
@@ -231,6 +248,7 @@ signals:
     void modelExtentChanged();
     void fitRequested();
     void documentNameChanged();
+    void assemblyExportChanged();
     void viewNormalToFaceRequested();
     void viewerPresentationChanged();
     void visibilityChanged();
@@ -296,6 +314,9 @@ private:
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
     std::uint64_t activeExportRequestId_{};
+    std::uint64_t activeAssemblyExportRequestId_{};
+    QString assemblyExportMessage_;
+    bool assemblyExportSucceeded_{false};
     std::uint64_t activeDrawingRequestId_{};
     // Only the newest preview may reach the UI; a late reply for an older revision is
     // dropped rather than shown over a newer one.

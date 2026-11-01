@@ -100,7 +100,8 @@ bool DocumentTabs::isBusy(const int index) const
     if (!document) return false;
     const auto exporting = [](const QObject* workspace) { return workspace && workspace->property("exporting").toBool(); };
     return exporting(document->property("exportWorkspace").value<QObject*>())
-        || exporting(document->property("drawingWorkspace").value<QObject*>());
+        || exporting(document->property("drawingWorkspace").value<QObject*>())
+        || document->assemblyExportInProgress();
 }
 
 int DocumentTabs::rowCount(const QModelIndex& parent) const { return parent.isValid() ? 0 : count(); }

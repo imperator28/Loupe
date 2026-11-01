@@ -248,11 +248,28 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             exportWorkspaceController_.handleExportFailed(message.isEmpty() ? code : message);
             return;
         }
+        if (requestId == activeAssemblyExportRequestId_) {
+            activeAssemblyExportRequestId_ = 0;
+            assemblyExportSucceeded_ = false;
+            assemblyExportMessage_ = tr("The assembly could not be exported: %1").arg(message.isEmpty() ? code : message);
+            emit assemblyExportChanged();
+            return;
+        }
         if (requestId != activeRequestId_) return;
         const auto detail = message.isEmpty() ? code : message;
         setErrorMessage(tr("The STEP importer could not open this file: %1").arg(detail));
         documentState_ = DocumentState::WorkerFailed;
         emit documentStateChanged();
+    });
+    connect(&workerClient_, &worker::WorkerClient::assemblyExported, this,
+            [this](const quint64 requestId, const QString& path, const int partCount, const int removedCount) {
+        if (requestId != activeAssemblyExportRequestId_) return;
+        activeAssemblyExportRequestId_ = 0;
+        assemblyExportSucceeded_ = true;
+        assemblyExportMessage_ = tr("Exported %1 with %n hidden part(s) left out.", "", removedCount)
+                                     .arg(QDir::toNativeSeparators(path));
+        Q_UNUSED(partCount);
+        emit assemblyExportChanged();
     });
     connect(&exportWorkspaceController_, &exporting::ExportWorkspaceController::executeRequested,
             this, [this](const QByteArray& planJson, const QString& fingerprint) {
@@ -537,6 +554,8 @@ void ApplicationController::openFile(const QUrl& file)
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
     activeExportRequestId_ = 0;
+    activeAssemblyExportRequestId_ = 0;
+    assemblyExportMessage_.clear();
     cacheHit_ = false;
     serverName_ = QStringLiteral("/tmp/loupe-%1-%2")
                       .arg(QCoreApplication::applicationPid())
@@ -880,6 +899,51 @@ void ApplicationController::saveGeometryCache()
     const cache::UnitDecision unit{effectiveUnit_, 1.0};
     const auto key = cache::CacheKey::from(*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit);
     static_cast<void>(cacheStore_->put(key, geometryCacheArchive_, {*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit}));
+}
+
+int ApplicationController::hiddenPartCount() const
+{
+    int hidden = 0;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it)
+        if (!visibilityModel_.isVisible(it.key())) ++hidden;
+    return hidden;
+}
+
+QString ApplicationController::suggestedAssemblyExportPath() const
+{
+    if (documentPath_.isEmpty()) return {};
+    const QFileInfo source(documentPath_);
+    return QDir(exportWorkspaceController_.destination()).filePath(
+        tr("%1 without hidden parts.step").arg(source.completeBaseName()));
+}
+
+QUrl ApplicationController::suggestedAssemblyExportUrl() const
+{
+    const auto path = suggestedAssemblyExportPath();
+    return path.isEmpty() ? QUrl{} : QUrl::fromLocalFile(path);
+}
+
+// The folder holding the suggestion if it exists yet, else the STEP file's own folder.
+QUrl ApplicationController::suggestedAssemblyExportFolderUrl() const
+{
+    const auto path = suggestedAssemblyExportPath();
+    if (path.isEmpty()) return {};
+    const auto folder = QFileInfo(path).absolutePath();
+    return QUrl::fromLocalFile(QDir(folder).exists() ? folder : QFileInfo(documentPath_).absolutePath());
+}
+
+bool ApplicationController::exportAssemblyWithoutHiddenParts(const QUrl& destination)
+{
+    if (activeAssemblyExportRequestId_ != 0 || documentState_ != DocumentState::TreeReady || importInProgress_) return false;
+    if (!destination.isLocalFile()) return false;
+    QStringList hidden;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it)
+        if (!visibilityModel_.isVisible(it.key())) hidden.append(it.key());
+    assemblyExportMessage_.clear();
+    assemblyExportSucceeded_ = false;
+    activeAssemblyExportRequestId_ = workerClient_.exportAssembly(destination.toLocalFile(), hidden, effectiveUnit_);
+    emit assemblyExportChanged();
+    return true;
 }
 
 QString ApplicationController::documentName() const

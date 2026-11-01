@@ -36,6 +36,7 @@ Loupe is deliberately focused on the inspection controls engineers use repeatedl
 | Tool | Control level |
 | --- | --- |
 | **Open and review** | Open `.step` and `.stp` files from the picker, by dropping them onto the app, or by double-clicking them once Loupe is their default app (see below). Each file opens in its own tab, which keeps its view, selection and export queue while you work in another. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
+| **Strip parts from an assembly** | Hide the parts to drop (search, multi-select, Hide or Isolate), then File → Export Assembly Without Hidden Parts… writes the rest as one STEP file, keeping the assembly tree, names, placements, colours and the source unit. Empty subassemblies are dropped. |
 | **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide or make semi-transparent, show all, and recolor a single occurrence or a shared definition. |
 | **Visual inspection** | Choose orthographic or perspective projection, use the view cube for canonical views, and switch among Solid, Solid + Edges, and Edges Only. Edges are generated from CAD topology rather than display triangles. |
 | **Part colours** | Keep the file's colours, or give every part an automatic low-contrast colour (cool shades, warm shades, or muted) with Shuffle -- useful when a file leaves parts uncoloured or gives them all one default colour. Display only. |
