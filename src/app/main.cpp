@@ -78,6 +78,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     fileOpenRouter.setWindow(engine.rootObjects().constFirst());
+    fileOpenRouter.setWindowProvider([&windowManager] { return windowManager.preferredWindow(); });
     fileOpenRouter.open(launchFiles);
     // --self-check: start exactly as a user's launch does -- real platform plugin, the whole
     // QML UI -- then confirm the worker sits beside the executable, and exit. Release CI runs

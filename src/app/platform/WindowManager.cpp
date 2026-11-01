@@ -14,6 +14,42 @@ WindowManager::WindowManager(QObject* parent)
 {
 }
 
+void WindowManager::registerWindow(QObject* object)
+{
+    auto* window = qobject_cast<QQuickWindow*>(object);
+    if (!window) return;
+    for (const auto& known : windows_) if (known == window) return;
+    windows_.append(window);
+    // Keep the list in activation order, most recent last.
+    connect(window, &QWindow::activeChanged, this, [this, window] {
+        if (!window->isActive()) return;
+        windows_.removeAll(window);
+        windows_.append(window);
+    });
+    connect(window, &QObject::destroyed, this, [this] { windows_.removeAll(nullptr); });
+}
+
+QObject* WindowManager::dropTargetAt(const int x, const int y, QObject* excluding) const
+{
+    // Most recently active first: the one on top where windows overlap.
+    for (auto it = windows_.crbegin(); it != windows_.crend(); ++it) {
+        QQuickWindow* window = *it;
+        if (!window || window == excluding || !window->isVisible()) continue;
+        QVariant index;
+        if (QMetaObject::invokeMethod(window, "tabDropIndexAt", Q_RETURN_ARG(QVariant, index), Q_ARG(QVariant, x), Q_ARG(QVariant, y))
+            && index.toInt() >= 0)
+            return window;
+    }
+    return nullptr;
+}
+
+QObject* WindowManager::preferredWindow() const
+{
+    for (auto it = windows_.crbegin(); it != windows_.crend(); ++it)
+        if (*it && (*it)->isVisible()) return it->data();
+    return nullptr;
+}
+
 QObject* WindowManager::openWindowWith(ApplicationController* document, QObject* fromWindow, const int x, const int y)
 {
     auto* engine = fromWindow ? qmlEngine(fromWindow) : nullptr;
@@ -40,7 +76,7 @@ QObject* WindowManager::openWindowWith(ApplicationController* document, QObject*
     connect(window, &QWindow::visibleChanged, window, [window](const bool visible) {
         if (!visible) window->deleteLater();
     });
-    windows_.append(window);
+    registerWindow(window);
     return window;
 }
 

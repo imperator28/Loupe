@@ -5,6 +5,8 @@
 #include <QStringList>
 #include <QUrl>
 
+#include <functional>
+
 class QLocalServer;
 
 namespace loupe::app::platform {
@@ -34,6 +36,9 @@ public:
     // Where files go: the window's openStepFile(url). Files that arrived before the window
     // existed are delivered now.
     void setWindow(QObject* window);
+    // With several windows, the one to use at each delivery (the one used last); the
+    // window set above is the fallback.
+    void setWindowProvider(std::function<QObject*()> provider);
     void open(const QStringList& files);
 
 protected:
@@ -44,6 +49,7 @@ private:
     [[nodiscard]] static QString serverName();
 
     QPointer<QObject> window_;
+    std::function<QObject*()> windowProvider_;
     QList<QUrl> pending_;
     QLocalServer* server_{nullptr};
 };

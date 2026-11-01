@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.5-beta.3
+
+- **Drag a tab into another window** (#15): drop it on another Loupe window's
+  toolbar or tabs and the document moves there, at the drop position. A
+  window's last tab can go too, and that window then closes, as in Chrome.
+  Files opened from the OS now go to the window you used last.
+
 ## v0.1.5-beta.2
 
 Fixes from testing beta 1 (#11-#16).

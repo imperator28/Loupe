@@ -46,7 +46,8 @@ public:
     // worker and state, for another window to adopt. Refused for the last tab.
     Q_INVOKABLE loupe::app::ApplicationController* take(int index);
     // Add a document taken from another window, as the active tab.
-    Q_INVOKABLE void adopt(loupe::app::ApplicationController* document);
+    // At `index`, or at the end when it is out of range.
+    Q_INVOKABLE void adopt(loupe::app::ApplicationController* document, int index = -1);
     // Whether closing the tab would interrupt an export or drawing run.
     Q_INVOKABLE [[nodiscard]] bool isBusy(int index) const;
 

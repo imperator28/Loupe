@@ -128,6 +128,30 @@ ApplicationWindow {
     // Set when this window is opened for a tab dragged out of another one (#15).
     property QtObject adoptDocument: null
 
+    // Where a tab dragged from another window would land if let go at global (x, y): its
+    // index in this window's tabs, or -1 when the point is not over this window's header
+    // (its toolbar and tab strip: a forgiving target, and there whether or not the strip is).
+    function tabDropIndexAt(x, y) {
+        if (!root.visible) return -1
+        const area = root.header
+        const local = area.mapFromGlobal(x, y)
+        const slack = 8
+        if (local.x < -slack || local.y < -slack || local.x > area.width + slack || local.y > area.height + slack) return -1
+        const inRow = tabRow.mapFromGlobal(x, y)
+        for (let i = 0; i < root.documents.count; ++i) {
+            const tab = tabRepeater.itemAt(i)
+            if (tab && inRow.x < tab.x + tab.width / 2) return i
+        }
+        return root.documents.count
+    }
+
+    // Take in a tab dragged here from another window.
+    function adoptDocumentAt(document, index) {
+        root.documents.adopt(document, index)
+        root.raise()
+        root.requestActivate()
+    }
+
     // Closing a window closes its tabs, stopping their workers; the window itself is
     // destroyed by the window manager (or is the last one, and the app quits).
     onClosing: {
@@ -138,6 +162,7 @@ ApplicationWindow {
     Component.onCompleted: {
         appTheme.mode = themePreference.mode
         windowChrome.applyAppearance(root, appTheme.dark)
+        Windows.registerWindow(root)
         root.applyNewDocumentPreferences(root.documents.documentAt(0))
         if (root.adoptDocument) {
             root.documents.adopt(root.adoptDocument)
@@ -498,11 +523,17 @@ ApplicationWindow {
                                 if (!active) return
                                 const scene = centroid.scenePosition
                                 const inStrip = tabRow.mapFromItem(null, scene.x, scene.y)
-                                outside = root.documents.count > 1
-                                          && (inStrip.y < -tabStrip.height || inStrip.y > tabStrip.height * 2.5)
+                                // Over another window's tab strip, the tab goes there -- even
+                                // a window's only tab, which then closes its window.
+                                const dropTarget = Windows.dropTargetAt(root.x + scene.x, root.y + scene.y, root)
+                                outside = dropTarget !== null
+                                          || (root.documents.count > 1
+                                              && (inStrip.y < -tabStrip.height || inStrip.y > tabStrip.height * 2.5))
                                 tabGhost.x = scene.x - tabGhost.width / 2
                                 tabGhost.y = scene.y - tabGhost.height / 2
                                 tabGhost.text = tabLabel.text
+                                tabGhost.hint = dropTarget ? qsTr("Release to move into that window")
+                                                           : qsTr("Release to open in a new window")
                                 tabGhost.visible = outside
                                 if (outside) return
                                 // The slot before the first other tab whose centre is right of
@@ -529,9 +560,22 @@ ApplicationWindow {
                                 const scene = centroid.scenePosition
                                 const window = root
                                 const documents = root.documents
+                                const index = tab.index
                                 const x = root.x + scene.x
                                 const y = root.y + scene.y
-                                const document = documents.take(tab.index)
+                                const dropTarget = Windows.dropTargetAt(x, y, window)
+                                if (dropTarget) {
+                                    const dropIndex = dropTarget.tabDropIndexAt(x, y)
+                                    // A window's last tab can leave too: an empty one stands in
+                                    // until this window closes behind it, as in Chrome.
+                                    const emptied = documents.count === 1
+                                    if (emptied) documents.add()
+                                    const moving = documents.take(index)
+                                    if (moving) dropTarget.adoptDocumentAt(moving, dropIndex)
+                                    if (emptied) window.close()
+                                    return
+                                }
+                                const document = documents.take(index)
                                 // If no window could be made, the tab comes straight back.
                                 if (document && !Windows.openWindowWith(document, window, x, y))
                                     documents.adopt(document)
@@ -630,6 +674,7 @@ ApplicationWindow {
     Rectangle {
         id: tabGhost
         property alias text: tabGhostLabel.text
+        property alias hint: tabGhostHint.text
         parent: root.contentItem
         z: 400
         visible: false
@@ -645,6 +690,7 @@ ApplicationWindow {
             font.weight: Font.DemiBold
         }
         Label {
+            id: tabGhostHint
             anchors.top: parent.bottom
             anchors.topMargin: 4
             anchors.horizontalCenter: parent.horizontalCenter

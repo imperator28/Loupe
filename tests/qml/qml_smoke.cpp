@@ -15,6 +15,8 @@
 
 #include <functional>
 #include <QColor>
+#include <QDir>
+#include <QFile>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QGuiApplication>
@@ -74,8 +76,11 @@ class QmlSmokeTest final : public QObject
 
 private slots:
     void initTestCase();
-    void mainLoads();
+    // Before mainLoads: that test's synthetic drop, sent to a window it then destroys,
+    // leaves pointer state that stops a later window's DragHandler activating. The same
+    // drop into this test's own window does not (checked below).
     void tabsDragToReorderAndOffTheStripIntoANewWindow();
+    void mainLoads();
     void exportPickerCheckboxUpdatesDraft();
     void inspectionTaskPanelsLoad();
     void captureProgressStaysInCapturePanel();
@@ -209,6 +214,15 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
         QTest::qWait(100);
     };
 
+    // Dropping a file must not stop tabs dragging afterwards.
+    {
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl(QStringLiteral("file:///tmp/missing-dropped-model.step"))});
+        QDragEnterEvent enterEvent(QPoint{window->width() / 2, window->height() / 2}, Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &enterEvent);
+        QDropEvent dropEvent(QPointF{window->width() / 2.0, window->height() / 2.0}, Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &dropEvent);
+    }
     // Drag the first tab past the second: they swap.
     QTest::qWait(300); // let the strip lay the new tabs out
     auto items = tabItems();
@@ -229,6 +243,38 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
     auto* openedTabs = qobject_cast<loupe::app::DocumentTabs*>(opened->property("documents").value<QObject*>());
     QCOMPARE(openedTabs->count(), 1);
     QCOMPARE(openedTabs->active(), third);
+
+    // Side by side, then drag a tab from the first window onto the second one's toolbar
+    // and tab area: it moves there.
+    window->setPosition(0, 0);
+    window->resize(700, 500);
+    opened->setPosition(760, 0);
+    opened->resize(700, 500);
+    QTest::qWait(300);
+    const auto onOpened = opened->contentItem()->mapToGlobal(QPointF(300, 0)).toPoint() + QPoint(0, 40);
+    items = tabItems();
+    const auto moving = tabs->documentAt(0);
+    const auto start = centreOf(items.at(0));
+    drag(start, onOpened - window->position());
+    QTRY_COMPARE_WITH_TIMEOUT(openedTabs->count(), 2, 3000);
+    QCOMPARE(tabs->count(), 1);
+    QVERIFY(openedTabs->documentAt(0) == moving || openedTabs->documentAt(1) == moving);
+
+    // A window's last tab can go too, and its window closes behind it. A lone empty tab
+    // shows no strip to drag from, so give it a file first (an empty one is enough to name
+    // the tab; it is never read as geometry here).
+    QTemporaryDir files;
+    const auto named = QDir(files.path()).filePath(QStringLiteral("last.step"));
+    { QFile file(named); QVERIFY(file.open(QIODevice::WriteOnly)); }
+    tabs->documentAt(0)->openFile(QUrl::fromLocalFile(named));
+    QTRY_COMPARE_WITH_TIMEOUT(tabItems().size(), 1, 3000);
+    QTest::qWait(200);
+    items = tabItems();
+    const auto last = tabs->documentAt(0);
+    drag(centreOf(items.at(0)), onOpened - window->position());
+    QTRY_COMPARE_WITH_TIMEOUT(openedTabs->count(), 3, 3000);
+    QVERIFY(openedTabs->documentAt(0) == last || openedTabs->documentAt(1) == last || openedTabs->documentAt(2) == last);
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isVisible(), 3000);
     opened->close();
 }
 

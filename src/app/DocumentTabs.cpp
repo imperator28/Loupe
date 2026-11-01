@@ -76,14 +76,14 @@ ApplicationController* DocumentTabs::take(const int index)
     return document;
 }
 
-void DocumentTabs::adopt(ApplicationController* document)
+void DocumentTabs::adopt(ApplicationController* document, const int index)
 {
     if (!document || std::find(documents_.begin(), documents_.end(), document) != documents_.end()) return;
     document->setParent(this);
     track(document);
-    const auto row = count();
+    const auto row = index >= 0 && index <= count() ? index : count();
     beginInsertRows({}, row, row);
-    documents_.emplace_back(document);
+    documents_.insert(documents_.begin() + row, document);
     endInsertRows();
     emit countChanged();
     activeIndex_ = row;

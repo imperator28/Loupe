@@ -121,6 +121,11 @@ void FileOpenRouter::setWindow(QObject* window)
     for (const auto& file : pending) deliver(file);
 }
 
+void FileOpenRouter::setWindowProvider(std::function<QObject*()> provider)
+{
+    windowProvider_ = std::move(provider);
+}
+
 void FileOpenRouter::open(const QStringList& files)
 {
     for (const auto& file : files)
@@ -142,12 +147,14 @@ bool FileOpenRouter::eventFilter(QObject* watched, QEvent* event)
 
 void FileOpenRouter::deliver(const QUrl& file)
 {
-    if (!window_) {
+    QObject* target = windowProvider_ ? windowProvider_() : nullptr;
+    if (!target) target = window_;
+    if (!target) {
         pending_.append(file);
         return;
     }
-    QMetaObject::invokeMethod(window_, "openStepFile", Q_ARG(QVariant, QVariant::fromValue(file)));
-    if (auto* window = qobject_cast<QWindow*>(window_.data())) {
+    QMetaObject::invokeMethod(target, "openStepFile", Q_ARG(QVariant, QVariant::fromValue(file)));
+    if (auto* window = qobject_cast<QWindow*>(target)) {
         if (window->windowState() & Qt::WindowMinimized) window->showNormal();
         window->raise();
         window->requestActivate();
