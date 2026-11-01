@@ -25,6 +25,9 @@ class ExportWorkspaceController final : public QObject {
     Q_PROPERTY(QString previewNodeId READ previewNodeId NOTIFY previewChanged)
     Q_PROPERTY(QVariantList bucketRows READ bucketRows NOTIFY planChanged)
     Q_PROPERTY(QString destination READ destination WRITE setDestination NOTIFY settingsChanged)
+    // True while the destination is the folder suggested for the open file, which is only
+    // created when an export first runs.
+    Q_PROPERTY(bool destinationIsDefault READ destinationIsDefault NOTIFY settingsChanged)
     Q_PROPERTY(QString format READ format WRITE setFormat NOTIFY settingsChanged)
     Q_PROPERTY(QString coordinates READ coordinates WRITE setCoordinates NOTIFY settingsChanged)
     Q_PROPERTY(QString grouping READ grouping WRITE setGrouping NOTIFY settingsChanged)
@@ -52,6 +55,10 @@ public:
     [[nodiscard]] QString previewNodeId() const noexcept { return hoveredNodeId_.isEmpty() ? focusedNodeId_ : hoveredNodeId_; }
     [[nodiscard]] const QVariantList& bucketRows() const noexcept { return planRows_; }
     [[nodiscard]] const QString& destination() const noexcept { return destination_; }
+    [[nodiscard]] bool destinationIsDefault() const noexcept { return destinationIsDefault_; }
+    // A newly opened file's suggested output folder. It replaces whatever was chosen for the
+    // previous file; picking a folder by hand then overrides it until the next file.
+    void setDefaultDestination(const QString& folder);
     [[nodiscard]] const QString& format() const noexcept { return format_; }
     [[nodiscard]] const QString& coordinates() const noexcept { return coordinates_; }
     [[nodiscard]] const QString& grouping() const noexcept { return grouping_; }
@@ -124,6 +131,7 @@ private:
     QString focusedNodeId_;
     QString hoveredNodeId_;
     QString destination_;
+    bool destinationIsDefault_{false};
     QString format_{QStringLiteral("STEP")};
     QString coordinates_{QStringLiteral("Assembly")};
     QString grouping_{QStringLiteral("Separate files")};

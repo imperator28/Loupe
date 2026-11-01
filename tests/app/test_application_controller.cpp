@@ -1,4 +1,6 @@
 #include <QtTest/QTest>
+#include <QFileInfo>
+#include <QDir>
 #include <QSignalSpy>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -121,6 +123,12 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
     QVERIFY(controller.assemblyTreeModel()->rowCount() > 0);
     QCOMPARE(controller.effectiveUnit(), QStringLiteral("mm"));
+    // Output defaults to folders beside the file, named after it (#3).
+    const QFileInfo source(QString::fromStdString(fixture.string()));
+    const auto* exportWorkspace = controller.property("exportWorkspace").value<QObject*>();
+    QCOMPARE(exportWorkspace->property("destination").toString(),
+             QDir(source.absolutePath()).filePath(QStringLiteral("controller-worker export")));
+    QVERIFY(exportWorkspace->property("destinationIsDefault").toBool());
     const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
     QVERIFY(!geometry.isEmpty());
     controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());

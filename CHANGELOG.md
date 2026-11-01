@@ -18,6 +18,11 @@
   left-aligned, a cut-off name shows in full on hover, and Expand all /
   Collapse all buttons sit above the tree. The tree model also no longer scans
   every node for each row it draws, which made large assemblies slow.
+- **Output defaults to a folder beside the STEP file** (#3): Export suggests
+  `<file name> export/` and Drawing `<file name> drawings/` next to the opened
+  file (under Documents/Loupe if that folder is read-only). The folder is only
+  created when the first export runs; Browse still picks any folder, which then
+  holds until the next file is opened.
 
 ### Fixes
 

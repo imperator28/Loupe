@@ -2,6 +2,7 @@
 
 #include "core/drawing/DrawingPlan.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -388,6 +389,15 @@ void DrawingWorkspaceController::setDestination(const QString& destination)
 {
     if (locked() || destination_ == destination) return;
     destination_ = destination;
+    destinationIsDefault_ = false;
+    refreshPlan();
+    emit settingsChanged();
+}
+
+void DrawingWorkspaceController::setDefaultDestination(const QString& folder)
+{
+    destination_ = folder;
+    destinationIsDefault_ = !folder.isEmpty();
     refreshPlan();
     emit settingsChanged();
 }
@@ -578,6 +588,12 @@ bool DrawingWorkspaceController::exportReviewedPlan()
 {
     refreshPlan();
     if (!canExport()) return false;
+    // The suggested folder is made on the first export, never just for opening a file.
+    if (destinationIsDefault_ && !QDir(destination_).exists() && !QDir().mkpath(destination_)) {
+        planError_ = tr("Could not create %1. Choose another folder.").arg(QDir::toNativeSeparators(destination_));
+        emit planChanged();
+        return false;
+    }
     exporting_ = true;
     exportProgress_ = 0.0;
     exportStage_ = tr("Preparing reviewed drawings");

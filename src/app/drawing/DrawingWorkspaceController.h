@@ -39,6 +39,9 @@ class DrawingWorkspaceController final : public QObject {
     Q_PROPERTY(int previewRevision READ previewRevision NOTIFY candidateChanged)
 
     Q_PROPERTY(QString destination READ destination WRITE setDestination NOTIFY settingsChanged)
+    // True while the destination is the folder suggested for the open file, which is only
+    // created when an export first runs.
+    Q_PROPERTY(bool destinationIsDefault READ destinationIsDefault NOTIFY settingsChanged)
     Q_PROPERTY(QString format READ format WRITE setFormat NOTIFY settingsChanged)
     Q_PROPERTY(bool includeScaleFiducial READ includeScaleFiducial WRITE setIncludeScaleFiducial NOTIFY settingsChanged)
 
@@ -72,6 +75,10 @@ public:
     [[nodiscard]] int previewRevision() const noexcept { return previewRevision_; }
 
     [[nodiscard]] const QString& destination() const noexcept { return destination_; }
+    [[nodiscard]] bool destinationIsDefault() const noexcept { return destinationIsDefault_; }
+    // A newly opened file's suggested output folder. It replaces whatever was chosen for the
+    // previous file; picking a folder by hand then overrides it until the next file.
+    void setDefaultDestination(const QString& folder);
     [[nodiscard]] const QString& format() const noexcept { return format_; }
     [[nodiscard]] bool includeScaleFiducial() const noexcept { return includeScaleFiducial_; }
 
@@ -189,6 +196,7 @@ private:
     quint64 nextDrawingSerial_{1};
 
     QString destination_;
+    bool destinationIsDefault_{false};
     QString format_{QStringLiteral("DXF")};
     bool includeScaleFiducial_{false};
 

@@ -6,6 +6,7 @@
 #include "core/domain/AssemblyTypes.h"
 #include "core/inspection/MaterialProperties.h"
 
+#include <QStandardPaths>
 #include <QCoreApplication>
 #include <QBuffer>
 #include <QColor>
@@ -492,6 +493,18 @@ void ApplicationController::openFile(const QUrl& file)
     snapshotJson_.clear();
     exportWorkspaceController_.reset();
     drawingWorkspaceController_.reset();
+    // Output goes beside the file by default ("<name> export", "<name> drawings"), or under
+    // Documents/Loupe when the file's folder cannot be written to (a read-only share).
+    {
+        const QFileInfo sourceFolder(sourceFile.absolutePath());
+        const auto root = sourceFolder.isWritable()
+            ? sourceFile.absolutePath()
+            : QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QStringLiteral("Loupe"));
+        exportWorkspaceController_.setDefaultDestination(
+            QDir(root).filePath(tr("%1 export").arg(sourceFile.completeBaseName())));
+        drawingWorkspaceController_.setDefaultDestination(
+            QDir(root).filePath(tr("%1 drawings").arg(sourceFile.completeBaseName())));
+    }
     geometryCacheArchive_.clear();
     geometryReplayTimer_.stop();
     geometryReplayQueue_.clear();

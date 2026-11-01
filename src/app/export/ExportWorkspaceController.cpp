@@ -3,6 +3,7 @@
 #include "core/domain/AssemblyTypes.h"
 #include "core/export/ExportPlan.h"
 
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -168,6 +169,15 @@ void ExportWorkspaceController::setDestination(const QString& destination)
     if (exporting_) return;
     if (destination_ == destination) return;
     destination_ = destination;
+    destinationIsDefault_ = false;
+    refreshPlan();
+    emit settingsChanged();
+}
+
+void ExportWorkspaceController::setDefaultDestination(const QString& folder)
+{
+    destination_ = folder;
+    destinationIsDefault_ = !folder.isEmpty();
     refreshPlan();
     emit settingsChanged();
 }
@@ -398,6 +408,12 @@ bool ExportWorkspaceController::exportReviewedPlan()
 {
     refreshPlan();
     if (!canExport()) return false;
+    // The suggested folder is made on the first export, never just for opening a file.
+    if (destinationIsDefault_ && !QDir(destination_).exists() && !QDir().mkpath(destination_)) {
+        planError_ = tr("Could not create %1. Choose another folder.").arg(QDir::toNativeSeparators(destination_));
+        emit planChanged();
+        return false;
+    }
     exporting_ = true;
     exportProgress_ = 0.0;
     exportStage_ = tr("Preparing reviewed export");

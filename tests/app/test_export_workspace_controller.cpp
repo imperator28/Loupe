@@ -1,4 +1,6 @@
 #include <QtTest/QTest>
+#include <QDir>
+#include <QTemporaryDir>
 #include <QtTest/QSignalSpy>
 
 #include "app/export/ExportWorkspaceController.h"
@@ -25,6 +27,7 @@ private slots:
     void exportWaitsForNativeDocument();
     void selectAllChecksEveryExportableComponent();
     void deselectAllClearsSelection();
+    void suggestedFolderIsCreatedOnlyByTheFirstExport();
 };
 
 namespace {
@@ -325,6 +328,31 @@ void ExportWorkspaceControllerTest::deselectAllClearsSelection()
     controller.setAllChecked(false);
 
     QCOMPARE(controller.checkedCount(), 0);
+}
+
+void ExportWorkspaceControllerTest::suggestedFolderIsCreatedOnlyByTheFirstExport()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const auto suggested = QDir(root.path()).filePath(QStringLiteral("Drawer export"));
+    loupe::app::exporting::ExportWorkspaceController controller;
+    controller.replaceSnapshot(snapshot());
+    controller.setChecked(QStringLiteral("cover"), true);
+    controller.setDefaultDestination(suggested);
+    controller.setDocumentReady(true);
+    QCOMPARE(controller.destination(), suggested);
+    QVERIFY(controller.destinationIsDefault());
+    QVERIFY(controller.canExport());
+    QVERIFY(!QDir(suggested).exists()); // not made just for opening the file
+
+    QVERIFY(controller.exportReviewedPlan());
+    QVERIFY(QDir(suggested).exists());
+
+    // A folder picked by hand is the user's, and stops being the suggestion.
+    loupe::app::exporting::ExportWorkspaceController picked;
+    picked.setDefaultDestination(suggested);
+    picked.setDestination(root.path());
+    QVERIFY(!picked.destinationIsDefault());
 }
 
 QTEST_MAIN(ExportWorkspaceControllerTest)
