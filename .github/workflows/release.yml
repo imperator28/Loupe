@@ -226,9 +226,26 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         # The bundle as a tester runs it, with no Qt environment pointing at the build tree.
+        # A crash prints nothing by itself, so on failure the launch is repeated under lldb for
+        # a backtrace, and any crash report macOS wrote is shown.
         run: |
-          env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QT_QPA_PLATFORM QT_FORCE_STDERR_LOGGING=1 \
-            perl -e 'alarm 120; exec @ARGV' "dist/loupe-macos-arm64/Loupe.app/Contents/MacOS/Loupe" --self-check
+          app="dist/loupe-macos-arm64/Loupe.app/Contents/MacOS/Loupe"
+          launch() {
+            env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QT_QPA_PLATFORM QT_FORCE_STDERR_LOGGING=1 "$@"
+          }
+          status=0
+          launch perl -e 'alarm 120; exec @ARGV' "$app" --self-check || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Backtrace (lldb)"
+            launch perl -e 'alarm 180; exec @ARGV' lldb --batch -o run -k "thread backtrace all" -k "quit 1" -- "$app" --self-check || true
+            echo "::endgroup::"
+            echo "::group::Crash reports"
+            for report in $(ls -t ~/Library/Logs/DiagnosticReports/Loupe* 2>/dev/null | head -2); do
+              echo "== $report"; head -c 60000 "$report"; echo
+            done
+            echo "::endgroup::"
+            exit "$status"
+          fi
 
       - name: Upload packaged app
         uses: actions/upload-artifact@v4
