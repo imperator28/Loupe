@@ -10,3 +10,5 @@ CMakePresets.json text eol=lf
 *.json text eol=lf
 *.md text eol=lf
 *.qml text eol=lf
+# vcpkg overlay ports are kept byte for byte as vcpkg ships them (some patches need CRLF).
+ports/** -text

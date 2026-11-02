@@ -12,6 +12,10 @@
 - **The appearance swatch matches a multicoloured part**: it shows the colour
   covering most of the part, not whichever face colour loaded last.
 - **The tree's eye button is centred** in its row.
+- **macOS: no crash on launch on newer macOS**. Qt 6.11.1 crashed while turning
+  an image into a macOS one, such as the app icon at startup, on macOS releases
+  that no longer hide its bug. The macOS build now carries Qt's own fix from
+  6.11.2. macOS builds run on macOS 15 machines and still support macOS 14.
 
 ## v0.1.5-beta.3
 
