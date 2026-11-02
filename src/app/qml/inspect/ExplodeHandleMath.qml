@@ -10,9 +10,9 @@ QtObject {
     readonly property real ringTolerance: 7
     // An arrow seen almost end-on is too short on screen to drag along meaningfully.
     readonly property real minimumArrowPixels: 14
-    // The middle of the handle takes no press: an edge-on ring runs through it, and a click
-    // there should not start a turn.
-    readonly property real centreDeadZone: 10
+    // The ball at the middle of the handle moves the selection freely, in the plane of the
+    // screen. It wins over the edge-on rings that run through it.
+    readonly property real centreRadius: 11
 
     function distanceToSegment(px, py, ax, ay, bx, by) {
         const dx = bx - ax
@@ -36,14 +36,16 @@ QtObject {
         return best
     }
 
-    // Which handle a press at (x, y) takes: {kind: "move" | "rotate", axis: 0 | 1 | 2}, or
-    // null. `layout` is {centre: {x, y}, tips: [3 x {x, y}], rings: [3 x [{x, y}, ...]]}.
-    // Arrows win where they cross a ring: they are the smaller target.
+    // Which handle a press at (x, y) takes: {kind: "free"} for the ball in the middle,
+    // {kind: "move" | "rotate", axis: 0 | 1 | 2} for an arrow or a ring, or null. `layout`
+    // is {centre: {x, y}, tips: [3 x {x, y}], rings: [3 x [{x, y}, ...]]}. Arrows win where
+    // they cross a ring: they are the smaller target.
     function handleAt(x, y, layout) {
         if (!layout) return null
         const fromCentreX = x - layout.centre.x
         const fromCentreY = y - layout.centre.y
-        if (Math.sqrt(fromCentreX * fromCentreX + fromCentreY * fromCentreY) < math.centreDeadZone) return null
+        if (Math.sqrt(fromCentreX * fromCentreX + fromCentreY * fromCentreY) <= math.centreRadius)
+            return { kind: "free", axis: -1 }
         let best = null
         let bestDistance = Number.POSITIVE_INFINITY
         for (let axis = 0; axis < 3; ++axis) {
@@ -76,6 +78,14 @@ QtObject {
         const lengthSquared = axisX * axisX + axisY * axisY
         if (lengthSquared <= 0) return 0
         return (dx * axisX + dy * axisY) / lengthSquared * millimetres
+    }
+
+    // A pointer moved by (dx, dy) pixels, as a move in the screen's plane: `right` and `up`
+    // are the screen's directions in the scene, `worldPerPixel` its scale at the handle.
+    function screenPlaneTravel(dx, dy, right, up, worldPerPixel) {
+        return Qt.vector3d((right.x * dx - up.x * dy) * worldPerPixel,
+                           (right.y * dx - up.y * dy) * worldPerPixel,
+                           (right.z * dx - up.z * dy) * worldPerPixel)
     }
 
     // The signed turn from one screen angle to the next, in degrees, across the +/-180 seam.

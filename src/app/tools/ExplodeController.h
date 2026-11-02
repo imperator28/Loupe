@@ -91,6 +91,8 @@ public:
 
     // Typed values: place the node's centre at this offset from where it is assembled, or
     // turn it to these angles about its centre.
+    // Move these nodes by an exact distance along the world axes, as one step to undo.
+    Q_INVOKABLE void translateBy(const QStringList& nodeIds, const QVector3D& delta);
     Q_INVOKABLE void setOffset(const QString& nodeId, const QVector3D& offset);
     Q_INVOKABLE void setAngles(const QString& nodeId, const QVector3D& degrees);
     Q_INVOKABLE void resetNode(const QString& nodeId);
@@ -98,6 +100,8 @@ public:
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
 
+    // Every node's own transform, for an export of the exploded layout.
+    [[nodiscard]] const QHash<QString, QMatrix4x4>& ownTransforms() const noexcept { return state_.transforms; }
     [[nodiscard]] bool exploded() const noexcept { return !state_.transforms.isEmpty(); }
     [[nodiscard]] int revision() const noexcept { return revision_; }
     [[nodiscard]] double blend() const noexcept { return blend_; }

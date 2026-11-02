@@ -1,8 +1,11 @@
 #pragma once
 
+#include "core/drawing/DrawingFormat.h"
 #include "core/drawing/DrawingPlan.h"
+#include "core/drawing/DrawingProjector.h"
 #include "core/import/StepImporter.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -26,13 +29,32 @@ struct DrawingExportResult final {
     std::vector<std::string> warnings;
 };
 
+// A drawing of a shape that is already placed and in millimetres: an exploded assembly,
+// say, which no single node of the document stands for.
+struct ShapeDrawingRequest final {
+    std::filesystem::path destination;
+    DrawingFormat format{DrawingFormat::Dxf};
+    gp_Dir viewDirection{0.0, 0.0, 1.0};
+    gp_Dir upDirection{0.0, 1.0, 0.0};
+    ContentMode mode{ContentMode::TechnicalView};
+    bool includeScaleFiducial{false};
+};
+
 class DrawingExporter {
 public:
+    // Throws on any failure, leaving no partial file.
+    [[nodiscard]] DrawingExportResult writeShape(const TopoDS_Shape& shapeMm, const ShapeDrawingRequest& request) const;
+
     // Throws on any failure. The caller deletes the partial file and reports the row as
     // failed; a failed row must not abort the batch.
     [[nodiscard]] DrawingExportResult write(const import::ImportResult& imported,
                                             const DrawingOutputRow& row,
                                             bool includeScaleFiducial) const;
+
+private:
+    [[nodiscard]] DrawingExportResult projectAndWrite(const ProjectionRequest& request,
+                                                      const std::filesystem::path& destination,
+                                                      DrawingFormat format, bool includeScaleFiducial) const;
 };
 
 } // namespace loupe::drawing

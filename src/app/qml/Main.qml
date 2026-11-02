@@ -222,6 +222,13 @@ ApplicationWindow {
                          && !root.controller.assemblyExportInProgress
                 onTriggered: root.chooseAssemblyExport()
             }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: qsTr("Export Exploded Assembly…")
+                enabled: root.controller.documentState === AppState.TreeReady && !root.controller.importInProgress
+                         && !root.controller.assemblyExportInProgress && root.controller.explode.exploded
+                onTriggered: root.controller.requestExplodedExport()
+            }
             Inspect.ThemedMenuSeparator { theme: appTheme }
             // Windows only: Loupe ships without an installer, so this is how it becomes an app
             // that can open STEP files. Windows then asks the user to confirm the default.

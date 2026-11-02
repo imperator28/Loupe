@@ -15,6 +15,8 @@ Node {
     property color yColor: "transparent"
     property color zColor: "transparent"
     property color activeColor: "transparent"
+    // The ball in the middle, which moves the selection freely in the screen's plane.
+    property color centreColor: "transparent"
     // The handle under the pointer or being dragged: kind "move" or "rotate", axis 0-2.
     property string activeKind: ""
     property int activeAxis: -1
@@ -82,11 +84,13 @@ Node {
 
     Model {
         source: "#Sphere"
-        scale: Qt.vector3d(root.length * 0.0011, root.length * 0.0011, root.length * 0.0011)
+        // #Sphere is 100 across: about a tenth of the arrow length, the size the screen-space
+        // hit test grabs.
+        scale: Qt.vector3d(root.length * 0.0019, root.length * 0.0019, root.length * 0.0019)
         pickable: false
         materials: PrincipledMaterial {
             lighting: PrincipledMaterial.NoLighting
-            baseColor: root.activeColor
+            baseColor: root.activeKind === "free" ? root.activeColor : root.centreColor
         }
     }
 }

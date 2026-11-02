@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QQuaternion>
 #include <QFutureWatcher>
 #include <QHash>
 #include <QJsonArray>
@@ -251,7 +252,9 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         if (requestId == activeAssemblyExportRequestId_) {
             activeAssemblyExportRequestId_ = 0;
             assemblyExportSucceeded_ = false;
-            assemblyExportMessage_ = tr("The assembly could not be exported: %1").arg(message.isEmpty() ? code : message);
+            assemblyExportMessage_ = (activeAssemblyExportExploded_ ? tr("The exploded assembly could not be exported: %1")
+                                                                    : tr("The assembly could not be exported: %1"))
+                                         .arg(message.isEmpty() ? code : message);
             emit assemblyExportChanged();
             return;
         }
@@ -266,8 +269,15 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         if (requestId != activeAssemblyExportRequestId_) return;
         activeAssemblyExportRequestId_ = 0;
         assemblyExportSucceeded_ = true;
-        assemblyExportMessage_ = tr("Exported %1 with %n hidden part(s) left out.", "", removedCount)
-                                     .arg(QDir::toNativeSeparators(path));
+        if (activeAssemblyExportExploded_) {
+            assemblyExportMessage_ = removedCount > 0
+                ? tr("Exported the exploded assembly to %1, with %n hidden part(s) left out.", "", removedCount)
+                      .arg(QDir::toNativeSeparators(path))
+                : tr("Exported the exploded assembly to %1.").arg(QDir::toNativeSeparators(path));
+        } else {
+            assemblyExportMessage_ = tr("Exported %1 with %n hidden part(s) left out.", "", removedCount)
+                                         .arg(QDir::toNativeSeparators(path));
+        }
         Q_UNUSED(partCount);
         emit assemblyExportChanged();
     });
@@ -633,6 +643,11 @@ void ApplicationController::viewNormalToFace()
     emit viewNormalToFaceRequested();
 }
 
+void ApplicationController::requestExplodedExport()
+{
+    emit explodedExportRequested();
+}
+
 void ApplicationController::isolateActiveNode()
 {
     const auto selected = geometryNodesForSelection();
@@ -962,7 +977,54 @@ bool ApplicationController::exportAssemblyWithoutHiddenParts(const QUrl& destina
         if (!visibilityModel_.isVisible(it.key())) hidden.append(it.key());
     assemblyExportMessage_.clear();
     assemblyExportSucceeded_ = false;
+    activeAssemblyExportExploded_ = false;
     activeAssemblyExportRequestId_ = workerClient_.exportAssembly(destination.toLocalFile(), hidden, effectiveUnit_);
+    emit assemblyExportChanged();
+    return true;
+}
+
+QString ApplicationController::explodedExportFormat(const QUrl& destination)
+{
+    const auto suffix = QFileInfo(destination.toLocalFile()).suffix().toLower();
+    if (suffix == QStringLiteral("step") || suffix == QStringLiteral("stp")) return QStringLiteral("step");
+    if (suffix == QStringLiteral("stl") || suffix == QStringLiteral("dxf") || suffix == QStringLiteral("svg")
+        || suffix == QStringLiteral("pdf"))
+        return suffix;
+    return {};
+}
+
+bool ApplicationController::exportExplodedAssembly(const QUrl& destination, const QVector3D& viewDirection,
+                                                   const QVector3D& upDirection)
+{
+    if (activeAssemblyExportRequestId_ != 0 || documentState_ != DocumentState::TreeReady || importInProgress_) return false;
+    if (!destination.isLocalFile()) return false;
+    const auto format = explodedExportFormat(destination);
+    if (format.isEmpty()) {
+        assemblyExportSucceeded_ = false;
+        assemblyExportMessage_ = tr("Choose a .step, .stl, .dxf, .svg or .pdf file to export the exploded assembly.");
+        emit assemblyExportChanged();
+        return false;
+    }
+    protocol::ExportAssembly request;
+    request.destination = destination.toLocalFile();
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it)
+        if (!visibilityModel_.isVisible(it.key())) request.excludedNodeIds.append(it.key());
+    request.outputUnit = effectiveUnit_;
+    request.format = format;
+    const auto& transforms = explodeController_.ownTransforms();
+    for (auto it = transforms.cbegin(); it != transforms.cend(); ++it) {
+        const auto rotation = QQuaternion::fromRotationMatrix(it.value().toGenericMatrix<3, 3>()).normalized();
+        const auto translation = it.value().column(3).toVector3D();
+        request.placements.append({it.key(),
+                                   {rotation.x(), rotation.y(), rotation.z(), rotation.scalar()},
+                                   {translation.x(), translation.y(), translation.z()}});
+    }
+    request.viewDirection = {viewDirection.x(), viewDirection.y(), viewDirection.z()};
+    request.upDirection = {upDirection.x(), upDirection.y(), upDirection.z()};
+    assemblyExportMessage_.clear();
+    assemblyExportSucceeded_ = false;
+    activeAssemblyExportExploded_ = true;
+    activeAssemblyExportRequestId_ = workerClient_.exportAssembly(std::move(request));
     emit assemblyExportChanged();
     return true;
 }

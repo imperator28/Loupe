@@ -482,6 +482,15 @@ void ExplodeController::autoExplode(const QString& scopeId, const double factor)
     commitInteraction();
 }
 
+void ExplodeController::translateBy(const QStringList& nodeIds, const QVector3D& delta)
+{
+    if (delta.lengthSquared() <= 0.0F) return;
+    beginInteraction(nodeIds);
+    if (interaction_ != Interaction::Handle) return;
+    previewTranslation(delta);
+    commitInteraction();
+}
+
 void ExplodeController::setOffset(const QString& nodeId, const QVector3D& offset)
 {
     if (!hasNode(nodeId)) return;

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.5-beta.6
+
+- **Exploded view: move freely** (#17): drag the ball in the middle of the handle to move
+  the selection anywhere in the plane of the screen. Snapping steps each axis; Shift skips
+  it. The readout shows the move along X, Y and Z.
+- **Exploded view: move by an exact distance**: type X, Y and Z under "Move by" and press
+  Move (or Enter). It adds to where the selection is, works for several parts at once, and
+  is one step to undo. The absolute fields are now labelled Offset.
+- **Export the exploded layout** (#17, phase 2): Export… in the exploded-view panel, or
+  File > Export Exploded Assembly…, saves the assembly as it is laid out, without its
+  hidden parts. The format follows the file's suffix:
+  - `.step`: the assembly tree, names and colours kept, every part where it was moved.
+  - `.stl`: one mesh of the whole layout.
+  - `.dxf`, `.svg`, `.pdf`: a drawing of the layout seen from the current view, with
+    the screen's up as its up, at true scale, every visible edge drawn, and read back
+    before it counts as written.
+
 ## v0.1.5-beta.5
 
 - **Exploded view** (#17): pull an assembly apart in Inspect to see how its parts fit

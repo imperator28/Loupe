@@ -96,6 +96,9 @@ Item {
             ? controller.section.effectiveNormal : Qt.vector3d(0, 0, 1)
     readonly property vector3d removedSectionNormal: sceneSectionManipulator.removedSideNormal(
             effectiveSectionNormal, controller && controller.section.flipped)
+    // The screen's up direction in the scene: an exploded drawing is oriented by it.
+    readonly property vector3d viewUpDirection: navigation.revision >= 0
+        ? navigation.orientation.times(Qt.vector3d(0, 1, 0)) : Qt.vector3d(0, 1, 0)
     // The direction from the scene toward the camera.
     readonly property vector3d viewDirection: navigation.revision >= 0
         ? navigation.orientation.times(Qt.vector3d(0, 0, 1)) : Qt.vector3d(0, 0, 1)
@@ -266,7 +269,12 @@ Item {
         const axis = handleAxis(hit.axis)
         const drag = { kind: hit.kind, axis: hit.axis, startX: x, startY: y, centre: handleCentre,
                        centreScreen: layout.centre, value: 0 }
-        if (hit.kind === "move") {
+        if (hit.kind === "free") {
+            // In the plane of the screen through the handle, at the scale it is drawn at.
+            drag.right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
+            drag.up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
+            drag.worldPerPixel = worldPerPixelAt(handleCentre)
+        } else if (hit.kind === "move") {
             drag.axisX = layout.tips[hit.axis].x - layout.centre.x
             drag.axisY = layout.tips[hit.axis].y - layout.centre.y
             drag.millimetres = handleLength * 0.98
@@ -310,6 +318,17 @@ Item {
     function updateHandleDrag(x, y, free) {
         const drag = handleDrag
         if (!drag || !explode) return
+        if (drag.kind === "free") {
+            const travel = handleMath.screenPlaneTravel(x - drag.startX, y - drag.startY, drag.right, drag.up, drag.worldPerPixel)
+            // Snapping steps each axis on its own, so a free move still lands on round numbers.
+            const snapped = Qt.vector3d(explode.snapTranslation(travel.x, free), explode.snapTranslation(travel.y, free),
+                                        explode.snapTranslation(travel.z, free))
+            explode.previewTranslation(snapped)
+            const digits = function(value) { return value.toFixed(Math.abs(value) < 10 ? 2 : 1) }
+            handleReadout = qsTr("X %1  Y %2  Z %3 mm").arg(digits(snapped.x)).arg(digits(snapped.y)).arg(digits(snapped.z))
+            handleReadoutPosition = Qt.point(x, y)
+            return
+        }
         const axis = handleAxis(drag.axis)
         if (drag.kind === "move") {
             const travel = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.axisX, drag.axisY, drag.millimetres)
@@ -1719,6 +1738,7 @@ Item {
             yColor: root.theme && root.theme.axisY !== undefined ? root.theme.axisY : "transparent"
             zColor: root.theme && root.theme.axisZ !== undefined ? root.theme.axisZ : "transparent"
             activeColor: root.theme && root.theme.handleActive !== undefined ? root.theme.handleActive : "transparent"
+            centreColor: root.theme && root.theme.foreground !== undefined ? root.theme.foreground : "transparent"
             activeKind: root.handleDrag ? root.handleDrag.kind : root.handleHover ? root.handleHover.kind : ""
             activeAxis: root.handleDrag ? root.handleDrag.axis : root.handleHover ? root.handleHover.axis : -1
         }

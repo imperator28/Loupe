@@ -5,6 +5,7 @@
 #include <QString>
 
 #include "protocol/ProtocolFrame.h"
+#include "protocol/ProtocolTypes.h"
 
 #include <cstdint>
 #include <optional>
@@ -25,6 +26,8 @@ public:
     [[nodiscard]] std::uint64_t executeDrawingPlan(const QByteArray& planJson, const QString& fingerprint);
     [[nodiscard]] std::uint64_t requestDrawingPreview(const QByteArray& requestJson, int revision);
     [[nodiscard]] std::uint64_t exportAssembly(const QString& destination, const QStringList& excludedNodeIds, const QString& outputUnit);
+    // The assembly as the exploded view has it (#17), in any of the assembly formats.
+    [[nodiscard]] std::uint64_t exportAssembly(protocol::ExportAssembly request);
     void cancel(std::uint64_t requestId);
 
 signals:

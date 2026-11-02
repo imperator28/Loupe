@@ -53,7 +53,11 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Quaternion.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <Quantity_ColorRGBA.hxx>
 
 #include <exception>
@@ -411,7 +415,7 @@ void WorkerServer::readCommands()
                 } else if constexpr (std::is_same_v<Value, protocol::RequestDrawingPreview>) {
                     requestDrawingPreview(value.requestId, value.requestJson, value.revision);
                 } else if constexpr (std::is_same_v<Value, protocol::ExportAssembly>) {
-                    exportAssembly(value.requestId, value.destination, value.excludedNodeIds, value.outputUnit);
+                    exportAssembly(value);
                 }
             }, command);
         } catch (const protocol::ProtocolError&) {
@@ -1101,9 +1105,10 @@ void WorkerServer::requestDrawingPreview(const std::uint64_t requestId, const QB
     thread->start();
 }
 
-void WorkerServer::exportAssembly(const std::uint64_t requestId, const QString& destination,
-                                  const QStringList& excludedNodeIds, const QString& outputUnit)
+void WorkerServer::exportAssembly(const protocol::ExportAssembly& command)
 {
+    const auto requestId = command.requestId;
+    const auto& destination = command.destination;
     if (!documentSession_) {
         fail(requestId, QStringLiteral("document_not_ready"),
              QStringLiteral("Wait for geometry refinement to finish before exporting the assembly"));
@@ -1111,8 +1116,28 @@ void WorkerServer::exportAssembly(const std::uint64_t requestId, const QString& 
     }
     loupe::exporting::AssemblyExportRequest request;
     request.destination = std::filesystem::path(destination.toStdWString());
-    for (const auto& nodeId : excludedNodeIds) request.excludedNodeIds.insert(nodeId.toStdString());
-    request.outputUnit = outputUnit == QStringLiteral("in") ? units::LengthUnit::Inch : units::LengthUnit::Millimeter;
+    for (const auto& nodeId : command.excludedNodeIds) request.excludedNodeIds.insert(nodeId.toStdString());
+    request.outputUnit = command.outputUnit == QStringLiteral("in") ? units::LengthUnit::Inch : units::LengthUnit::Millimeter;
+    using loupe::exporting::AssemblyOutput;
+    request.output = command.format == QStringLiteral("stl") ? AssemblyOutput::Stl
+                   : command.format == QStringLiteral("dxf") ? AssemblyOutput::Dxf
+                   : command.format == QStringLiteral("svg") ? AssemblyOutput::Svg
+                   : command.format == QStringLiteral("pdf") ? AssemblyOutput::Pdf
+                                                             : AssemblyOutput::Step;
+    for (const auto& placement : command.placements) {
+        gp_Quaternion rotation(placement.rotation[0], placement.rotation[1], placement.rotation[2], placement.rotation[3]);
+        rotation.Normalize();
+        gp_Trsf move;
+        move.SetRotation(rotation);
+        move.SetTranslationPart(gp_Vec(placement.translation[0], placement.translation[1], placement.translation[2]));
+        request.moved.emplace(placement.nodeId.toStdString(), move);
+    }
+    const gp_Vec view(command.viewDirection[0], command.viewDirection[1], command.viewDirection[2]);
+    const gp_Vec up(command.upDirection[0], command.upDirection[1], command.upDirection[2]);
+    if (view.Magnitude() > 1e-9 && up.Magnitude() > 1e-9 && !view.IsParallel(up, 1e-6)) {
+        request.viewDirection = gp_Dir(view);
+        request.upDirection = gp_Dir(up);
+    }
     const auto session = documentSession_;
     // The same native-to-millimetre factor as display, measurement and part export, so the
     // re-exported assembly cannot come out at a different size from what was reviewed.

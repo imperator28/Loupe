@@ -72,8 +72,18 @@ Item {
         assemblyTree.positionViewAtIndex(index, TableView.AlignVCenter)
     }
 
+    // Save the exploded layout (#17). The format follows the file's suffix; a drawing is seen
+    // from the way the view faces now, with the screen's up as its up.
+    function chooseExplodedExport() {
+        if (!root.controller || !root.exploded) return
+        if (root.controller.suggestedAssemblyExportFolderUrl.toString().length > 0)
+            explodedExportDialog.currentFolder = root.controller.suggestedAssemblyExportFolderUrl
+        explodedExportDialog.open()
+    }
+
     Connections {
         target: root.controller
+        function onExplodedExportRequested() { root.chooseExplodedExport() }
         function onSnapshotChanged() {
             root.activeTask = ""
             root.taskPanelVisible = false
@@ -653,6 +663,7 @@ Item {
                 item.resetAllRequested.connect(function() {
                     if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
                 })
+                item.exportRequested.connect(root.chooseExplodedExport)
             } else {
                 item.taskController = root.controller.capture
                 item.captureRequested.connect(function() { captureDialog.open() })
@@ -690,6 +701,22 @@ Item {
         selectedColor: root.theme.edge
         onAccepted: if (root.controller)
             root.controller.section.sliceBorderColor = pickedColor.toString()
+    }
+
+    FileDialog {
+        id: explodedExportDialog
+        objectName: "explodedExportDialog"
+        title: qsTr("Export exploded assembly")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("STEP assembly (*.step *.stp)"), qsTr("STL mesh (*.stl)"), qsTr("DXF drawing of this view (*.dxf)"),
+                      qsTr("SVG drawing of this view (*.svg)"), qsTr("PDF drawing of this view (*.pdf)")]
+        defaultSuffix: ["step", "stl", "dxf", "svg", "pdf"][Math.max(0, selectedNameFilter.index)]
+        onAccepted: {
+            const viewport = viewportLoader.item
+            root.controller.exportExplodedAssembly(selectedFile,
+                    viewport ? viewport.viewDirection : Qt.vector3d(0, 0, 1),
+                    viewport ? viewport.viewUpDirection : Qt.vector3d(0, 1, 0))
+        }
     }
 
     FileDialog {

@@ -544,6 +544,14 @@ void InspectionToolsTest::explodeTypedOffsetsAndAnglesAndSnapping()
     explode.setAngles(QStringLiteral("right"), {0, 0, 60});
     QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 4, 5}));
 
+    // Moving by an exact distance adds to where the nodes are, for several at once.
+    explode.translateBy({QStringLiteral("right"), QStringLiteral("far")}, {0, -2.5F, 10});
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 1.5F, 15}));
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("far")), {0, -2.5F, 10}));
+    explode.undo();
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 4, 5}));
+    QVERIFY(!explode.isMoved(QStringLiteral("far")));
+
     QVERIFY(explode.snapEnabled());
     explode.setTranslationStep(10);
     explode.setRotationStep(15);

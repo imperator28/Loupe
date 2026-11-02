@@ -66,6 +66,14 @@ std::uint64_t WorkerClient::exportAssembly(const QString& destination, const QSt
     return requestId;
 }
 
+std::uint64_t WorkerClient::exportAssembly(protocol::ExportAssembly request)
+{
+    request.requestId = nextRequestId_++;
+    const auto requestId = request.requestId;
+    writeCommand(protocol::encode(protocol::Command{std::move(request)}));
+    return requestId;
+}
+
 void WorkerClient::cancel(const std::uint64_t requestId)
 {
     writeCommand(protocol::encode(protocol::Command{protocol::Cancel{requestId}}));

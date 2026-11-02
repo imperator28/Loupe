@@ -3,6 +3,9 @@
 #include <QByteArray>
 #include <QString>
 #include <QStringList>
+#include <QVector>
+
+#include <array>
 
 #include <cstdint>
 #include <optional>
@@ -22,8 +25,26 @@ struct ExecuteDrawingPlan { std::uint64_t requestId{}; QByteArray planJson; QStr
 struct RequestDrawingPreview { std::uint64_t requestId{}; QByteArray requestJson; int revision{}; };
 struct MeasureAtPoint { std::uint64_t requestId{}; QString nodeId; double x{}; double y{}; double z{}; QString mode; };
 struct SetVisible { QString nodeId; bool visible{}; };
-// The whole open assembly as one STEP file, leaving out the listed nodes (#7).
-struct ExportAssembly { std::uint64_t requestId{}; QString destination; QStringList excludedNodeIds; QString outputUnit; };
+// A node's own exploded-view move (#17), in assembly millimetres: a rotation quaternion
+// (x, y, z, w) then a translation.
+struct NodePlacement {
+    QString nodeId;
+    std::array<double, 4> rotation{0.0, 0.0, 0.0, 1.0};
+    std::array<double, 3> translation{};
+};
+// The whole open assembly as one file, leaving out the listed nodes (#7). `format` is
+// "step" (the tree kept), "stl" (one mesh), or "dxf" / "svg" / "pdf" (one drawing, seen from
+// `viewDirection`); `placements` moves nodes to where the exploded view has them.
+struct ExportAssembly {
+    std::uint64_t requestId{};
+    QString destination;
+    QStringList excludedNodeIds;
+    QString outputUnit;
+    QString format{QStringLiteral("step")};
+    QVector<NodePlacement> placements;
+    std::array<double, 3> viewDirection{0.0, 0.0, 1.0};
+    std::array<double, 3> upDirection{0.0, 1.0, 0.0};
+};
 struct Ready { Version version; };
 struct Progress { std::uint64_t requestId{}; QString stage; double fraction{}; };
 struct SnapshotReady { std::uint64_t requestId{}; QByteArray snapshotJson; };

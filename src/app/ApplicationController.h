@@ -164,6 +164,13 @@ public:
     // Writes the whole assembly, tree, names and colours kept, leaving out every hidden
     // part, in the source file's unit. False if it cannot start.
     Q_INVOKABLE bool exportAssemblyWithoutHiddenParts(const QUrl& destination);
+    // The assembly as the exploded view has it (#17), without its hidden parts. The format
+    // follows the file's suffix: .step/.stp (the tree kept), .stl (one mesh), or .dxf/.svg/
+    // .pdf (one drawing, seen from `viewDirection` with `upDirection` up, as on screen).
+    Q_INVOKABLE bool exportExplodedAssembly(const QUrl& destination, const QVector3D& viewDirection,
+                                            const QVector3D& upDirection);
+    // The format exportExplodedAssembly would write for this file, or "" for none.
+    Q_INVOKABLE [[nodiscard]] static QString explodedExportFormat(const QUrl& destination);
     [[nodiscard]] const QString& importStage() const noexcept { return importStage_; }
     [[nodiscard]] double importProgress() const noexcept { return importProgress_; }
     [[nodiscard]] qint64 importElapsedSeconds() const noexcept { return importElapsedSeconds_; }
@@ -202,6 +209,9 @@ public:
     // View > Normal to Face. The visible viewport answers: the face under the pointer, else
     // the face last clicked there.
     Q_INVOKABLE void viewNormalToFace();
+    // File > Export Exploded Assembly. The Inspect workspace answers: it knows the view a
+    // drawing should be seen from.
+    Q_INVOKABLE void requestExplodedExport();
     Q_INVOKABLE void replayGeometry();
     // Which payload a viewport is being handed. Bumped only when a segment's geometry
     // genuinely changes (a refinement pass, a reimport), and left alone by a replay, so a
@@ -264,6 +274,7 @@ signals:
     void documentNameChanged();
     void assemblyExportChanged();
     void viewNormalToFaceRequested();
+    void explodedExportRequested();
     void viewerPresentationChanged();
     void visibilityChanged();
     void importProgressChanged();
@@ -334,6 +345,7 @@ private:
     std::uint64_t activeRequestId_{};
     std::uint64_t activeExportRequestId_{};
     std::uint64_t activeAssemblyExportRequestId_{};
+    bool activeAssemblyExportExploded_{false};
     int visibilityRevision_{};
     QString assemblyExportMessage_;
     bool assemblyExportSucceeded_{false};

@@ -17,11 +17,18 @@
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
+#include <gp_Ax1.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -184,4 +191,145 @@ TEST_CASE("hiding every part is refused rather than writing an empty file", "[ex
         if (node.kind == NodeKind::Occurrence) request.excludedNodeIds.insert(node.id);
     CHECK_THROWS(loupe::exporting::AssemblyExporter{}.write(imported, request));
     CHECK(!std::filesystem::exists(request.destination));
+}
+
+namespace {
+
+// Where each part of a re-read export sits: its bounds in assembly millimetres.
+struct PlacedBounds {
+    double xMin, yMin, zMin, xMax, yMax, zMax;
+};
+
+std::vector<PlacedBounds> placedBounds(const loupe::import::ImportResult& imported)
+{
+    std::vector<PlacedBounds> result;
+    for (std::size_t index = 0; index < imported.native->shapes.size(); ++index) {
+        Bnd_Box bounds;
+        BRepBndLib::Add(imported.native->shapes[index].Moved(TopLoc_Location(imported.native->shapePlacements[index])), bounds);
+        PlacedBounds placed{};
+        bounds.Get(placed.xMin, placed.yMin, placed.zMin, placed.xMax, placed.yMax, placed.zMax);
+        result.push_back(placed);
+    }
+    return result;
+}
+
+const loupe::domain::AssemblyNode& nodeNamed(const loupe::import::ImportResult& imported, const std::string& name,
+                                             const NodeKind kind, const double x = -1.0)
+{
+    for (const auto& node : imported.snapshot.nodes) {
+        if (node.name != name || node.kind != kind) continue;
+        if (x >= 0.0 && std::abs(node.placement.columnMajor[12] - x) > 1e-6) continue;
+        return node;
+    }
+    FAIL("no node named " << name);
+    return imported.snapshot.nodes.front();
+}
+
+gp_Trsf shiftedBy(const double x, const double y, const double z)
+{
+    gp_Trsf shift;
+    shift.SetTranslation(gp_Vec(x, y, z));
+    return shift;
+}
+
+// The exploded layout used below: the Cover lifted 50 mm, the Fasteners subassembly slid
+// 30 mm along y with one of its screws a further 3 mm along x inside it, and the Bracket
+// turned a quarter about z through its own centre (20, 10, 2.5).
+loupe::exporting::AssemblyExportRequest explodedRequest(const loupe::import::ImportResult& imported)
+{
+    loupe::exporting::AssemblyExportRequest request;
+    request.moved.emplace(nodeNamed(imported, "Cover", NodeKind::Occurrence).id, shiftedBy(0, 0, 50));
+    request.moved.emplace(nodeNamed(imported, "Fasteners", NodeKind::Subassembly).id, shiftedBy(0, 30, 0));
+    request.moved.emplace(nodeNamed(imported, "Screw", NodeKind::Occurrence, 5.0).id, shiftedBy(3, 0, 0));
+    gp_Trsf turn;
+    turn.SetRotation(gp_Ax1(gp_Pnt(20.0, 10.0, 2.5), gp_Dir(0.0, 0.0, 1.0)), M_PI / 2.0);
+    request.moved.emplace(nodeNamed(imported, "Bracket", NodeKind::Occurrence).id, turn);
+    return request;
+}
+
+} // namespace
+
+TEST_CASE("an exploded assembly re-exports with every part where it was moved", "[export][assembly][exploded]")
+{
+    ScopedDirectory directory("exploded-step");
+    const auto source = writeSupplierAssembly(directory.path() / "supplier.step");
+    const auto imported = loupe::import::StepImporter{}.read(source);
+    auto request = explodedRequest(imported);
+    request.destination = directory.path() / "exploded.step";
+    const auto result = loupe::exporting::AssemblyExporter{}.write(imported, request);
+    CHECK(result.partCount == 4);
+
+    const auto reread = loupe::import::StepImporter{}.read(request.destination);
+    // The tree is kept: the same parts and the Fasteners subassembly.
+    CHECK(namesOfKind(reread, NodeKind::Occurrence) == std::vector<std::string>{"Bracket", "Cover", "Screw", "Screw"});
+    CHECK(namesOfKind(reread, NodeKind::Subassembly) == std::vector<std::string>{"Fasteners"});
+
+    int screws = 0;
+    bool coverChecked = false;
+    bool bracketChecked = false;
+    for (const auto& bounds : placedBounds(reread)) {
+        const auto width = bounds.xMax - bounds.xMin;
+        const auto depth = bounds.yMax - bounds.yMin;
+        const auto height = bounds.zMax - bounds.zMin;
+        if (height == Catch::Approx(10.0).margin(1e-3)) {
+            // Both screws moved with their subassembly; the one at x = 5 a further 3 mm.
+            ++screws;
+            CHECK(bounds.yMin == Catch::Approx(33.5).margin(1e-3));
+            const auto centreX = (bounds.xMin + bounds.xMax) / 2.0;
+            CHECK((centreX == Catch::Approx(8.0).margin(1e-3) || centreX == Catch::Approx(35.0).margin(1e-3)));
+        } else if (height == Catch::Approx(1.0).margin(1e-3)) {
+            coverChecked = true;
+            CHECK(bounds.xMin == Catch::Approx(100.0).margin(1e-3));
+            CHECK(bounds.zMin == Catch::Approx(50.0).margin(1e-3));
+        } else if (height == Catch::Approx(5.0).margin(1e-3)) {
+            // Turned a quarter about its centre: 20 wide and 40 deep now, centred where it was.
+            bracketChecked = true;
+            CHECK(width == Catch::Approx(20.0).margin(1e-3));
+            CHECK(depth == Catch::Approx(40.0).margin(1e-3));
+            CHECK((bounds.xMin + bounds.xMax) / 2.0 == Catch::Approx(20.0).margin(1e-3));
+            CHECK((bounds.yMin + bounds.yMax) / 2.0 == Catch::Approx(10.0).margin(1e-3));
+        }
+    }
+    CHECK(screws == 2);
+    CHECK(coverChecked);
+    CHECK(bracketChecked);
+}
+
+TEST_CASE("an exploded assembly exports as one STL mesh and as a drawing", "[export][assembly][exploded]")
+{
+    ScopedDirectory directory("exploded-mesh");
+    const auto source = writeSupplierAssembly(directory.path() / "supplier.step");
+    const auto imported = loupe::import::StepImporter{}.read(source);
+
+    auto request = explodedRequest(imported);
+    request.output = loupe::exporting::AssemblyOutput::Stl;
+    request.destination = directory.path() / "exploded.stl";
+    static_cast<void>(loupe::exporting::AssemblyExporter{}.write(imported, request));
+    REQUIRE(std::filesystem::exists(request.destination));
+    // Binary STL: an 80-byte header, a count, then 50 bytes a triangle. The lifted Cover
+    // puts the top of the mesh at 51 mm.
+    std::ifstream stl(request.destination, std::ios::binary);
+    stl.seekg(80);
+    std::uint32_t count = 0;
+    stl.read(reinterpret_cast<char*>(&count), 4);
+    CHECK(count > 0);
+    CHECK(std::filesystem::file_size(request.destination) == 84 + 50ULL * count);
+    float top = -1.0e9F;
+    for (std::uint32_t triangle = 0; triangle < count; ++triangle) {
+        std::array<float, 12> values{};
+        stl.read(reinterpret_cast<char*>(values.data()), 48);
+        stl.ignore(2);
+        for (int vertex = 1; vertex <= 3; ++vertex) top = std::max(top, values[vertex * 3 + 2]);
+    }
+    CHECK(top == Catch::Approx(51.0).margin(1e-3));
+
+    // A drawing of the same layout, seen from above: written and read back at true size.
+    auto drawing = explodedRequest(imported);
+    drawing.output = loupe::exporting::AssemblyOutput::Svg;
+    drawing.destination = directory.path() / "exploded.svg";
+    drawing.viewDirection = gp_Dir(0.0, 0.0, 1.0);
+    drawing.upDirection = gp_Dir(0.0, 1.0, 0.0);
+    static_cast<void>(loupe::exporting::AssemblyExporter{}.write(imported, drawing));
+    REQUIRE(std::filesystem::exists(drawing.destination));
+    CHECK(std::filesystem::file_size(drawing.destination) > 100);
 }

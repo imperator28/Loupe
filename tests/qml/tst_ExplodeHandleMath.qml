@@ -62,10 +62,23 @@ TestCase {
     function test_pressAwayFromTheHandlesIsNothing() {
         compare(math.handleAt(20, 20, topViewLayout()), null)
         compare(math.handleAt(200, 200, null), null)
-        // The middle of the handle is neither an arrow nor the edge-on rings through it.
-        compare(math.handleAt(203, 201, topViewLayout()), null)
-        // Just out of it, an edge-on ring is.
+        // Just out of the ball in the middle, an edge-on ring is.
         compare(math.handleAt(200, 225, topViewLayout()).kind, "rotate")
+    }
+
+    // The ball in the middle moves freely, over the edge-on rings that cross it.
+    function test_theMiddleMovesFreely() {
+        compare(math.handleAt(203, 201, topViewLayout()).kind, "free")
+        compare(math.handleAt(200, 200, topViewLayout()).kind, "free")
+    }
+
+    function test_screenPlaneTravel() {
+        // Right is +X and up is +Z on screen, at 0.5 mm a pixel: 10 px right and 4 px up
+        // (screen y grows downward) is 5 mm along X and 2 mm along Z.
+        const travel = math.screenPlaneTravel(10, -4, Qt.vector3d(1, 0, 0), Qt.vector3d(0, 0, 1), 0.5)
+        compare(travel.x, 5)
+        compare(travel.y, 0)
+        compare(travel.z, 2)
     }
 
     function test_travelAlongAnAxis() {

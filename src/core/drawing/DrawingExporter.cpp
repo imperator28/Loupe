@@ -61,15 +61,37 @@ DrawingExportResult DrawingExporter::write(const import::ImportResult& imported,
     request.sourceToMillimeters = row.sourceToMillimeters()
         * exporting::detail::nativeUnitRebase(imported) * row.scale();
     request.deflectionMm = 0.01;
+    return projectAndWrite(request, std::filesystem::path(row.finalPath()), row.format(), includeScaleFiducial);
+}
 
+DrawingExportResult DrawingExporter::writeShape(const TopoDS_Shape& shapeMm, const ShapeDrawingRequest& shapeRequest) const
+{
+    if (shapeMm.IsNull()) throw std::runtime_error("there is nothing to draw");
+    if (shapeRequest.viewDirection.IsParallel(shapeRequest.upDirection, 1e-6)) {
+        throw std::runtime_error("the drawing's view and up directions are parallel");
+    }
+    ProjectionRequest request;
+    request.shape = shapeMm;
+    request.viewDirection = shapeRequest.viewDirection;
+    request.upDirection = shapeRequest.upDirection;
+    request.mode = shapeRequest.mode;
+    request.sourceToMillimeters = 1.0;
+    request.deflectionMm = 0.01;
+    return projectAndWrite(request, shapeRequest.destination, shapeRequest.format, shapeRequest.includeScaleFiducial);
+}
+
+DrawingExportResult DrawingExporter::projectAndWrite(const ProjectionRequest& request,
+                                                     const std::filesystem::path& destination,
+                                                     const DrawingFormat format,
+                                                     const bool includeScaleFiducial) const
+{
     const auto projected = project(request);
 
-    const std::filesystem::path destination(row.finalPath());
     std::filesystem::create_directories(destination.parent_path());
     const DrawingWriteOptions options{2.0, includeScaleFiducial, 50.0};
 
     DrawingWriteResult written;
-    switch (row.format()) {
+    switch (format) {
     case DrawingFormat::Dxf: written = DxfWriter{}.write(projected.drawing, destination, options); break;
     case DrawingFormat::Svg: written = SvgWriter{}.write(projected.drawing, destination, options); break;
     case DrawingFormat::Pdf: written = PdfWriter{}.write(projected.drawing, destination, options); break;

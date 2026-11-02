@@ -828,6 +828,23 @@ void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
     QVERIFY(std::abs(explode.anglesOf(QStringLiteral("a")).z()) < 1e-2F);
     QVERIFY(std::abs(explode.offsetOf(QStringLiteral("a")).x() - offset.x()) < 1e-3F);
 
+    // The ball in the middle drags freely in the screen's plane, here X and Y (seen down Z),
+    // each axis snapped on its own.
+    handles = layout();
+    const auto ball = point(handles.value(QStringLiteral("centre"))).toPoint();
+    const auto beforeFree = explode.offsetOf(QStringLiteral("a"));
+    QTest::mousePress(&window, Qt::LeftButton, {}, ball);
+    QVERIFY(explode.interacting());
+    for (int step = 1; step <= 8; ++step) QTest::mouseMove(&window, ball + QPoint(60, -40) * step / 8, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, ball + QPoint(60, -40));
+    const auto freeMove = explode.offsetOf(QStringLiteral("a")) - beforeFree;
+    QVERIFY2(freeMove.x() > 4.0F && freeMove.y() > 4.0F && std::abs(freeMove.z()) < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(freeMove.x()).arg(freeMove.y()).arg(freeMove.z())));
+    QCOMPARE(std::fmod(std::round(freeMove.x() * 1000.0F) / 1000.0F, 5.0F), 0.0F);
+    QCOMPARE(std::fmod(std::round(freeMove.y() * 1000.0F) / 1000.0F, 5.0F), 0.0F);
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("a")});
+    explode.undo();
+
     // View normal to face follows the turned part: tipped a quarter about X, its face now
     // looks along -Y, and that is the way the view turns.
     explode.setAngles(QStringLiteral("a"), {90, 0, 0});
@@ -930,6 +947,28 @@ void QmlSmokeTest::explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly()
     QVERIFY(std::abs(explode.offsetOf(QStringLiteral("left")).x() - 15.0F) < 1e-3F);
     QCOMPARE(angleZ->property("text").toString(), QStringLiteral("45"));
     QVERIFY(panel->findChild<QObject*>(QStringLiteral("explodeResetAllButton"))->property("enabled").toBool());
+
+    // "Move by" adds an exact distance to where the selection is; an empty field is 0.
+    const auto before = explode.offsetOf(QStringLiteral("left"));
+    findItem(panelItem, QStringLiteral("explodeMoveByField0"))->setProperty("text", QStringLiteral("2.5"));
+    findItem(panelItem, QStringLiteral("explodeMoveByField2"))->setProperty("text", QStringLiteral("-10"));
+    QVERIFY(QMetaObject::invokeMethod(findItem(panelItem, QStringLiteral("explodeMoveByButton")), "clicked"));
+    const auto moved = explode.offsetOf(QStringLiteral("left")) - before;
+    QVERIFY2((moved - QVector3D(2.5F, 0, -10)).length() < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(moved.x()).arg(moved.y()).arg(moved.z())));
+    QVERIFY(explode.canUndo());
+
+    // Export… asks for a file; the format follows its suffix.
+    QSignalSpy exportRequested(panel.get(), SIGNAL(exportRequested()));
+    QVERIFY(QMetaObject::invokeMethod(panel->findChild<QObject*>(QStringLiteral("explodeExportButton")), "clicked"));
+    QCOMPARE(exportRequested.count(), 1);
+    using loupe::app::ApplicationController;
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.STP"))), QStringLiteral("step"));
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.stl"))), QStringLiteral("stl"));
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.pdf"))), QStringLiteral("pdf"));
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.obj"))), QString{});
+    // Nothing to export from an empty document.
+    QVERIFY(!controller.exportExplodedAssembly(QUrl::fromLocalFile(QStringLiteral("/x/a.step")), {0, 0, 1}, {0, 1, 0}));
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()

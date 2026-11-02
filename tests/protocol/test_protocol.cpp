@@ -21,6 +21,7 @@ private slots:
     void drawingPreviewRequestRoundTrips();
     void drawingEventsDecode();
     void malformedDrawingMessagesAreRefused();
+    void explodedAssemblyExportRoundTrips();
 };
 
 void ProtocolTest::openFileRoundTrips()
@@ -195,6 +196,49 @@ void ProtocolTest::malformedDrawingMessagesAreRefused()
 
     QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::decodeCommand(
         QByteArrayLiteral("{\"version\":{\"major\":2,\"minor\":1},\"type\":\"executeDrawingPlan\",\"requestId\":1,\"planBase64\":\"e30=\",\"fingerprint\":\"\"}\n")));
+}
+
+void ProtocolTest::explodedAssemblyExportRoundTrips()
+{
+    loupe::protocol::ExportAssembly command{9, QStringLiteral("/out/exploded.stl"), {QStringLiteral("hidden")}, QStringLiteral("mm")};
+    command.format = QStringLiteral("stl");
+    command.placements.append({QStringLiteral("cover"), {0.0, 0.0, 0.7071067811865476, 0.7071067811865476}, {0.0, 0.0, 50.0}});
+    command.viewDirection = {0.0, -1.0, 0.0};
+    command.upDirection = {0.0, 0.0, 1.0};
+    const auto decoded = std::get<loupe::protocol::ExportAssembly>(
+        loupe::protocol::decodeCommand(loupe::protocol::encode(loupe::protocol::Command{command})));
+    QCOMPARE(decoded.format, QStringLiteral("stl"));
+    QCOMPARE(decoded.excludedNodeIds, QStringList{QStringLiteral("hidden")});
+    QCOMPARE(decoded.placements.size(), 1);
+    QCOMPARE(decoded.placements.front().nodeId, QStringLiteral("cover"));
+    QCOMPARE(decoded.placements.front().rotation[3], 0.7071067811865476);
+    QCOMPARE(decoded.placements.front().translation[2], 50.0);
+    QCOMPARE(decoded.viewDirection[1], -1.0);
+    QCOMPARE(decoded.upDirection[2], 1.0);
+
+    // An older app sends none of the exploded-view fields: a plain STEP export.
+    const auto plain = std::get<loupe::protocol::ExportAssembly>(loupe::protocol::decodeCommand(QByteArrayLiteral(
+        "{\"version\":{\"major\":2,\"minor\":1},\"type\":\"exportAssembly\",\"requestId\":3,"
+        "\"destination\":\"/out/a.step\",\"excludedNodeIds\":[],\"outputUnit\":\"mm\"}\n")));
+    QCOMPARE(plain.format, QStringLiteral("step"));
+    QVERIFY(plain.placements.isEmpty());
+
+    // Anything else is refused.
+    const auto refuses = [](const QByteArray& extra) {
+        const auto bytes = QByteArrayLiteral("{\"version\":{\"major\":2,\"minor\":1},\"type\":\"exportAssembly\",\"requestId\":3,"
+                                             "\"destination\":\"/out/a.step\",\"excludedNodeIds\":[],\"outputUnit\":\"mm\",")
+            + extra + QByteArrayLiteral("}\n");
+        try {
+            static_cast<void>(loupe::protocol::decodeCommand(bytes));
+        } catch (const loupe::protocol::ProtocolError&) {
+            return true;
+        }
+        return false;
+    };
+    QVERIFY(refuses(QByteArrayLiteral("\"format\":\"obj\"")));
+    QVERIFY(refuses(QByteArrayLiteral("\"placements\":[{\"nodeId\":\"a\",\"rotation\":[0,0,0,0],\"translation\":[0,0,0]}]")));
+    QVERIFY(refuses(QByteArrayLiteral("\"placements\":[{\"nodeId\":\"a\",\"rotation\":[0,0,0,1],\"translation\":[0,0]}]")));
+    QVERIFY(refuses(QByteArrayLiteral("\"viewDirection\":[0,0,0]")));
 }
 
 QTEST_MAIN(ProtocolTest)

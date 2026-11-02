@@ -57,6 +57,20 @@ Rectangle {
                                                              axis === 2 ? value : angles.z))
     }
 
+    // Moves the selection by the X, Y and Z typed into "Move by" (mm; empty is 0).
+    function applyMoveBy() {
+        if (!taskController || selectedNodeIds.length === 0) return
+        const values = []
+        for (let axis = 0; axis < 3; ++axis) {
+            const field = moveByFields.itemAt(axis)
+            const value = field && field.text.length > 0 ? Number(field.text) : 0
+            values.push(Number.isFinite(value) ? value : 0)
+        }
+        taskController.translateBy(selectedNodeIds, Qt.vector3d(values[0], values[1], values[2]))
+    }
+
+    signal exportRequested()
+
     implicitWidth: 340
     implicitHeight: content.implicitHeight + 32
     height: implicitHeight
@@ -79,7 +93,7 @@ Rectangle {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: root.subduedForeground
-            text: qsTr("Select a part, or a sub-assembly in the tree, then drag an arrow to move it or a ring to turn it. Hold Shift to move freely.")
+            text: qsTr("Select a part, or a sub-assembly in the tree. Drag an arrow to move it along an axis, the ball in the middle to move it freely, or a ring to turn it. Hold Shift to skip snapping.")
         }
 
         Label { text: qsTr("Auto-explode"); color: root.subduedForeground }
@@ -188,7 +202,7 @@ Rectangle {
                     color: root.subduedForeground
                 }
             }
-            Label { text: qsTr("Move (mm)"); color: root.foreground }
+            Label { text: qsTr("Offset (mm)"); color: root.foreground }
             Repeater {
                 model: 3
                 delegate: ThemedTextField {
@@ -217,6 +231,34 @@ Rectangle {
                     text: root.formatted(index === 0 ? root.selectedAngles.x : index === 1 ? root.selectedAngles.y : root.selectedAngles.z)
                     onEditingFinished: root.setAngleAxis(index, text)
                 }
+            }
+        }
+        // An exact move, from wherever the selection is now: for several parts at once too.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: root.theme.spacing1
+            enabled: root.selectedNodeIds.length > 0
+            Label { text: qsTr("Move by"); color: root.foreground; Layout.preferredWidth: 62 }
+            Repeater {
+                id: moveByFields
+                model: 3
+                delegate: ThemedTextField {
+                    required property int index
+                    theme: root.theme
+                    objectName: "explodeMoveByField" + index
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 52
+                    horizontalAlignment: Text.AlignRight
+                    placeholderText: ["X", "Y", "Z"][index]
+                    validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
+                    onAccepted: root.applyMoveBy()
+                }
+            }
+            ThemedButton {
+                theme: root.theme
+                objectName: "explodeMoveByButton"
+                text: qsTr("Move")
+                onClicked: root.applyMoveBy()
             }
         }
         RowLayout {
@@ -299,6 +341,18 @@ Rectangle {
             Item { Layout.fillWidth: true }
             ThemedButton {
                 theme: root.theme
+                objectName: "explodeExportButton"
+                text: qsTr("Export…")
+                enabled: root.taskController && root.taskController.exploded
+                onClicked: root.exportRequested()
+                ThemedToolTip {
+                    theme: root.theme
+                    text: qsTr("Save the exploded assembly as STEP or STL, or as a drawing of the current view")
+                    visible: parent.hovered
+                }
+            }
+            ThemedButton {
+                theme: root.theme
                 objectName: "explodeResetAllButton"
                 text: qsTr("Reset all")
                 enabled: root.taskController && root.taskController.exploded
@@ -309,7 +363,7 @@ Rectangle {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: root.subduedForeground
-            text: qsTr("Moving parts changes only this view, never the file or its exports. Measuring is off while parts are moved.")
+            text: qsTr("Moving parts never changes the file or its other exports: Export… saves the exploded layout on its own. Measuring is off while parts are moved.")
         }
     }
 }
