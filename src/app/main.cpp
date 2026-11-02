@@ -5,6 +5,7 @@
 #include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
+#include "app/render/HandleRingGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/models/ThemePreference.h"
 
@@ -58,6 +59,7 @@ int main(int argc, char* argv[])
     qmlRegisterType<loupe::app::platform::WindowChrome>("Loupe.App", 1, 0, "WindowChrome");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
+    qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
 
     qmlRegisterType<loupe::app::platform::FileAssociation>("Loupe.App", 1, 0, "FileAssociation");
     loupe::app::platform::WindowManager windowManager;

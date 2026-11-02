@@ -149,8 +149,10 @@ Dialog {
                         GuideRow { input: qsTr("Ctrl + F"); action: qsTr("Find a part in the assembly tree") }
                         GuideRow { input: qsTr("Ctrl + 8"); action: qsTr("View normal to the face under the pointer") }
                         GuideRow { input: qsTr("Ctrl/Cmd + Shift + H"); action: qsTr("Show all") }
-                        GuideRow { input: qsTr("M / S"); action: qsTr("Measure / Section") }
-                        GuideRow { input: qsTr("Esc"); action: qsTr("Cancel a section drag, restore visibility, or close a tool") }
+                        GuideRow { input: qsTr("M / S / E"); action: qsTr("Measure / Section / Exploded view") }
+                        GuideRow { input: qsTr("Drag an arrow / ring"); action: qsTr("Exploded view: move / turn the selection (Shift: no snapping)") }
+                        GuideRow { input: qsTr("Ctrl/Cmd + Z"); action: qsTr("Exploded view: undo a move (Shift to redo)") }
+                        GuideRow { input: qsTr("Esc"); action: qsTr("Cancel a section or handle drag, restore visibility, or close a tool") }
                     }
                 }
             }

@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.5-beta.5
+
+- **Exploded view** (#17): pull an assembly apart in Inspect to see how its parts fit
+  together.
+  - Open it with the new Explode button, or `E`. Select a part, or a sub-assembly in
+    the tree, and drag the handles: the arrows move it along X, Y or Z, and the rings
+    turn it about its centre.
+  - A sub-assembly moves as one piece, and a part moved inside it stays put relative to
+    it. A readout shows the distance or angle while dragging.
+  - Moves snap to a step (1, 5, 10 or 25 mm; 5, 15, 45 or 90°). Hold Shift to move
+    freely, or type exact positions and angles.
+  - Undo and redo (`Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z`) go one move at a time. "Select
+    parent" moves the whole sub-assembly a clicked part is in.
+  - **Auto-explode** takes the selected sub-assembly, or the whole model, apart from its
+    centre, level by level, with a slider for how far.
+  - **Reset** glides every part home, from the panel or the right-click menu; one part
+    or sub-assembly can be reset on its own.
+  - Parts stay where they were put until reset, across workspace switches and when the
+    tab moves to another window, for the session.
+  - **Section** cuts the exploded layout as it is drawn, with each part's cut faces on
+    the moved part, and **view normal to face** follows a turned part.
+  - The file and its exports are never changed. Measuring, which works on the assembled
+    model, is off while parts are moved.
+
 ## v0.1.5-beta.4
 
 - **Every side panel can be resized**: drag the divider beside the assembly tree

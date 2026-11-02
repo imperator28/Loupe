@@ -12,6 +12,7 @@ class GeometryPayloadTest final : public QObject
 private slots:
     void meshRoundTrips();
     void meshFaceAreaSumsTheFaceMeasures();
+    void meshBoundsSpanTheVertices();
     void edgeRoundTrips();
     void rejectsOutOfRangeIndices();
     void rejectsTruncatedPayload();
@@ -55,6 +56,26 @@ void GeometryPayloadTest::meshFaceAreaSumsTheFaceMeasures()
                                        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F}, {0, 1},
                                        {{4, loupe::protocol::TopologyKind::Edge, 0, 2, 1.0F, 0.0F}}};
     QCOMPARE(loupe::protocol::meshFaceArea(loupe::protocol::encodeGeometry(edges)), 0.0);
+}
+
+void GeometryPayloadTest::meshBoundsSpanTheVertices()
+{
+    loupe::protocol::MeshPayload source{7, 3, QStringLiteral("definition"), QStringLiteral("node"), QStringLiteral("segment"), QStringLiteral("#2288CC"), 1,
+                                        {-2.0F, 5.0F, 1.0F, 4.0F, -3.0F, 1.5F, 0.0F, 1.0F, 9.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2},
+                                        {{3, loupe::protocol::TopologyKind::Face, 0, 3, 0.5F, 0.0F}}};
+    const auto bytes = loupe::protocol::encodeGeometry(source);
+    const auto bounds = loupe::protocol::meshBounds(bytes);
+    QVERIFY(bounds.has_value());
+    QCOMPARE(bounds->minimum, (std::array<float, 3>{-2.0F, -3.0F, 1.0F}));
+    QCOMPARE(bounds->maximum, (std::array<float, 3>{4.0F, 5.0F, 9.0F}));
+    QVERIFY(!loupe::protocol::meshBounds(bytes.left(60)).has_value());
+    QVERIFY(!loupe::protocol::meshBounds({}).has_value());
+    loupe::protocol::EdgePayload edges{1, 1, QStringLiteral("definition"), QStringLiteral("node"), 1,
+                                       {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F}, {0, 1},
+                                       {{4, loupe::protocol::TopologyKind::Edge, 0, 2, 1.0F, 0.0F}}};
+    QVERIFY(!loupe::protocol::meshBounds(loupe::protocol::encodeGeometry(edges)).has_value());
 }
 
 void GeometryPayloadTest::edgeRoundTrips()

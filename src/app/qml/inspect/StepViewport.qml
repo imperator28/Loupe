@@ -40,6 +40,18 @@ Item {
     property var sectionOverlayGeometryByNode: ({})
     property var xrayModelBySegment: ({})
     property var boundsByNode: ({})
+    // The exploded view (#17). Each part's models live under one node per part, which is
+    // what the exploded layout moves. Only the Inspect viewport shows that layout; Export
+    // and Drawing keep showing the assembly as the file has it.
+    property bool explodedLayoutEnabled: false
+    // The explode tool is open: its handles show on the selection.
+    property bool explodeToolActive: false
+    readonly property QtObject explode: controller && controller.explode ? controller.explode : null
+    readonly property bool explodedLayout: explodedLayoutEnabled && explode !== null && explode.exploded
+    property var partNodeByNode: ({})
+    property var xrayPartNodeByNode: ({})
+    // Parts are moving: section caps, built for where the parts were, wait until they stop.
+    property bool explodeSettling: false
     // The controller revision each segment (or node's edges) was last built from. A replay
     // hands every viewport everything again; one that already holds a revision skips it
     // rather than decoding the same payload a second time.
@@ -155,6 +167,264 @@ Item {
     signal faceFrameSelected(var frame)
     signal openFileRequested()
 
+    // ---- Exploded-view handles (#17) ----
+    // The selection the handles move, where it is drawn, and how big the handles are: a
+    // constant size on screen, wherever the selection is and however far the camera is.
+    readonly property var handleNodeIds: controller && controller.selectedNodeIds ? controller.selectedNodeIds : []
+    readonly property var handleBounds: {
+        const revision = explode ? explode.revision : -1
+        if (!explode || handleNodeIds.length === 0 || revision < 0) return null
+        const bounds = explode.displayedBounds(handleNodeIds)
+        return bounds.valid ? bounds : null
+    }
+    readonly property vector3d handleCentre: handleBounds
+            ? Qt.vector3d((handleBounds.minimum.x + handleBounds.maximum.x) * 0.5,
+                          (handleBounds.minimum.y + handleBounds.maximum.y) * 0.5,
+                          (handleBounds.minimum.z + handleBounds.maximum.z) * 0.5)
+            : Qt.vector3d(0, 0, 0)
+    readonly property real handlePixels: 96
+    readonly property real handleLength: worldPerPixelAt(handleCentre) * handlePixels
+    readonly property bool handlesShown: explodedLayoutEnabled && explodeToolActive && explode !== null
+            && !presentationOnly && !captureUiHidden && handleBounds !== null
+    // The handle under the pointer, and the drag in progress: {kind, axis, ...}.
+    property var handleHover: null
+    property var handleDrag: null
+    // What the drag has moved so far, for the readout by the pointer.
+    property string handleReadout: ""
+    property point handleReadoutPosition: Qt.point(0, 0)
+    // Auto-explode and reset run as short animations over the controller's state.
+    property real autoExplodeAnimationFactor: 0
+
+    ExplodeHandleMath { id: handleMath }
+
+    function worldPerPixelAt(point) {
+        if (navigation.projectionMode === "orthographic")
+            return 1 / Math.max(0.000001, navigation.orthographicMagnification)
+        const x = navigation.cameraPosition.x - point.x
+        const y = navigation.cameraPosition.y - point.y
+        const z = navigation.cameraPosition.z - point.z
+        const distance = Math.max(0.001, Math.sqrt(x * x + y * y + z * z))
+        return 2 * distance * Math.tan(navigation.perspectiveFieldOfView * Math.PI / 360)
+                / Math.max(1, view.height)
+    }
+
+    function handleAxis(axis) {
+        return axis === 0 ? Qt.vector3d(1, 0, 0) : axis === 1 ? Qt.vector3d(0, 1, 0) : Qt.vector3d(0, 0, 1)
+    }
+
+    // The two directions spanning the plane a ring lies in.
+    function handleRingBasis(axis) {
+        return axis === 0 ? [Qt.vector3d(0, 1, 0), Qt.vector3d(0, 0, 1)]
+             : axis === 1 ? [Qt.vector3d(0, 0, 1), Qt.vector3d(1, 0, 0)]
+                          : [Qt.vector3d(1, 0, 0), Qt.vector3d(0, 1, 0)]
+    }
+
+    function screenPoint(scenePoint) {
+        const point = view.mapFrom3DScene(scenePoint)
+        return { x: point.x, y: point.y }
+    }
+
+    // The handles as drawn on screen, for hit-testing and dragging.
+    function handleLayout() {
+        if (!handlesShown) return null
+        const centre = handleCentre
+        const length = handleLength
+        const radius = length * 0.72
+        const layout = { centre: screenPoint(centre), tips: [], rings: [], ringPoints: [] }
+        for (let axis = 0; axis < 3; ++axis) {
+            layout.tips.push(screenPoint(centre.plus(handleAxis(axis).times(length * 0.98))))
+            const basis = handleRingBasis(axis)
+            const points = []
+            const scenePoints = []
+            for (let step = 0; step < 48; ++step) {
+                const angle = step / 48 * 2 * Math.PI
+                const scenePoint = centre.plus(basis[0].times(radius * Math.cos(angle)))
+                                         .plus(basis[1].times(radius * Math.sin(angle)))
+                scenePoints.push(scenePoint)
+                points.push(screenPoint(scenePoint))
+            }
+            layout.rings.push(points)
+            layout.ringPoints.push(scenePoints)
+        }
+        return layout
+    }
+
+    function handleAt(x, y) {
+        return handleMath.handleAt(x, y, handleLayout())
+    }
+
+    function updateHandleHover(x, y) {
+        const hit = handlesShown ? handleAt(x, y) : null
+        const same = hit && handleHover && hit.kind === handleHover.kind && hit.axis === handleHover.axis
+        if (!same && (hit || handleHover)) handleHover = hit
+        return hit !== null
+    }
+
+    function beginHandleDrag(hit, x, y) {
+        const layout = handleLayout()
+        if (!layout || !explode) return false
+        const axis = handleAxis(hit.axis)
+        const drag = { kind: hit.kind, axis: hit.axis, startX: x, startY: y, centre: handleCentre,
+                       centreScreen: layout.centre, value: 0 }
+        if (hit.kind === "move") {
+            drag.axisX = layout.tips[hit.axis].x - layout.centre.x
+            drag.axisY = layout.tips[hit.axis].y - layout.centre.y
+            drag.millimetres = handleLength * 0.98
+        } else {
+            // A ring seen face-on turns with the pointer's angle about the centre. Seen
+            // edge-on that angle means nothing, so the drag follows the ring's tangent where
+            // it was grabbed.
+            const facing = axis.dotProduct(viewDirection)
+            if (Math.abs(facing) > 0.25) {
+                drag.mode = "angle"
+                drag.sign = facing > 0 ? -1 : 1
+                drag.lastAngle = handleMath.screenAngle(x, y, layout.centre)
+                drag.turned = 0
+            } else {
+                drag.mode = "tangent"
+                const points = layout.rings[hit.axis]
+                let nearest = 0
+                let best = Number.POSITIVE_INFINITY
+                for (let index = 0; index < points.length; ++index) {
+                    const dx = points[index].x - x
+                    const dy = points[index].y - y
+                    if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; nearest = index }
+                }
+                const grabbed = layout.ringPoints[hit.axis][nearest]
+                const radius = handleLength * 0.72
+                const tangent = axis.crossProduct(grabbed.minus(handleCentre)).normalized()
+                const ahead = screenPoint(grabbed.plus(tangent.times(radius * 0.2)))
+                const here = screenPoint(grabbed)
+                drag.tangentX = ahead.x - here.x
+                drag.tangentY = ahead.y - here.y
+            }
+        }
+        explode.beginInteraction(handleNodeIds)
+        if (!explode.interacting) return false
+        handleDrag = drag
+        handleReadoutPosition = Qt.point(x, y)
+        handleReadout = ""
+        return true
+    }
+
+    function updateHandleDrag(x, y, free) {
+        const drag = handleDrag
+        if (!drag || !explode) return
+        const axis = handleAxis(drag.axis)
+        if (drag.kind === "move") {
+            const travel = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.axisX, drag.axisY, drag.millimetres)
+            const snapped = explode.snapTranslation(travel, free)
+            explode.previewTranslation(axis.times(snapped))
+            drag.value = snapped
+            handleReadout = qsTr("%1 mm").arg(snapped.toFixed(Math.abs(snapped) < 10 ? 2 : 1))
+        } else {
+            let degrees = 0
+            if (drag.mode === "angle") {
+                const angle = handleMath.screenAngle(x, y, drag.centreScreen)
+                drag.turned += handleMath.angleStep(drag.lastAngle, angle)
+                drag.lastAngle = angle
+                degrees = drag.sign * drag.turned
+            } else {
+                degrees = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.tangentX, drag.tangentY, 0.2) * 180 / Math.PI
+            }
+            const snapped = explode.snapRotation(degrees, free)
+            explode.previewRotation(axis, snapped, drag.centre)
+            drag.value = snapped
+            handleReadout = qsTr("%1°").arg(snapped.toFixed(1))
+        }
+        handleReadoutPosition = Qt.point(x, y)
+    }
+
+    function endHandleDrag(commit) {
+        if (!handleDrag) return
+        if (explode) {
+            if (commit) explode.commitInteraction()
+            else explode.cancelInteraction()
+        }
+        handleDrag = null
+        handleReadout = ""
+    }
+
+    // Bring every part home with a short glide, then forget where they were moved.
+    function animateExplodeReset() {
+        if (!explode || !explode.exploded) return
+        autoExplodeAnimation.stop()
+        explodeResetAnimation.restart()
+    }
+
+    // Auto-explode the scope ("" for the whole model) to `factor`, flying the parts apart.
+    function animateAutoExplode(scopeId, factor) {
+        if (!explode) return
+        explodeResetAnimation.stop()
+        autoExplodeAnimation.stop()
+        explode.beginAutoExplode(scopeId)
+        if (!explode.interacting) return
+        autoExplodeAnimationFactor = explode.autoFactor(scopeId)
+        autoExplodeAnimation.to = Math.max(0, factor)
+        autoExplodeAnimation.restart()
+    }
+
+    onAutoExplodeAnimationFactorChanged: if (autoExplodeAnimation.running && explode) explode.previewAutoExplode(autoExplodeAnimationFactor)
+
+    NumberAnimation {
+        id: autoExplodeAnimation
+        target: root
+        property: "autoExplodeAnimationFactor"
+        duration: root.theme ? root.theme.durSpatial * 2 : 0
+        easing.type: Easing.OutCubic
+        onFinished: {
+            if (root.explode) {
+                root.explode.previewAutoExplode(autoExplodeAnimation.to)
+                root.explode.commitInteraction()
+            }
+        }
+    }
+
+    NumberAnimation {
+        id: explodeResetAnimation
+        target: root.explode
+        property: "blend"
+        from: 1
+        to: 0
+        duration: root.theme ? root.theme.durSpatial * 2 : 0
+        easing.type: Easing.InOutCubic
+        onFinished: if (root.explode) root.explode.resetAll()
+    }
+
+    // Parts that move re-cut their section caps once they come to rest, not every frame.
+    function explodeMoved() {
+        if (presentationOnly || !controller || !controller.section.enabled) return
+        if (!explodeSettling) {
+            explodeSettling = true
+            applyRenderMode()
+        }
+        explodeSettleTimer.restart()
+    }
+
+    Timer {
+        id: explodeSettleTimer
+        interval: 160
+        onTriggered: {
+            if (root.explode && root.explode.interacting) {
+                restart()
+                return
+            }
+            root.explodeSettling = false
+            root.applySection()
+        }
+    }
+
+    Connections {
+        target: root.explode
+        function onPartsMoved(partIds) {
+            if (!root.explodedLayoutEnabled) return
+            root.placeParts(partIds)
+            root.explodeMoved()
+        }
+    }
+    onExplodedLayoutEnabledChanged: placeAllParts()
+    onHandlesShownChanged: if (!handlesShown) handleHover = null
+
     ViewportVisualTheme {
         id: viewportVisualTheme
         theme: root.theme
@@ -185,7 +455,9 @@ Item {
             navigation.reset()
             return
         }
-        navigation.fitBounds(sceneMinimum, sceneMaximum)
+        const exploded = explodedBounds([])
+        if (exploded) navigation.fitBounds(exploded.minimum, exploded.maximum)
+        else navigation.fitBounds(sceneMinimum, sceneMaximum)
         pendingFit = false
     }
 
@@ -210,6 +482,62 @@ Item {
     function nodeVisibleInPreview(nodeId) {
         if (requireDisplayFilter && displayOnlyNodeId.length === 0) return false
         return displayOnlyNodeId.length === 0 || nodeMatchesSelection(nodeId, displayOnlyNodeId)
+    }
+
+    // The node a part's models hang from, made on first use and placed where the exploded
+    // layout has the part.
+    function partNode(nodeId) {
+        let node = partNodeByNode[nodeId]
+        if (!node) {
+            node = partNodeComponent.createObject(sceneRoot)
+            partNodeByNode[nodeId] = node
+            placePart(nodeId)
+        }
+        return node
+    }
+
+    function xrayPartNode(nodeId) {
+        let node = xrayPartNodeByNode[nodeId]
+        if (!node) {
+            node = partNodeComponent.createObject(componentXrayRoot)
+            xrayPartNodeByNode[nodeId] = node
+            placePart(nodeId)
+        }
+        return node
+    }
+
+    function placePart(nodeId) {
+        const moved = explodedLayoutEnabled && explode
+        const position = moved ? explode.displayedPosition(nodeId) : Qt.vector3d(0, 0, 0)
+        const rotation = moved ? explode.displayedRotation(nodeId) : Qt.quaternion(1, 0, 0, 0)
+        for (const node of [partNodeByNode[nodeId], xrayPartNodeByNode[nodeId]]) {
+            if (!node) continue
+            node.position = position
+            node.rotation = rotation
+        }
+    }
+
+    function placeParts(nodeIds) {
+        for (const nodeId of nodeIds) placePart(nodeId)
+    }
+
+    function placeAllParts() {
+        for (let nodeId in partNodeByNode) placePart(nodeId)
+    }
+
+    // A world section plane in the part's own coordinates, as (normal, offset): the cap and
+    // edge clip of a moved part are built against it, so they land on the part as drawn.
+    function sectionPlaneFor(nodeId, normal, offset) {
+        if (explodedLayoutEnabled && explode && explode.isMoved(nodeId)) return explode.localPlane(nodeId, normal, offset)
+        return Qt.vector4d(normal.x, normal.y, normal.z, offset)
+    }
+
+    // Where everything is drawn when the layout is exploded, or null to use the assembly's
+    // own bounds. `nodeIds` narrows it to those nodes' parts.
+    function explodedBounds(nodeIds) {
+        if (!explodedLayout) return null
+        const bounds = explode.displayedBounds(nodeIds)
+        return bounds.valid ? bounds : null
     }
 
     // A fit was asked for but the geometry it needs had not arrived yet. Fitting is
@@ -250,6 +578,11 @@ Item {
     function fitSelection() {
         if (!controller || controller.selectedNodeCount === 0) {
             fitCamera()
+            return
+        }
+        const exploded = explodedBounds(controller.selectedNodeIds)
+        if (exploded) {
+            navigation.fitBounds(exploded.minimum, exploded.maximum)
             return
         }
         let minimum = Qt.vector3d(0, 0, 0)
@@ -299,6 +632,8 @@ Item {
 
     // The bounds of everything currently drawn, or null when nothing is.
     function visibleGeometryBounds() {
+        const exploded = explodedBounds([])
+        if (exploded) return exploded
         let minimum = Qt.vector3d(0, 0, 0)
         let maximum = Qt.vector3d(0, 0, 0)
         let found = false
@@ -330,6 +665,11 @@ Item {
     }
 
     function fitVisibleGeometry() {
+        const exploded = explodedBounds([])
+        if (exploded) {
+            navigation.fitBounds(exploded.minimum, exploded.maximum)
+            return
+        }
         let minimum = Qt.vector3d(0, 0, 0)
         let maximum = Qt.vector3d(0, 0, 0)
         let hasVisibleGeometry = false
@@ -406,6 +746,10 @@ Item {
         for (let id in sectionOverlayModelByNode) sectionOverlayModelByNode[id].destroy()
         for (let id in sectionOverlayGeometryByNode) sectionOverlayGeometryByNode[id].destroy()
         for (let id in xrayModelBySegment) xrayModelBySegment[id].destroy()
+        for (let id in partNodeByNode) partNodeByNode[id].destroy()
+        for (let id in xrayPartNodeByNode) xrayPartNodeByNode[id].destroy()
+        partNodeByNode = ({})
+        xrayPartNodeByNode = ({})
         modelByNode = ({})
         geometryByNode = ({})
         edgeModelByNode = ({})
@@ -480,7 +824,7 @@ Item {
         // shared controller selection too, which would otherwise always
         // trip this override and make its render-mode control a no-op.
         const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
-        const sectionPreview = section && section.enabled && section.interacting
+        const sectionPreview = section && section.enabled && (section.interacting || root.explodeSettling)
         edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
                 && nodeShown(edgeModel.nodeId) && !nodeTransparent(edgeModel.nodeId)
     }
@@ -492,7 +836,7 @@ Item {
         for (let id in edgeModelByNode) applyEdgeState(edgeModelByNode[id], section, sliceOnlyFinal)
         for (let id in sectionOverlayModelByNode) {
             const overlay = sectionOverlayModelByNode[id]
-            const hasExactDisplay = section && section.enabled && !section.interacting
+            const hasExactDisplay = section && section.enabled && !section.interacting && !root.explodeSettling
                     && (section.sliceOnly || section.capEnabled)
             overlay.visible = hasExactDisplay && (section.sliceOnly || renderMode !== 2)
                     && (!controller || controller.isNodeVisible(overlay.nodeId))
@@ -554,15 +898,15 @@ Item {
         }
         sectionApplyTimer.stop()
         for (let id in edgeGeometryByNode) {
-            edgeGeometryByNode[id].configureSection(section.enabled,
-                    section.effectiveNormal.x, section.effectiveNormal.y, section.effectiveNormal.z,
-                    section.effectiveOffset, section.flipped, section.sliceOnly, false)
+            const plane = sectionPlaneFor(id, section.effectiveNormal, section.effectiveOffset)
+            edgeGeometryByNode[id].configureSection(section.enabled, plane.x, plane.y, plane.z, plane.w,
+                    section.flipped, section.sliceOnly, false)
         }
         const queue = []
         if (section.enabled && (section.sliceOnly || section.capEnabled)) {
             for (let id in geometryByNode) {
                 const overlay = ensureSectionOverlay(id)
-                if (overlay) queue.push(overlay)
+                if (overlay) queue.push({ geometry: overlay, nodeId: modelByNode[id].nodeId })
             }
         }
         sectionApplyRequest = queue.length > 0 ? {
@@ -604,11 +948,13 @@ Item {
     function applyNextSectionItem() {
         if (!sectionApplyRequest || sectionApplyIndex >= sectionApplyQueue.length) return
         if (sectionBusyCount >= maximumConcurrentSectionBuilds) return
-        const geometry = sectionApplyQueue[sectionApplyIndex]
+        const item = sectionApplyQueue[sectionApplyIndex]
+        const geometry = item.geometry
         const request = sectionApplyRequest
         sectionApplyIndex += 1
-        geometry.configureSection(request.enabled, request.normal.x, request.normal.y, request.normal.z,
-                                  request.offset, request.flipped, request.capEnabled, request.sliceOnly,
+        const plane = sectionPlaneFor(item.nodeId, request.normal, request.offset)
+        geometry.configureSection(request.enabled, plane.x, plane.y, plane.z,
+                                  plane.w, request.flipped, request.capEnabled, request.sliceOnly,
                                   request.sliceFill, request.sliceOutline, request.preview,
                                   request.outlineWidth)
         updateSectionBusyCount()
@@ -628,7 +974,7 @@ Item {
             return null
         }
         overlayGeometry.sectionBusyChanged.connect(root.updateSectionBusyCount)
-        const overlayModel = sectionOverlayModelComponent.createObject(sceneRoot, {
+        const overlayModel = sectionOverlayModelComponent.createObject(partNode(sourceModel.nodeId), {
             "geometry": overlayGeometry,
             "nodeId": sourceModel.nodeId,
             "sourceColor": sourceModel.sourceColor
@@ -673,9 +1019,9 @@ Item {
             geometry.destroy()
             return
         }
-        const model = modelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId, "importColor": sourceColor,
+        const model = modelComponent.createObject(partNode(nodeId), { "geometry": geometry, "nodeId": nodeId, "importColor": sourceColor,
                                                     "sourceColor": root.displayColor(nodeId, sourceColor) })
-        const xrayModel = componentXrayModel.createObject(componentXrayRoot, {
+        const xrayModel = componentXrayModel.createObject(xrayPartNode(nodeId), {
             "geometry": geometry,
             "nodeId": nodeId,
             "visible": root.externalHighlightNodeId.length > 0
@@ -714,7 +1060,7 @@ Item {
             geometry.destroy()
             return
         }
-        const model = edgeModelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId })
+        const model = edgeModelComponent.createObject(partNode(nodeId), { "geometry": geometry, "nodeId": nodeId })
         edgeGeometryByNode[nodeId] = geometry
         edgeModelByNode[nodeId] = model
         const section = !presentationOnly && controller ? controller.section : null
@@ -842,8 +1188,10 @@ Item {
         if (!hit.objectHit || !hit.scenePosition) return null
         const geometry = hit.objectHit.geometry
         if (!geometry) return null
-        const info = geometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y,
-                                              hit.scenePosition.z)
+        // The geometry is in the part's assembled coordinates; an exploded part is drawn
+        // elsewhere, so the hit is taken back into the part's own frame to find its face.
+        const local = hit.objectHit.mapPositionFromScene(hit.scenePosition)
+        const info = geometry.topologyAtPoint(local.x, local.y, local.z)
         if (!info || !info.topologyId || info.entityKind !== "face") return null
         return {
             nodeId: hit.objectHit.nodeId,
@@ -852,6 +1200,7 @@ Item {
             measureMm: info.measureMm,
             radiusMm: info.radiusMm,
             sourceGeometry: geometry,
+            sourceModel: hit.objectHit,
             point: hit.scenePosition,
             normal: hit.sceneNormal
         }
@@ -896,15 +1245,22 @@ Item {
         if (!pick || !pick.sourceGeometry) return false
         const face = pick.sourceGeometry.faceViewFor(pick.topologyId)
         const resolved = face && face.direction !== undefined
-        let direction = resolved ? face.direction : pick.normal
-        const target = face && face.centroid !== undefined ? face.centroid : pick.point
+        // The face is described in its part's own frame; a moved or turned part is seen where
+        // it is drawn, so its direction and centre go back into the scene.
+        const model = pick.sourceModel
+        const toScene = function(vector, isDirection) {
+            if (!model || !vector) return vector
+            return isDirection ? model.mapDirectionToScene(vector) : model.mapPositionToScene(vector)
+        }
+        let direction = resolved ? toScene(face.direction, true) : pick.normal
+        const target = face && face.centroid !== undefined ? toScene(face.centroid, false) : pick.point
         const back = navigation.orientation.times(Qt.vector3d(0, 0, 1))
         // An axis has no outside; take the end that turns the view least.
         if (resolved && face.kind === "axis" && direction.dotProduct(back) < 0) direction = direction.times(-1)
         if (root.lastNormalView && root.lastNormalView.nodeId === pick.nodeId
                 && root.lastNormalView.topologyId === pick.topologyId && direction.dotProduct(back) > 0.9999)
             direction = direction.times(-1)
-        navigation.viewAlong(direction, target, face && face.edgeDirection !== undefined ? face.edgeDirection : null)
+        navigation.viewAlong(direction, target, face && face.edgeDirection !== undefined ? toScene(face.edgeDirection, true) : null)
         root.lastNormalView = { nodeId: pick.nodeId, topologyId: pick.topologyId }
         return true
     }
@@ -1033,6 +1389,7 @@ Item {
     }
 
     Component { id: geometryComponent; MeshGeometry {} }
+    Component { id: partNodeComponent; Node {} }
     Component { id: edgeGeometryComponent; CadEdgeGeometry {} }
     // Coalesces the burst of arriving meshes into one fit, and -- because
     // fitCamera() only clears pendingFit once it actually fits -- is also what
@@ -1324,6 +1681,69 @@ Item {
         }
     }
 
+    View3D {
+        id: handleView
+        objectName: "explodeHandleView"
+        anchors.fill: parent
+        renderMode: View3D.Offscreen
+        visible: root.handlesShown
+        environment: SceneEnvironment {
+            backgroundMode: SceneEnvironment.Transparent
+            antialiasingMode: SceneEnvironment.MSAA
+            antialiasingQuality: SceneEnvironment.High
+        }
+        camera: navigation.projectionMode === "orthographic" ? handleOrthographicCamera : handlePerspectiveCamera
+        Node {
+            position: navigation.cameraPosition
+            rotation: navigation.orientation
+            PerspectiveCamera {
+                id: handlePerspectiveCamera
+                clipNear: 0.01
+                clipFar: 1000000
+                fieldOfView: navigation.perspectiveFieldOfView
+            }
+            OrthographicCamera {
+                id: handleOrthographicCamera
+                clipNear: -1000000
+                clipFar: 1000000
+                horizontalMagnification: navigation.orthographicMagnification
+                verticalMagnification: navigation.orthographicMagnification
+            }
+        }
+        ExplodeHandle {
+            id: explodeHandle
+            objectName: "explodeHandle"
+            position: root.handleCentre
+            length: root.handleLength
+            xColor: root.theme && root.theme.axisX !== undefined ? root.theme.axisX : "transparent"
+            yColor: root.theme && root.theme.axisY !== undefined ? root.theme.axisY : "transparent"
+            zColor: root.theme && root.theme.axisZ !== undefined ? root.theme.axisZ : "transparent"
+            activeColor: root.theme && root.theme.handleActive !== undefined ? root.theme.handleActive : "transparent"
+            activeKind: root.handleDrag ? root.handleDrag.kind : root.handleHover ? root.handleHover.kind : ""
+            activeAxis: root.handleDrag ? root.handleDrag.axis : root.handleHover ? root.handleHover.axis : -1
+        }
+    }
+
+    Rectangle {
+        id: handleReadoutTag
+        visible: root.handleDrag !== null && root.handleReadout.length > 0
+        x: root.handleReadoutPosition.x + 16
+        y: root.handleReadoutPosition.y + 12
+        z: 6
+        width: handleReadoutLabel.implicitWidth + 12
+        height: handleReadoutLabel.implicitHeight + 6
+        radius: root.theme && root.theme.radius1 !== undefined ? root.theme.radius1 : 4
+        color: root.theme ? root.theme.surfaceRaised : "transparent"
+        border.color: root.theme ? root.theme.border : "transparent"
+        Label {
+            id: handleReadoutLabel
+            anchors.centerIn: parent
+            text: root.handleReadout
+            color: root.theme ? root.theme.foreground : "transparent"
+            font.pixelSize: 12
+        }
+    }
+
     Rectangle {
         id: sectionFinalizeStatus
         visible: !root.captureUiHidden && root.sectionFinalizing
@@ -1385,19 +1805,37 @@ Item {
         property real rollApplied: 0
         hoverEnabled: true
 
+        cursorShape: root.handleDrag || root.handleHover ? Qt.PointingHandCursor : Qt.ArrowCursor
+
         onPressed: function(mouse) {
             root.forceActiveFocus()
             pressX = mouse.x
             pressY = mouse.y
             pressButton = mouse.button
             dragging = false
+            // A press on a handle drags the selection instead of the view.
+            if (mouse.button === Qt.LeftButton && root.handlesShown) {
+                const handle = root.handleAt(mouse.x, mouse.y)
+                if (handle && root.beginHandleDrag(handle, mouse.x, mouse.y)) {
+                    navigation.clearPendingOrbitPivot()
+                    return
+                }
+            }
             if (mouse.button === Qt.LeftButton && !(mouse.modifiers & Qt.ShiftModifier))
                 root.prepareOrbitPivotAt(mouse.x, mouse.y)
             else
                 navigation.clearPendingOrbitPivot()
         }
         onPositionChanged: function(mouse) {
+            if (root.handleDrag) {
+                root.updateHandleDrag(mouse.x, mouse.y, (mouse.modifiers & Qt.ShiftModifier) !== 0)
+                return
+            }
             if (pressButton === Qt.NoButton) {
+                if (root.handlesShown && root.updateHandleHover(mouse.x, mouse.y)) {
+                    if (root.hoveredNodeId !== "") root.hoveredNodeId = ""
+                    return
+                }
                 root.updateHover(mouse.x, mouse.y)
                 return
             }
@@ -1452,6 +1890,11 @@ Item {
             pressY = mouse.y
         }
         onReleased: function(mouse) {
+            if (root.handleDrag) {
+                root.endHandleDrag(true)
+                pressButton = Qt.NoButton
+                return
+            }
             if (!dragging && pressButton === Qt.LeftButton && root.faceFrameSelectionEnabled) {
                 root.reportFaceFrameAt(mouse.x, mouse.y)
             }
@@ -1473,8 +1916,13 @@ Item {
             rolling = false
             navigation.clearPendingOrbitPivot()
         }
+        onCanceled: {
+            root.endHandleDrag(false)
+            pressButton = Qt.NoButton
+        }
         onExited: {
             root.hoveredNodeId = ""
+            root.handleHover = null
             root.showHoverTopology(null)
         }
         onWheel: function(wheel) {
@@ -1740,6 +2188,20 @@ Item {
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuSeparator { theme: componentContextMenu.theme; visible: root.explodedLayout }
+        ThemedMenuItem {
+            theme: componentContextMenu.theme
+            visible: root.explodedLayout
+            text: root.selectionActionText(qsTr("Reset position"), qsTr("Reset %1 positions"))
+            enabled: root.selectionMoved()
+            onTriggered: root.resetSelectedPositions()
+        }
+        ThemedMenuItem {
+            theme: componentContextMenu.theme
+            visible: root.explodedLayout
+            text: qsTr("Reset exploded view")
+            onTriggered: root.animateExplodeReset()
+        }
         ThemedMenuSeparator { theme: componentContextMenu.theme }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Properties"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.toolRequested("properties") }
     }
@@ -1763,12 +2225,31 @@ Item {
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
     }
 
+    function selectionMoved() {
+        if (!explodedLayout || !controller || explode.revision < 0) return false
+        for (const nodeId of controller.selectedNodeIds) {
+            if (explode.canReset(nodeId)) return true
+        }
+        return false
+    }
+
+    function resetSelectedPositions() {
+        if (!explode || !controller) return
+        for (const nodeId of controller.selectedNodeIds) explode.resetNode(nodeId)
+    }
+
     ThemedMenu {
         id: viewportContextMenu
         theme: root.theme
         ThemedMenuItem { theme: viewportContextMenu.theme; text: root.requireDisplayFilter ? qsTr("Fit part") : qsTr("Fit assembly")
                                      onTriggered: root.fitCamera() }
         ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
+        ThemedMenuItem {
+            theme: viewportContextMenu.theme
+            visible: root.explodedLayout
+            text: qsTr("Reset exploded view")
+            onTriggered: root.animateExplodeReset()
+        }
         ThemedMenuSeparator { theme: viewportContextMenu.theme }
         ThemedMenuItem {
             theme: viewportContextMenu.theme
@@ -1840,6 +2321,7 @@ Item {
     Shortcut { sequence: "Meta+Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.showAllNodes() }
     Shortcut { sequence: "M"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("measure") }
     Shortcut { sequence: "S"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("section") }
+    Shortcut { sequence: "E"; enabled: root.visible && (!root.presentationOnly) && root.explodedLayoutEnabled; onActivated: root.toolRequested("explode") }
     // root.visible matters as much as presentationOnly: every workspace in the stack is
     // instantiated, so Inspect's viewport kept these enabled while Export was on screen. Two
     // enabled "1" shortcuts is an ambiguous sequence, and Qt fires neither -- which is why
@@ -1865,7 +2347,24 @@ Item {
     }
     Shortcut {
         sequence: "Esc"
-        enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging)
+        enabled: root.visible && !root.presentationOnly && root.handleDrag !== null
+        onActivated: root.endHandleDrag(false)
+    }
+    Shortcut {
+        sequences: [StandardKey.Undo]
+        enabled: root.visible && root.explodeToolActive && root.explode !== null && root.explode.canUndo
+                 && !root.isTextEditFocused()
+        onActivated: root.explode.undo()
+    }
+    Shortcut {
+        sequences: [StandardKey.Redo]
+        enabled: root.visible && root.explodeToolActive && root.explode !== null && root.explode.canRedo
+                 && !root.isTextEditFocused()
+        onActivated: root.explode.redo()
+    }
+    Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")

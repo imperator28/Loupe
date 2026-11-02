@@ -7,19 +7,26 @@ ElevatedPanel {
     id: root
     signal toolTriggered(string tool)
     property int viewerPresentation: AppState.Full
+    // Parts are out of place in the exploded view (#17): its button stays lit, and measuring,
+    // which works on the assembled model, waits until they are reset.
+    property bool exploded: false
     property var tools: [
         { key: "fit", icon: "fit", label: qsTr("Fit") },
         { key: "isolate", icon: "isolate", label: qsTr("Isolate"), active: viewerPresentation === AppState.Isolate },
         { key: "hide", icon: "hide", label: qsTr("Hide") },
         { key: "transparent", icon: "transparent", label: qsTr("Transparent") },
         { key: "section", icon: "section", label: qsTr("Section") },
-        { key: "measure", icon: "measure", label: qsTr("Measure") },
+        { key: "explode", icon: "explode", label: qsTr("Explode"), active: exploded },
+        { key: "measure", icon: "measure", label: qsTr("Measure"), disabled: exploded,
+          hint: qsTr("Measuring works on the assembled model. Reset the exploded view to measure.") },
         { key: "capture", icon: "capture", label: qsTr("Capture") }
     ]
     flat: true
     cornerRadius: theme.radius2
     implicitWidth: controls.implicitWidth + 12
     implicitHeight: 62
+
+    HoverHandler { id: dockHover }
 
     RowLayout {
         id: controls
@@ -34,12 +41,21 @@ ElevatedPanel {
                 theme: root.theme
                 checkable: modelData.key === "isolate"
                 checked: modelData.active === true
+                enabled: modelData.disabled !== true
                 palette.buttonText: root.theme.onSurface
                 palette.text: root.theme.onSurface
                 Layout.minimumWidth: 52
                 Layout.minimumHeight: 52
                 Accessible.name: modelData.label
                 onClicked: root.toolTriggered(modelData.key)
+                // A disabled button takes no hover of its own, so the dock's says when the
+                // pointer is over it, to show why it is off.
+                ThemedToolTip {
+                    theme: root.theme
+                    text: toolButton.modelData.hint !== undefined ? toolButton.modelData.hint : ""
+                    visible: !toolButton.enabled && text.length > 0 && dockHover.hovered
+                             && toolButton.contains(toolButton.mapFromItem(root, dockHover.point.position))
+                }
 
                 // Control owns contentItem's own geometry directly (it
                 // stretches it to fill the padding box via internal C++

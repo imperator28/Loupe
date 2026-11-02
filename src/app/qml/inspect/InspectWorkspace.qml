@@ -48,7 +48,13 @@ Item {
         root.controller.selectNode(root.treeMatches[root.treeMatchIndex], false)
     }
 
+    // Parts are out of place in the exploded view (#17).
+    readonly property bool exploded: root.controller && root.controller.explode ? root.controller.explode.exploded : false
+
     function showTask(tool) {
+        // Measuring works on the assembled model; the Measure button says so while parts
+        // are moved, and its shortcut does nothing.
+        if (tool === "measure" && root.exploded) return
         if (root.activeTask === tool) {
             root.taskPanelVisible = !root.taskPanelVisible
             return
@@ -394,6 +400,10 @@ Item {
                     item.measurementActive = Qt.binding(function() {
                         return root.activeTask === "measure" && root.taskPanelVisible
                     })
+                    item.explodedLayoutEnabled = true
+                    item.explodeToolActive = Qt.binding(function() {
+                        return root.activeTask === "explode" && root.taskPanelVisible
+                    })
                     item.externalHighlightNodeId = Qt.binding(function() {
                         return root.treeHoveredNodeId
                     })
@@ -521,6 +531,7 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 24
                 viewerPresentation: root.controller ? root.controller.viewerPresentation : AppState.Full
+                exploded: root.exploded
                 theme: root.theme
                 onToolTriggered: function(tool) {
                     if (tool === "fit") root.controller.fitView()
@@ -528,7 +539,7 @@ Item {
                         root.controller.toggleIsolateActiveNode()
                     } else if (tool === "hide") root.controller.hideActiveNode()
                     else if (tool === "transparent") root.controller.toggleTransparentSelection()
-                    else if (tool === "section" || tool === "measure" || tool === "capture") root.showTask(tool)
+                    else if (tool === "section" || tool === "measure" || tool === "capture" || tool === "explode") root.showTask(tool)
                 }
             }
         }
@@ -590,6 +601,24 @@ Item {
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make others transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuSeparator { theme: treeContextMenu.theme; visible: root.exploded }
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
+            visible: root.exploded
+            text: qsTr("Reset position")
+            enabled: {
+                const revision = root.controller ? root.controller.explode.revision : -1
+                return revision >= 0 && treeContextMenu.targetNodeId.length > 0
+                        && root.controller.explode.canReset(treeContextMenu.targetNodeId)
+            }
+            onTriggered: root.controller.explode.resetNode(treeContextMenu.targetNodeId)
+        }
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
+            visible: root.exploded
+            text: qsTr("Reset exploded view")
+            onTriggered: if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
+        }
     }
 
     Loader {
@@ -609,12 +638,22 @@ Item {
         Behavior on opacity { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
         source: root.activeTask === "measure" ? "MeasurementPanel.qml"
               : root.activeTask === "section" ? "SectionPanel.qml"
+              : root.activeTask === "explode" ? "ExplodePanel.qml"
               : "CapturePanel.qml"
         onLoaded: {
             item.theme = root.theme
             if (root.activeTask === "measure") item.taskController = root.controller.measurement
             else if (root.activeTask === "section") item.taskController = root.controller.section
-            else {
+            else if (root.activeTask === "explode") {
+                item.taskController = root.controller.explode
+                item.documentController = root.controller
+                item.autoExplodeRequested.connect(function(scopeId, factor) {
+                    if (viewportLoader.item) viewportLoader.item.animateAutoExplode(scopeId, factor)
+                })
+                item.resetAllRequested.connect(function() {
+                    if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
+                })
+            } else {
                 item.taskController = root.controller.capture
                 item.captureRequested.connect(function() { captureDialog.open() })
                 item.captureToClipboardRequested.connect(function() {

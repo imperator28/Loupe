@@ -56,6 +56,14 @@ Item {
             f: "",
             t: ""
         },
+        // A block in the middle with its four corners pulled away from it.
+        "explode": {
+            s: "M2.5 2.5 H6.5 V6.5 H2.5 Z M13.5 2.5 H17.5 V6.5 H13.5 Z "
+               + "M2.5 13.5 H6.5 V17.5 H2.5 Z M13.5 13.5 H17.5 V17.5 H13.5 Z "
+               + "M8.6 8.6 L7.4 7.4 M11.4 8.6 L12.6 7.4 M8.6 11.4 L7.4 12.6 M11.4 11.4 L12.6 12.6",
+            f: "",
+            t: "M8.5 8.5 H11.5 V11.5 H8.5 Z"
+        },
         "capture": {
             s: "M3 7.5 H6.2 L7.7 5.5 H12.3 L13.8 7.5 H17 V15.5 H3 Z",
             f: "",

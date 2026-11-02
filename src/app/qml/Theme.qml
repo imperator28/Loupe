@@ -62,6 +62,13 @@ QtObject {
     // are deliberately brighter in dark viewports and near-black in light
     // viewports, rather than inheriting a body/material color.
     readonly property color definingEdge: dark ? "#EEF2FF" : "#111318"
+    // Axis colours, shared by the view cube and the exploded-view handles so X, Y and Z
+    // read the same everywhere.
+    readonly property color axisX: errorColor
+    readonly property color axisY: success
+    readonly property color axisZ: accentColor
+    // The handle under the pointer, or being dragged.
+    readonly property color handleActive: dark ? "#FDE272" : "#EAAA08"
 
     // Legacy role names consumed by existing panels and the C++ test harness.
     // They alias the palette above; new work should prefer the names above.

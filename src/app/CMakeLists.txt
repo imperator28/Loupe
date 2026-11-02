@@ -47,6 +47,8 @@ qt_add_executable(loupe-app
     tools/CaptureController.h
     tools/SectionController.cpp
     tools/SectionController.h
+    tools/ExplodeController.cpp
+    tools/ExplodeController.h
     render/MeshGeometry.cpp
     render/MeshGeometry.h
     render/SectionMeshBuilder.cpp
@@ -59,6 +61,8 @@ qt_add_executable(loupe-app
     render/SceneModel.h
     render/PartPalette.cpp
     render/PartPalette.h
+    render/HandleRingGeometry.cpp
+    render/HandleRingGeometry.h
 )
 
 set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")
@@ -196,6 +200,9 @@ qt_add_qml_module(loupe-app
         qml/inspect/ContextPanel.qml
         qml/inspect/MeasurementPanel.qml
         qml/inspect/SectionPanel.qml
+        qml/inspect/ExplodePanel.qml
+        qml/inspect/ExplodeHandle.qml
+        qml/inspect/ExplodeHandleMath.qml
         qml/inspect/CapturePanel.qml
         qml/inspect/CadEdgeMaterial.qml
         qml/inspect/ThemedColorDialog.qml

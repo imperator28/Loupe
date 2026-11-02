@@ -166,6 +166,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         noteImportedColor(nodeId, sourceColor);
         if (noteSegmentColor(nodeId, segmentKey, sourceColor, meshJson) && isNodeSelected(nodeId))
             emit componentPropertiesChanged();
+        notePartBounds(nodeId, meshJson);
         meshRevisionBySegment_.insert(segmentKey, ++geometryRevisionCounter_);
         emit meshReady(nodeId, segmentKey, sourceColor, meshJson);
     });
@@ -542,6 +543,7 @@ void ApplicationController::openFile(const QUrl& file)
     appearanceByNode_.clear();
     importedColorByNode_.clear();
     segmentColorsByNode_.clear();
+    explodeController_.clear();
     importedFaceColors_.clear();
     importedUncolouredFace_ = false;
     fileColorsUniform_ = false;
@@ -878,6 +880,7 @@ void ApplicationController::replayGeometryChunk()
             previewGeometryReceived_ = true;
             noteImportedColor(entry.nodeId, entry.sourceColor);
             static_cast<void>(noteSegmentColor(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload));
+            notePartBounds(entry.nodeId, entry.payload);
             // A replay re-sends what the viewports were already given, so it keeps the
             // revision; only geometry that arrived from the cache alone gets a new one.
             if (!meshRevisionBySegment_.contains(entry.segmentKey))
@@ -1091,6 +1094,11 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
         });
     }
     assemblyTreeModel_.replaceSnapshot(treeNodes);
+    // The exploded view moves nodes as the tree shows them, so a sub-assembly picked in the
+    // tree moves as a whole and auto-explode comes apart level by level as the tree reads.
+    QHash<QString, QString> explodeParents;
+    for (const auto& node : treeSourceNodes) explodeParents.insert(node.id, visibleParentId(node.parentId));
+    explodeController_.setHierarchy(explodeParents);
     // One palette slot per part definition, so every instance of a repeated part shares a
     // colour, taken in tree order so neighbouring parts sit far apart in the palette walk.
     partColorKeys_.clear();
@@ -1431,6 +1439,19 @@ void ApplicationController::noteImportedColor(const QString& nodeId, const QStri
     fileColorsUniform_ = uniform;
     emit partColorsChanged();
     if (partPaletteStyle(partColorMode_) && !recolorFileColors_) emit componentPropertiesChanged();
+}
+
+QString ApplicationController::nodeDisplayName(const QString& nodeId) const
+{
+    return displayNameByNode_.value(nodeId);
+}
+
+void ApplicationController::notePartBounds(const QString& nodeId, const QByteArray& payload)
+{
+    const auto bounds = protocol::meshBounds(payload);
+    if (!bounds) return;
+    explodeController_.includePartBounds(nodeId, {bounds->minimum[0], bounds->minimum[1], bounds->minimum[2]},
+                                         {bounds->maximum[0], bounds->maximum[1], bounds->maximum[2]});
 }
 
 bool ApplicationController::noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color,

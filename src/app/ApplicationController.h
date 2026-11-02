@@ -23,6 +23,7 @@
 #include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
 #include "app/tools/MeasurementController.h"
+#include "app/tools/ExplodeController.h"
 #include "app/tools/SectionController.h"
 #include "app/worker/WorkerClient.h"
 
@@ -107,6 +108,7 @@ class ApplicationController : public QObject {
     Q_PROPERTY(int renderMode READ renderMode WRITE setRenderMode NOTIFY renderModeChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
+    Q_PROPERTY(QObject* explode READ explodeControllerObject CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
     // The open file's name, for its tab and the window title; empty before one is opened.
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentNameChanged)
@@ -183,6 +185,8 @@ public:
     void setRenderMode(int mode);
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
+    [[nodiscard]] QObject* explodeControllerObject() noexcept { return &explodeController_; }
+    [[nodiscard]] tools::ExplodeController& explodeController() noexcept { return explodeController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
     [[nodiscard]] QObject* drawingWorkspaceController() noexcept { return &drawingWorkspaceController_; }
@@ -236,6 +240,8 @@ public:
     // to the view direction -- that leaves the in-plane axis undefined.
     Q_INVOKABLE QVector3D upForStandardView(const QString& name) const;
     Q_INVOKABLE QString labelForStandardView(const QString& name) const;
+    // The name the assembly tree shows for a node.
+    Q_INVOKABLE [[nodiscard]] QString nodeDisplayName(const QString& nodeId) const;
     Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
                                          bool additive = false);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
@@ -294,6 +300,8 @@ private:
     // Records one face-colour segment of a part and makes the part's imported colour the one
     // covering the most face area. True when that colour changed.
     bool noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color, const QByteArray& payload);
+    // Each drawn part's assembled bounds, for the exploded view.
+    void notePartBounds(const QString& nodeId, const QByteArray& payload);
     void rebuildPartColorOrder();
     [[nodiscard]] QString autoPartColor(const QString& nodeId) const;
     void partColorsUpdated();
@@ -397,6 +405,7 @@ private:
     QHash<QString, cache::AppearanceOverride> persistedAppearanceByKey_;
     tools::MeasurementController measurementController_{this};
     tools::SectionController sectionController_{this};
+    tools::ExplodeController explodeController_{this};
     tools::CaptureController captureController_{this};
     exporting::ExportWorkspaceController exportWorkspaceController_{this};
     drawing::DrawingWorkspaceController drawingWorkspaceController_{this};

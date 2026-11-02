@@ -42,6 +42,7 @@ Loupe is deliberately focused on the inspection controls engineers use repeatedl
 | **Part colours** | Keep the file's colours, or give every part an automatic low-contrast colour (cool shades, warm shades, or muted) with Shuffle -- useful when a file leaves parts uncoloured or gives them all one default colour. Display only. |
 | **Materials and mass** | Assign materials to an occurrence or definition, manage a persistent custom material library, and calculate mass for a body, subassembly, or multi-selection. Standard materials cover common consumer-electronics use cases including aluminum, zinc alloy, copper, PP, HDPE, PA, PMMA, PC, FR4 PCBA, silicone, and HNBR rubber. |
 | **Section** | Pick a principal axis or a selected face plane, adjust offset, flip the clipped side, inspect normal or opposite views, cap cut faces, and create an outline, filled, or filled-plus-outline 2D slice. Slice outline color and thickness are adjustable. |
+| **Exploded view** | Pull an assembly apart to see how its parts fit. Select a part, or a sub-assembly in the tree, and drag the arrows to move it along X, Y or Z or the rings to turn it, with snapping (Shift moves freely), typed positions and angles, and undo. Auto-explode takes the selected sub-assembly (or the whole model) apart level by level with a distance slider. Section and view-normal-to-face work on the exploded layout. Parts stay where you put them until reset; the file and exports are never changed, and measuring waits until the parts are back. |
 | **Measure** | Inspect points, edges, faces, radii, angles, area, volume, and bounds with topology-specific hover and persistent pick highlights. |
 | **Capture** | Export the current inspection view as a PNG with transparent background and optional measurement/section content. Use 2x, 3x, or 5x presets or enter a custom render scale; the app renders at the requested resolution and reports capture progress. |
 
@@ -112,6 +113,7 @@ Useful shortcuts:
 | `Ctrl/Cmd+Shift+H` | Show all |
 | `M` | Open Measure |
 | `S` | Open Section |
+| `E` | Open the exploded view; `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` undo / redo a move while it is open |
 | `1`, `2`, `3` | Solid, Solid + Edges, Edges Only |
 | `Ctrl/Cmd+O` | Open STEP (in a new tab if one is already open) |
 | `Ctrl/Cmd+W` | Close tab |

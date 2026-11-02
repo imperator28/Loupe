@@ -4,6 +4,8 @@
 #include <QString>
 #include <QVector>
 
+#include <array>
+#include <optional>
 #include <variant>
 
 namespace loupe::protocol {
@@ -54,5 +56,13 @@ using GeometryPayload = std::variant<MeshPayload, EdgePayload>;
 // The summed face area (mm^2) of an encoded mesh payload, read from its topology ranges
 // without decoding the vertex data. 0 for an edge payload or anything malformed.
 [[nodiscard]] double meshFaceArea(const QByteArray& bytes) noexcept;
+
+struct MeshBounds final {
+    std::array<float, 3> minimum{};
+    std::array<float, 3> maximum{};
+};
+// The axis-aligned bounds (mm) of an encoded mesh payload's vertices, read without decoding
+// the rest. Empty for an edge payload, a payload with no vertices, or anything malformed.
+[[nodiscard]] std::optional<MeshBounds> meshBounds(const QByteArray& bytes) noexcept;
 
 } // namespace loupe::protocol

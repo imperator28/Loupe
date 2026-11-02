@@ -8,6 +8,7 @@
 #include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
+#include "app/render/HandleRingGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/tools/CaptureController.h"
 #include "app/tools/SectionController.h"
@@ -25,12 +26,15 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QJsonDocument>
+#include <QJSValue>
+#include <QVector4D>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QScopeGuard>
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
 #include <qqml.h>
 
@@ -92,6 +96,8 @@ private slots:
     void viewportCaptureUsesRequestedRenderResolution();
     void viewportDrawsAFacingFaceInItsPickedColour();
     void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
+    void explodedViewHandlesMoveAndTurnTheSelection();
+    void explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
@@ -112,6 +118,7 @@ void QmlSmokeTest::initTestCase()
     qmlRegisterType<loupe::app::platform::WindowChrome>("Loupe.App", 1, 0, "WindowChrome");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
+    qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
 }
 
 void QmlSmokeTest::mainLoads()
@@ -700,6 +707,229 @@ void QmlSmokeTest::viewportRightClickKeepsTheSelectionAndViewsNormalToAFace()
     QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
     direction = viewport->property("viewDirection").value<QVector3D>();
     QVERIFY((direction + normal).length() < 1.0e-4F);
+}
+
+void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
+{
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"surface", "surfaceRaised", "surfaceSubtle", "control", "border", "onSurface", "foreground",
+                            "muted", "accent", "selection", "selectedBody", "selectedEdge", "edge", "neutralBody"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    theme->insert(QStringLiteral("axisX"), QColor(QStringLiteral("#D92D20")));
+    theme->insert(QStringLiteral("axisY"), QColor(QStringLiteral("#079455")));
+    theme->insert(QStringLiteral("axisZ"), QColor(QStringLiteral("#4F46E5")));
+    theme->insert(QStringLiteral("handleActive"), QColor(QStringLiteral("#EAAA08")));
+    theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#000000")));
+    theme->insert(QStringLiteral("dark"), false);
+    theme->insert(QStringLiteral("durSpatial"), 0);
+
+    loupe::app::ApplicationController controller;
+    auto& explode = controller.explodeController();
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))},
+        {QStringLiteral("explodedLayoutEnabled"), true},
+        {QStringLiteral("explodeToolActive"), true}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(600, 600);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(600, 600));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // Two 20 mm plates in the XY plane, facing +Z: "a" at the origin, "b" 40 mm along X.
+    const auto plate = [&](const QString& id, const float centreX) {
+        loupe::protocol::MeshPayload mesh;
+        mesh.requestId = 1;
+        mesh.nodeId = mesh.definitionId = id;
+        mesh.segmentKey = id + QStringLiteral(":0");
+        for (const auto& [u, v] : {std::pair{-10.0F, -10.0F}, {10.0F, -10.0F}, {10.0F, 10.0F}, {-10.0F, 10.0F}}) {
+            mesh.vertices << centreX + u << v << 0.0F;
+            mesh.normals << 0.0F << 0.0F << 1.0F;
+        }
+        mesh.indices = {0, 1, 2, 0, 2, 3};
+        mesh.topology = {{5, loupe::protocol::TopologyKind::Face, 0, 6, 400.0F, 0.0F}};
+        explode.includePartBounds(id, {centreX - 10, -10, 0}, {centreX + 10, 10, 0});
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, id), Q_ARG(QString, mesh.segmentKey),
+                                          Q_ARG(QString, QStringLiteral("#3070C0")), Q_ARG(QByteArray, loupe::protocol::encodeGeometry(mesh))));
+    };
+    explode.setHierarchy({{QStringLiteral("a"), QString{}}, {QStringLiteral("b"), QString{}}});
+    plate(QStringLiteral("a"), 0.0F);
+    plate(QStringLiteral("b"), 40.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("hasSceneBounds").toBool(), 3000);
+    QVERIFY(QMetaObject::invokeMethod(viewport, "setStandardView", Q_ARG(QVariant, QVariant::fromValue(QVector3D(0, 0, 1)))));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "fitCamera"));
+
+    const auto partNode = [&](const QString& id) {
+        return viewport->property("partNodeByNode").value<QJSValue>().property(id).toQObject();
+    };
+    QVERIFY(partNode(QStringLiteral("a")) != nullptr);
+
+    // The handles show on the selection, and nowhere without one.
+    QVERIFY(!viewport->property("handlesShown").toBool());
+    controller.selectNode(QStringLiteral("a"), false);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+    QTest::qWait(100);
+
+    const auto layout = [&] {
+        QVariant value;
+        QMetaObject::invokeMethod(viewport, "handleLayout", Q_RETURN_ARG(QVariant, value));
+        return value.toMap();
+    };
+    const auto point = [](const QVariant& value) {
+        const auto map = value.toMap();
+        return QPointF(map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble());
+    };
+    auto handles = layout();
+    QVERIFY(!handles.isEmpty());
+    const auto centre = point(handles.value(QStringLiteral("centre")));
+    const auto xTip = point(handles.value(QStringLiteral("tips")).toList().at(0));
+    QVERIFY2((xTip - centre).manhattanLength() > 40, "the X arrow is drawn across the screen");
+
+    // Drag the X arrow by its own length on screen: the plate moves along X, in whole steps.
+    const auto grab = (centre + (xTip - centre) * 0.6).toPoint();
+    const auto drop = (centre + (xTip - centre) * 1.6).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, {}, grab);
+    for (int step = 1; step <= 10; ++step) QTest::mouseMove(&window, grab + (drop - grab) * step / 10, 10);
+    QVERIFY(explode.interacting());
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, drop);
+    QVERIFY(!explode.interacting());
+    const auto offset = explode.offsetOf(QStringLiteral("a"));
+    QVERIFY2(offset.x() > 4.0F && std::abs(offset.y()) < 1e-3F && std::abs(offset.z()) < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(offset.x()).arg(offset.y()).arg(offset.z())));
+    QCOMPARE(std::fmod(offset.x(), 5.0F), 0.0F); // snapped to the 5 mm step
+    QVERIFY(!explode.isMoved(QStringLiteral("b")));
+    // Grabbing a handle is not a click: the selection stays as it was.
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("a")});
+    // The part's node is where the controller says.
+    QTRY_VERIFY_WITH_TIMEOUT((partNode(QStringLiteral("a"))->property("position").value<QVector3D>()
+                              - explode.displayedPosition(QStringLiteral("a"))).length() < 1e-3F, 3000);
+
+    // Turn it on the Z ring, seen face-on: a quarter of the way round, from 45 degrees (clear
+    // of the arrows, which take a press where they cross the ring) to 135.
+    handles = layout();
+    const auto zRing = handles.value(QStringLiteral("rings")).toList().at(2).toList();
+    QCOMPARE(zRing.size(), 48);
+    QTest::mousePress(&window, Qt::LeftButton, {}, point(zRing.at(6)).toPoint());
+    QVERIFY(explode.interacting());
+    for (int index = 7; index <= 18; ++index) QTest::mouseMove(&window, point(zRing.at(index)).toPoint(), 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, point(zRing.at(18)).toPoint());
+    const auto angles = explode.anglesOf(QStringLiteral("a"));
+    QVERIFY2(std::abs(angles.z() - 90.0F) < 1e-2F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(angles.x()).arg(angles.y()).arg(angles.z())));
+    // Undo takes the turn back, one drag at a time.
+    explode.undo();
+    QVERIFY(std::abs(explode.anglesOf(QStringLiteral("a")).z()) < 1e-2F);
+    QVERIFY(std::abs(explode.offsetOf(QStringLiteral("a")).x() - offset.x()) < 1e-3F);
+
+    // View normal to face follows the turned part: tipped a quarter about X, its face now
+    // looks along -Y, and that is the way the view turns.
+    explode.setAngles(QStringLiteral("a"), {90, 0, 0});
+    QVERIFY(QMetaObject::invokeMethod(viewport, "setStandardView", Q_ARG(QVariant, QVariant::fromValue(QVector3D(0.4F, -0.8F, 0.45F).normalized()))));
+    QTest::qWait(150);
+    handles = layout();
+    const auto plateCentre = point(handles.value(QStringLiteral("centre")));
+    // Once only: asked again for the face it is already square to, it shows the back.
+    QVariant done;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done),
+                                      Q_ARG(QVariant, plateCentre.x()), Q_ARG(QVariant, plateCentre.y())));
+    QVERIFY(done.toBool());
+    const auto direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY2((direction - QVector3D(0, -1, 0)).length() < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(direction.x()).arg(direction.y()).arg(direction.z())));
+
+    // A section of the moved part is cut against its own frame.
+    QVariant plane;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "sectionPlaneFor", Q_RETURN_ARG(QVariant, plane), Q_ARG(QVariant, QStringLiteral("a")),
+                                      Q_ARG(QVariant, QVariant::fromValue(QVector3D(1, 0, 0))), Q_ARG(QVariant, 2.0)));
+    QCOMPARE(plane.value<QVector4D>(), explode.localPlane(QStringLiteral("a"), {1, 0, 0}, 2.0));
+
+    // With a section on, moving parts holds their caps back until they stop, then re-cuts
+    // them where the parts now are.
+    auto* section = qobject_cast<loupe::app::tools::SectionController*>(controller.sectionController());
+    section->setEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("sectionFinalizing").toBool(), 3000);
+    explode.setOffset(QStringLiteral("a"), {0, 0, 12});
+    QVERIFY(viewport->property("explodeSettling").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("explodeSettling").toBool(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("sectionFinalizing").toBool(), 3000);
+    section->setEnabled(false);
+
+    // Reset brings everything home.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "animateExplodeReset"));
+    QTRY_VERIFY_WITH_TIMEOUT(!explode.exploded(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(partNode(QStringLiteral("a"))->property("position").value<QVector3D>().length() < 1e-3F, 3000);
+}
+
+void QmlSmokeTest::explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly()
+{
+    loupe::app::ApplicationController controller;
+    auto& explode = controller.explodeController();
+    explode.setHierarchy({
+        {QStringLiteral("root"), QString{}},
+        {QStringLiteral("sub"), QStringLiteral("root")},
+        {QStringLiteral("left"), QStringLiteral("sub")},
+        {QStringLiteral("right"), QStringLiteral("sub")},
+    });
+    explode.includePartBounds(QStringLiteral("left"), {-11, -1, -1}, {-9, 1, 1});
+    explode.includePartBounds(QStringLiteral("right"), {9, -1, -1}, {11, 1, 1});
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/ExplodePanel.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> panel(component.createWithInitialProperties({
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("taskController"), QVariant::fromValue(controller.explodeControllerObject())},
+        {QStringLiteral("documentController"), QVariant::fromValue(static_cast<QObject*>(&controller))}}));
+    QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
+    auto* scopeLabel = panel->findChild<QObject*>(QStringLiteral("explodeScopeLabel"));
+    QVERIFY(scopeLabel != nullptr);
+    QCOMPARE(scopeLabel->property("text").toString(), QStringLiteral("Whole model"));
+
+    // A part selected: auto-explode takes apart the sub-assembly it is in.
+    controller.selectNode(QStringLiteral("left"), false);
+    QCOMPARE(panel->property("scopeId").toString(), QStringLiteral("sub"));
+    QVERIFY(scopeLabel->property("text").toString().startsWith(QStringLiteral("Sub-assembly")));
+    QSignalSpy autoExplode(panel.get(), SIGNAL(autoExplodeRequested(QString,double)));
+    auto* explodeButton = panel->findChild<QObject*>(QStringLiteral("explodeAutoButton"));
+    QVERIFY(explodeButton != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(explodeButton, "clicked"));
+    QCOMPARE(autoExplode.count(), 1);
+    QCOMPARE(autoExplode.at(0).at(0).toString(), QStringLiteral("sub"));
+    QVERIFY(autoExplode.at(0).at(1).toDouble() >= 1.0);
+
+    // Typing a position moves the part there, and the field shows where it is.
+    // Repeater delegates are children in the item tree, not of the panel object.
+    const std::function<QQuickItem*(QQuickItem*, const QString&)> findItem = [&](QQuickItem* item, const QString& name) -> QQuickItem* {
+        if (item->objectName() == name) return item;
+        for (auto* child : item->childItems()) {
+            if (auto* found = findItem(child, name)) return found;
+        }
+        return nullptr;
+    };
+    auto* panelItem = qobject_cast<QQuickItem*>(panel.get());
+    auto* offsetX = findItem(panelItem, QStringLiteral("explodeOffsetField0"));
+    QVERIFY(offsetX != nullptr);
+    offsetX->setProperty("text", QStringLiteral("15"));
+    QVERIFY(QMetaObject::invokeMethod(offsetX, "editingFinished"));
+    QVERIFY(std::abs(explode.offsetOf(QStringLiteral("left")).x() - 15.0F) < 1e-3F);
+    auto* angleZ = findItem(panelItem, QStringLiteral("explodeAngleField2"));
+    QVERIFY(angleZ != nullptr);
+    angleZ->setProperty("text", QStringLiteral("45"));
+    QVERIFY(QMetaObject::invokeMethod(angleZ, "editingFinished"));
+    QVERIFY(std::abs(explode.anglesOf(QStringLiteral("left")).z() - 45.0F) < 1e-2F);
+    QVERIFY(std::abs(explode.offsetOf(QStringLiteral("left")).x() - 15.0F) < 1e-3F);
+    QCOMPARE(angleZ->property("text").toString(), QStringLiteral("45"));
+    QVERIFY(panel->findChild<QObject*>(QStringLiteral("explodeResetAllButton"))->property("enabled").toBool());
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()

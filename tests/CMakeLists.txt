@@ -128,6 +128,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.h"
 )
 target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Network Qt6::Sql Qt6::Test)
 target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
@@ -241,10 +243,14 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.h"
     "${PROJECT_SOURCE_DIR}/src/app/platform/WindowChrome.h"
@@ -360,6 +366,8 @@ add_executable(loupe-scene-model-tests
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SceneModel.cpp"
@@ -454,6 +462,8 @@ add_executable(loupe-inspection-tools-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.h"
 )
 target_link_libraries(loupe-inspection-tools-tests PRIVATE PNG::PNG Qt6::Core Qt6::Gui Qt6::Test)
 target_include_directories(loupe-inspection-tools-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
