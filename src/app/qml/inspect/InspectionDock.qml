@@ -10,6 +10,7 @@ ElevatedPanel {
     // Parts are out of place in the exploded view (#17): its button stays lit, and measuring,
     // which works on the assembled model, waits until they are reset.
     property bool exploded: false
+    property bool measureBlocked: false
     property var tools: [
         { key: "fit", icon: "fit", label: qsTr("Fit") },
         { key: "isolate", icon: "isolate", label: qsTr("Isolate"), active: viewerPresentation === AppState.Isolate },
@@ -17,8 +18,8 @@ ElevatedPanel {
         { key: "transparent", icon: "transparent", label: qsTr("Transparent") },
         { key: "section", icon: "section", label: qsTr("Section") },
         { key: "explode", icon: "explode", label: qsTr("Explode"), active: exploded },
-        { key: "measure", icon: "measure", label: qsTr("Measure"), disabled: exploded,
-          hint: qsTr("Measuring works on the assembled model. Reset the exploded view to measure.") },
+        { key: "measure", icon: "measure", label: qsTr("Measure"), disabled: measureBlocked,
+          hint: qsTr("Measuring works on the assembled model: switch the exploded view to Assembled to measure.") },
         { key: "capture", icon: "capture", label: qsTr("Capture") }
     ]
     flat: true

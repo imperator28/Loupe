@@ -25,8 +25,9 @@ class ExplodeController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool exploded READ exploded NOTIFY changed)
     Q_PROPERTY(int revision READ revision NOTIFY changed)
-    // 1 shows the parts where they have been moved; animating it to 0 brings them home
-    // smoothly before a reset.
+    // 1 shows the parts where they have been moved, 0 where the file has them, with the
+    // layout kept: the panel's Assembled / Exploded switch eases between the two, and a reset
+    // eases home before it forgets the layout. Any edit shows the layout again.
     Q_PROPERTY(double blend READ blend WRITE setBlend NOTIFY changed)
     Q_PROPERTY(bool interacting READ interacting NOTIFY interactionChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged)
@@ -71,6 +72,9 @@ public:
     // What auto-explode takes apart for this selection: one sub-assembly selected, that;
     // one part, the sub-assembly it is in; otherwise ("") the whole model.
     Q_INVOKABLE [[nodiscard]] QString autoExplodeScope(const QStringList& selectedNodeIds) const;
+    // A handle frame whose Z axis is `normal` (a picked face's), with X and Y chosen the same
+    // way every time: X level where it can be, so the handle reads like the world's.
+    Q_INVOKABLE [[nodiscard]] static QQuaternion frameForNormal(const QVector3D& normal);
     Q_INVOKABLE [[nodiscard]] double snapTranslation(double millimetres, bool free) const;
     Q_INVOKABLE [[nodiscard]] double snapRotation(double degrees, bool free) const;
 
@@ -139,6 +143,7 @@ private:
     enum class Interaction { None, Handle, AutoExplode };
 
     [[nodiscard]] Bounds nodeBounds(const QString& nodeId) const;
+    [[nodiscard]] QHash<QString, QVector3D> autoExplodeVectors(const QString& scopeId) const;
     [[nodiscard]] QStringList partsUnder(const QString& nodeId) const;
     [[nodiscard]] QStringList descendantsOf(const QString& nodeId) const;
     [[nodiscard]] bool isAncestor(const QString& ancestorId, const QString& nodeId) const;
@@ -148,6 +153,7 @@ private:
     void setPlacement(const QString& nodeId, const QMatrix4x4& placement);
     void setOwnTransform(const QString& nodeId, const QMatrix4x4& transform);
     void invalidate();
+    void showLayoutForEditing();
     void announce(const QStringList& partIds);
     void announceStateChange(const State& before);
     void pushUndo(const State& before);
@@ -171,6 +177,7 @@ private:
     QHash<QString, QMatrix4x4> interactionPlacements_;
     QString autoScope_;
     double autoStartFactor_{};
+    QHash<QString, QVector3D> autoVectors_;
 
     mutable QHash<QString, QMatrix4x4> effectiveCache_;
     mutable QHash<QString, Bounds> boundsCache_;

@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "app/platform/UpdateController.h"
 #include "protocol/GeometryPayload.h"
 #include "app/cache/CacheKey.h"
 #include "app/cache/CacheStore.h"
@@ -1595,6 +1596,11 @@ bool ApplicationController::setUpAxis(const QString& axis)
 
 QString ApplicationController::applicationVersion()
 {
+#ifdef LOUPE_RELEASE_LABEL
+    // A beta says which beta it is: 0.1.5-beta.7, not just 0.1.5.
+    if (const auto label = QStringLiteral(LOUPE_RELEASE_LABEL); platform::UpdateController::parseVersion(label))
+        return label.startsWith(QLatin1Char('v')) ? label.mid(1) : label;
+#endif
 #ifdef LOUPE_VERSION
     return QStringLiteral(LOUPE_VERSION);
 #else

@@ -204,6 +204,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.h"
     "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
     "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
@@ -471,6 +473,22 @@ loupe_enable_warnings(loupe-inspection-tools-tests)
 
 add_test(NAME inspection-tools COMMAND loupe-inspection-tools-tests)
 set_tests_properties(inspection-tools PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-update-controller-tests
+    app/test_update_controller.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
+)
+target_link_libraries(loupe-update-controller-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-update-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_definitions(loupe-update-controller-tests PRIVATE LOUPE_VERSION="0.1.5" LOUPE_RELEASE_LABEL="v0.1.5-beta.6")
+loupe_enable_warnings(loupe-update-controller-tests)
+
+add_test(NAME update-controller COMMAND loupe-update-controller-tests)
+set_tests_properties(update-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )

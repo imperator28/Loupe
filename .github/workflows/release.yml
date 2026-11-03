@@ -155,7 +155,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg_triplet }}" \
             -DVCPKG_HOST_TRIPLET="${{ matrix.vcpkg_triplet }}" \
             -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
-            -DVCPKG_INSTALL_OPTIONS="${{ matrix.vcpkg_install_options }}"
+            -DVCPKG_INSTALL_OPTIONS="${{ matrix.vcpkg_install_options }}" \
+            -DLOUPE_RELEASE_LABEL="${PACKAGE_LABEL}"
 
       - name: Save vcpkg binary cache
         if: always()

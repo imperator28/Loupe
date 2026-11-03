@@ -9,6 +9,8 @@ qt_add_executable(loupe-app
     platform/FileOpenRouter.h
     platform/WindowManager.cpp
     platform/WindowManager.h
+    platform/UpdateController.cpp
+    platform/UpdateController.h
     ApplicationController.h
     export/ExportWorkspaceController.cpp
     export/ExportWorkspaceController.h
@@ -201,6 +203,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/MeasurementPanel.qml
         qml/inspect/SectionPanel.qml
         qml/inspect/ExplodePanel.qml
+        qml/inspect/FloatingToolWindow.qml
         qml/inspect/ExplodeHandle.qml
         qml/inspect/ExplodeHandleMath.qml
         qml/inspect/CapturePanel.qml
@@ -224,5 +227,11 @@ if(LOUPE_ENABLE_QML_PROFILING)
     target_compile_definitions(loupe-app PRIVATE QT_QML_DEBUG)
 endif()
 target_compile_definitions(loupe-app PRIVATE LOUPE_VERSION="${PROJECT_VERSION}")
+# The tag or beta label a release build is made for (v0.1.5-beta.7), so the app knows which
+# pre-release it is when it checks for updates. CI passes it; local builds leave it empty.
+set(LOUPE_RELEASE_LABEL "" CACHE STRING "Release tag or beta label this build is for")
+if(LOUPE_RELEASE_LABEL)
+    target_compile_definitions(loupe-app PRIVATE LOUPE_RELEASE_LABEL="${LOUPE_RELEASE_LABEL}")
+endif()
 
 loupe_enable_warnings(loupe-app)

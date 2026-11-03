@@ -50,11 +50,14 @@ Item {
 
     // Parts are out of place in the exploded view (#17).
     readonly property bool exploded: root.controller && root.controller.explode ? root.controller.explode.exploded : false
+    // ... and on screen. In the Assembled view they are where the file has them, so measuring
+    // is fine there.
+    readonly property bool explodedShowing: exploded && root.controller.explode.blend > 0.001
 
     function showTask(tool) {
         // Measuring works on the assembled model; the Measure button says so while parts
         // are moved, and its shortcut does nothing.
-        if (tool === "measure" && root.exploded) return
+        if (tool === "measure" && root.explodedShowing) return
         if (root.activeTask === tool) {
             root.taskPanelVisible = !root.taskPanelVisible
             return
@@ -542,6 +545,7 @@ Item {
                 anchors.bottomMargin: 24
                 viewerPresentation: root.controller ? root.controller.viewerPresentation : AppState.Full
                 exploded: root.exploded
+                measureBlocked: root.explodedShowing
                 theme: root.theme
                 onToolTriggered: function(tool) {
                     if (tool === "fit") root.controller.fitView()
@@ -631,65 +635,70 @@ Item {
         }
     }
 
-    Loader {
-        id: taskPanelLoader
-        anchors.right: parent.right
-        anchors.rightMargin: 314
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 96
-        active: root.activeTask !== "" && root.taskPanelVisible
-        // Subtle rise + fade as the tool panel appears, so it reads as
-        // surfacing from the toolbar rather than snapping into place.
-        opacity: active ? 1 : 0
-        transform: Translate {
-            y: taskPanelLoader.active ? 0 : 8
-            Behavior on y { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
-        }
-        Behavior on opacity { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
-        source: root.activeTask === "measure" ? "MeasurementPanel.qml"
-              : root.activeTask === "section" ? "SectionPanel.qml"
-              : root.activeTask === "explode" ? "ExplodePanel.qml"
-              : "CapturePanel.qml"
-        onLoaded: {
-            item.theme = root.theme
-            if (root.activeTask === "measure") item.taskController = root.controller.measurement
-            else if (root.activeTask === "section") item.taskController = root.controller.section
-            else if (root.activeTask === "explode") {
-                item.taskController = root.controller.explode
-                item.documentController = root.controller
-                item.autoExplodeRequested.connect(function(scopeId, factor) {
-                    if (viewportLoader.item) viewportLoader.item.animateAutoExplode(scopeId, factor)
-                })
-                item.resetAllRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
-                })
-                item.exportRequested.connect(root.chooseExplodedExport)
-            } else {
-                item.taskController = root.controller.capture
-                item.captureRequested.connect(function() { captureDialog.open() })
-                item.captureToClipboardRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.captureToClipboard()
-                })
-            }
-            item.closeRequested.connect(function() {
-                root.taskPanelVisible = false
-            })
-            if (root.activeTask === "section") {
-                item.disableRequested.connect(function() {
-                    root.controller.section.enabled = false
-                    root.activeTask = ""
+    // The open tool's panel, in a window the user can drag out of the way or minimise.
+    FloatingToolWindow {
+        id: taskWindow
+        objectName: "taskWindow"
+        theme: root.theme
+        shown: root.activeTask !== "" && root.taskPanelVisible
+        // Clear of the properties panel and above the toolbar, where the panel always opened.
+        defaultRightMargin: contextPanel.width + 2 * root.theme.spacing3 + 2
+        title: root.activeTask === "measure" ? qsTr("Measure")
+             : root.activeTask === "section" ? qsTr("Section")
+             : root.activeTask === "explode" ? qsTr("Exploded view")
+             : qsTr("Capture PNG")
+        onCloseRequested: root.taskPanelVisible = false
+
+        Loader {
+            id: taskPanelLoader
+            active: root.activeTask !== "" && root.taskPanelVisible
+            source: root.activeTask === "measure" ? "MeasurementPanel.qml"
+                  : root.activeTask === "section" ? "SectionPanel.qml"
+                  : root.activeTask === "explode" ? "ExplodePanel.qml"
+                  : "CapturePanel.qml"
+            onLoaded: {
+                item.theme = root.theme
+                item.embedded = true
+                if (root.activeTask === "measure") item.taskController = root.controller.measurement
+                else if (root.activeTask === "section") item.taskController = root.controller.section
+                else if (root.activeTask === "explode") {
+                    item.taskController = root.controller.explode
+                    item.documentController = root.controller
+                    item.viewport = Qt.binding(function() { return viewportLoader.item })
+                    item.autoExplodeRequested.connect(function(scopeId, factor) {
+                        if (viewportLoader.item) viewportLoader.item.animateAutoExplode(scopeId, factor)
+                    })
+                    item.resetAllRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
+                    })
+                    item.exportRequested.connect(root.chooseExplodedExport)
+                } else {
+                    item.taskController = root.controller.capture
+                    item.captureRequested.connect(function() { captureDialog.open() })
+                    item.captureToClipboardRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.captureToClipboard()
+                    })
+                }
+                item.closeRequested.connect(function() {
                     root.taskPanelVisible = false
                 })
-                item.normalViewRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.alignToSection()
-                })
-                item.oppositeViewRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.alignToSection(true)
-                })
-                item.borderColorRequested.connect(function(currentColor) {
-                    sectionBorderColorDialog.selectedColor = currentColor
-                    sectionBorderColorDialog.open()
-                })
+                if (root.activeTask === "section") {
+                    item.disableRequested.connect(function() {
+                        root.controller.section.enabled = false
+                        root.activeTask = ""
+                        root.taskPanelVisible = false
+                    })
+                    item.normalViewRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.alignToSection()
+                    })
+                    item.oppositeViewRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.alignToSection(true)
+                    })
+                    item.borderColorRequested.connect(function(currentColor) {
+                        sectionBorderColorDialog.selectedColor = currentColor
+                        sectionBorderColorDialog.open()
+                    })
+                }
             }
         }
     }

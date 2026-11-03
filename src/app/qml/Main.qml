@@ -413,6 +413,22 @@ ApplicationWindow {
             title: qsTr("Help")
             Inspect.ThemedMenuItem {
                 theme: appTheme
+                text: qsTr("Check for Updates…")
+                enabled: Updates.supported && Updates.state !== Updates.Checking
+                         && Updates.state !== Updates.Downloading && Updates.state !== Updates.Installing
+                onTriggered: Updates.checkForUpdates(true)
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
+                text: qsTr("Include Beta Versions")
+                checkable: true
+                checked: Updates.includePrereleases
+                enabled: Updates.supported
+                onTriggered: Updates.includePrereleases = checked
+            }
+            Inspect.ThemedMenuSeparator { theme: appTheme }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("About Loupe")
                 onTriggered: aboutLoupe.open()
             }
@@ -479,6 +495,99 @@ ApplicationWindow {
             }
         }
     }
+
+        // A newer Loupe (#3): offered under the toolbar, downloaded with progress, and put in
+        // place of this one on restart. Quiet when there is nothing to say.
+        Rectangle {
+            id: updateBar
+            objectName: "updateBar"
+            Layout.fillWidth: true
+            readonly property int state: Updates.state
+            readonly property bool showing: !Updates.dismissed
+                && (state === Updates.Available || state === Updates.Downloading || state === Updates.Ready
+                    || state === Updates.Installing || state === Updates.Failed
+                    || ((state === Updates.UpToDate || state === Updates.Checking) && updateBarNotice.running))
+            visible: showing
+            implicitHeight: visible ? updateRow.implicitHeight + appTheme.spacing2 * 2 : 0
+            color: appTheme.accentTint
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: appTheme.border
+            }
+            // "Up to date" after a check from the Help menu is shown for a moment only.
+            Timer { id: updateBarNotice; interval: 6000 }
+            Connections {
+                target: Updates
+                function onChanged() {
+                    if (Updates.state === Updates.Checking || Updates.state === Updates.UpToDate) updateBarNotice.restart()
+                }
+                function onQuitRequested() { Qt.quit() }
+            }
+            RowLayout {
+                id: updateRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: appTheme.spacing4
+                anchors.rightMargin: appTheme.spacing4
+                spacing: appTheme.spacing3
+                Label {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    color: updateBar.state === Updates.Failed ? appTheme.error : appTheme.foreground
+                    text: updateBar.state === Updates.Available
+                          ? qsTr("Loupe %1 is available (you have %2).").arg(Updates.availableVersion).arg(Updates.currentVersion)
+                          : updateBar.state === Updates.Downloading
+                          ? qsTr("Downloading Loupe %1…  %2 of %3 MB").arg(Updates.availableVersion)
+                                .arg((Updates.bytesReceived / 1048576).toFixed(1)).arg((Updates.bytesTotal / 1048576).toFixed(1))
+                          : Updates.message
+                }
+                Inspect.ThemedProgressBar {
+                    theme: appTheme
+                    Layout.preferredWidth: 220
+                    visible: updateBar.state === Updates.Downloading
+                    from: 0
+                    to: 1
+                    value: Updates.progress
+                }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    visible: Updates.releaseUrl.length > 0 && (updateBar.state === Updates.Available || updateBar.state === Updates.Failed)
+                    text: qsTr("What's New")
+                    onClicked: Qt.openUrlExternally(Updates.releaseUrl)
+                }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    visible: updateBar.state === Updates.Available
+                    primary: true
+                    text: qsTr("Download")
+                    onClicked: Updates.download()
+                }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    visible: updateBar.state === Updates.Ready
+                    primary: true
+                    text: qsTr("Restart to Update")
+                    onClicked: Updates.installAndRestart()
+                }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    visible: updateBar.state === Updates.Downloading
+                    text: qsTr("Cancel")
+                    onClicked: Updates.cancel()
+                }
+                Inspect.ThemedButton {
+                    theme: appTheme
+                    visible: updateBar.state === Updates.Available || updateBar.state === Updates.Ready
+                             || updateBar.state === Updates.Failed
+                    text: qsTr("Later")
+                    onClicked: Updates.dismiss()
+                }
+            }
+        }
 
         // Document tabs: shown once a file is open, or when there is more than one tab.
         Rectangle {

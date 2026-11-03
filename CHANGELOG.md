@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.1.5-beta.7
+
+- **Auto-explode takes stacked parts apart**: parts that share a centre, such as
+  layered panels, tapes and liners, used to move together and stay stacked. Siblings
+  that overlap are now also pushed apart along the axis they overlap least, which for
+  layers is the stacking direction, in order.
+- **Exploded view, simpler**: an **Assembled / Exploded** switch compares the two
+  states in one click and keeps the layout. The first Exploded spreads the parts.
+  - A **Spread** slider sets how far apart the parts go.
+  - Pictures explain the handles.
+  - Exact offsets, move-by, snapping and the new pivot sit under **Advanced**.
+  - Measuring works whenever the view shows Assembled.
+- **Pick a pivot**: under Advanced, click a point on a part and the handle moves there,
+  so parts move and turn about it, for example a hinge. The pivot stays on the part as it
+  moves. Optionally the handle lines up with the face clicked.
+- **Several parts move together**: Shift-click or Ctrl/⌘-click parts, then drag; the
+  panel says how many are selected.
+- **Tool panels are windows**: Measure, Section, Capture and Exploded view open in a
+  small window.
+  - Drag it by its title bar anywhere in the workspace; it never goes off screen.
+  - Minimise it to its title bar with the – button or a double-click.
+  - It scrolls when the workspace is too short for it.
+- **Section: view normal looks at the cut**: "View normal to section" now looks from the
+  removed side, at the cut face. "View opposite side" keeps the other half and looks at
+  its cut. Both used to look at the uncut outside.
+- **Narrower side panels in Export and Drawing**: the part list now goes down to 180 px
+  and the settings and preview panel to 260 px, the same as in Inspect.
+- **Updates from GitHub**: each launch, Loupe checks for a newer release.
+  - When there is one, a bar under the toolbar offers it, downloads it with a progress
+    bar, and **Restart to Update** puts it in place of this copy and opens it.
+  - Settings are kept, and the downloaded app is not quarantined, so macOS does not ask
+    again whether to open it.
+  - Help > Check for Updates… checks on demand, and Help > Include Beta Versions chooses
+    whether betas are offered (on by default when running a beta).
+  - The new version is started once with its self-check before anything is replaced,
+    and a failed copy puts the old version back.
+- **Interaction guide with real keys**: keys are drawn as key caps (⌘ ⇧ ⌥ on a Mac), and
+  mouse buttons and trackpad gestures as pictures. There is one column per section, so
+  nothing is cut off, and a new Exploded view section.
+
 ## v0.1.5-beta.6
 
 - **Exploded view: move freely** (#17): drag the ball in the middle of the handle to move

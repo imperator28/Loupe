@@ -2,6 +2,7 @@
 #include "app/DocumentTabs.h"
 #include "app/platform/FileAssociation.h"
 #include "app/platform/FileOpenRouter.h"
+#include "app/platform/UpdateController.h"
 #include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
@@ -60,6 +61,9 @@ int main(int argc, char* argv[])
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
     qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
+    // One per engine (the app has one). Checks GitHub for a newer release at launch (#3).
+    qmlRegisterSingletonType<loupe::app::platform::UpdateController>("Loupe.App", 1, 0, "Updates",
+        [](QQmlEngine*, QJSEngine*) -> QObject* { return new loupe::app::platform::UpdateController; });
 
     qmlRegisterType<loupe::app::platform::FileAssociation>("Loupe.App", 1, 0, "FileAssociation");
     loupe::app::platform::WindowManager windowManager;
@@ -74,6 +78,8 @@ int main(int argc, char* argv[])
     loupe::app::platform::FileOpenRouter fileOpenRouter;
     if (!selfCheck) fileOpenRouter.listenForOtherInstances();
 
+    // Packaged builds check for updates each launch; LOUPE_NO_UPDATE_CHECK turns it off.
+    loupe::app::platform::UpdateController::setAutomaticChecks(!selfCheck && !qEnvironmentVariableIsSet("LOUPE_NO_UPDATE_CHECK"));
     QQmlApplicationEngine engine;
     engine.loadFromModule("Loupe.App", "Main");
     if (engine.rootObjects().isEmpty()) {

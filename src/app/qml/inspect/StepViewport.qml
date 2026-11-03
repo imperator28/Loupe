@@ -180,15 +180,40 @@ Item {
         const bounds = explode.displayedBounds(handleNodeIds)
         return bounds.valid ? bounds : null
     }
-    readonly property vector3d handleCentre: handleBounds
+    // Where the handle sits and turns about: the selection's centre, or a point the user
+    // picked on a part (#17), which goes along with that part as it moves.
+    property var handlePivot: null
+    // Turn the handle to the face the pivot was picked on, so its arrows run along and off
+    // that face rather than along the world's axes.
+    property bool handleAlignToFace: false
+    // The next click on a part picks the pivot.
+    property bool pickingPivot: false
+    readonly property vector3d handlePivotPoint: {
+        const revision = explode ? explode.revision : -1
+        const node = handlePivot && revision >= 0 ? partNodeByNode[handlePivot.nodeId] : null
+        return node ? node.mapPositionToScene(handlePivot.local) : Qt.vector3d(0, 0, 0)
+    }
+    readonly property vector3d handleCentre: handlePivot && partNodeByNode[handlePivot.nodeId]
+            ? handlePivotPoint
+            : handleBounds
             ? Qt.vector3d((handleBounds.minimum.x + handleBounds.maximum.x) * 0.5,
                           (handleBounds.minimum.y + handleBounds.maximum.y) * 0.5,
                           (handleBounds.minimum.z + handleBounds.maximum.z) * 0.5)
             : Qt.vector3d(0, 0, 0)
+    // The handle's orientation: the world's, or the picked face's.
+    readonly property quaternion handleFrame: {
+        const revision = explode ? explode.revision : -1
+        const node = handlePivot && handleAlignToFace && handlePivot.normal && revision >= 0
+                     ? partNodeByNode[handlePivot.nodeId] : null
+        if (!node || !explode) return Qt.quaternion(1, 0, 0, 0)
+        return explode.frameForNormal(node.mapDirectionToScene(handlePivot.normal))
+    }
     readonly property real handlePixels: 96
     readonly property real handleLength: worldPerPixelAt(handleCentre) * handlePixels
+    // Hidden while the view eases to (or shows) the assembly: a move is made to the layout.
     readonly property bool handlesShown: explodedLayoutEnabled && explodeToolActive && explode !== null
-            && !presentationOnly && !captureUiHidden && handleBounds !== null
+            && !presentationOnly && !captureUiHidden && handleBounds !== null && explode.blend > 0.999
+            && !pickingPivot
     // The handle under the pointer, and the drag in progress: {kind, axis, ...}.
     property var handleHover: null
     property var handleDrag: null
@@ -212,14 +237,71 @@ Item {
     }
 
     function handleAxis(axis) {
-        return axis === 0 ? Qt.vector3d(1, 0, 0) : axis === 1 ? Qt.vector3d(0, 1, 0) : Qt.vector3d(0, 0, 1)
+        const local = axis === 0 ? Qt.vector3d(1, 0, 0) : axis === 1 ? Qt.vector3d(0, 1, 0) : Qt.vector3d(0, 0, 1)
+        return handleFrame.times(local)
     }
 
     // The two directions spanning the plane a ring lies in.
     function handleRingBasis(axis) {
-        return axis === 0 ? [Qt.vector3d(0, 1, 0), Qt.vector3d(0, 0, 1)]
-             : axis === 1 ? [Qt.vector3d(0, 0, 1), Qt.vector3d(1, 0, 0)]
-                          : [Qt.vector3d(1, 0, 0), Qt.vector3d(0, 1, 0)]
+        return [handleAxis((axis + 1) % 3), handleAxis((axis + 2) % 3)]
+    }
+
+    // Start picking the pivot: the next click on a part puts the handle there.
+    function beginPivotPick() {
+        if (!explodedLayoutEnabled) return
+        pickingPivot = true
+    }
+
+    function cancelPivotPick() {
+        pickingPivot = false
+    }
+
+    function clearPivot() {
+        handlePivot = null
+        pickingPivot = false
+    }
+
+    // The point (and face) under (x, y) as the pivot, in the part's own frame so it stays on
+    // the part wherever the part is moved. False when the click missed every part.
+    function pickPivotAt(x, y) {
+        const hit = view.pick(x, y)
+        if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return false
+        const model = hit.objectHit
+        const normal = hit.sceneNormal ? model.mapDirectionFromScene(hit.sceneNormal) : null
+        handlePivot = { nodeId: model.nodeId, local: model.mapPositionFromScene(hit.scenePosition),
+                        normal: normal && normal.length() > 0 ? normal.normalized() : null }
+        pickingPivot = false
+        return true
+    }
+
+    // The Assembled / Exploded switch: ease the view to the assembly, or back to the layout,
+    // keeping the layout either way.
+    function showAssembled() {
+        if (!explode || !explode.exploded) return
+        explodeResetAnimation.stop()
+        layoutViewAnimation.to = 0
+        layoutViewAnimation.restart()
+    }
+
+    function showExploded() {
+        if (!explode) return
+        explodeResetAnimation.stop()
+        layoutViewAnimation.to = 1
+        layoutViewAnimation.restart()
+    }
+
+    NumberAnimation {
+        id: layoutViewAnimation
+        target: root.explode
+        property: "blend"
+        duration: root.theme ? root.theme.durSpatial * 2 : 0
+        easing.type: Easing.InOutCubic
+    }
+
+    Connections {
+        target: root.controller
+        // The pivot belongs to the parts it was picked for.
+        function onSelectionChanged() { if (root.handlePivot) root.handlePivot = null }
     }
 
     function screenPoint(scenePoint) {
@@ -368,6 +450,7 @@ Item {
     function animateExplodeReset() {
         if (!explode || !explode.exploded) return
         autoExplodeAnimation.stop()
+        layoutViewAnimation.stop()
         explodeResetAnimation.restart()
     }
 
@@ -375,6 +458,7 @@ Item {
     function animateAutoExplode(scopeId, factor) {
         if (!explode) return
         explodeResetAnimation.stop()
+        layoutViewAnimation.stop()
         autoExplodeAnimation.stop()
         explode.beginAutoExplode(scopeId)
         if (!explode.interacting) return
@@ -403,7 +487,6 @@ Item {
         id: explodeResetAnimation
         target: root.explode
         property: "blend"
-        from: 1
         to: 0
         duration: root.theme ? root.theme.durSpatial * 2 : 0
         easing.type: Easing.InOutCubic
@@ -435,6 +518,9 @@ Item {
 
     Connections {
         target: root.explode
+        function onInteractionChanged() {
+            if (root.explode.interacting) layoutViewAnimation.stop()
+        }
         function onPartsMoved(partIds) {
             if (!root.explodedLayoutEnabled) return
             root.placeParts(partIds)
@@ -623,11 +709,14 @@ Item {
         else fitCamera()
     }
 
+    // Look straight at the cut: from the side the section removes, so the cut face is what
+    // faces the camera. Opposite: keep the other half instead and look at its cut. Looking
+    // from the kept side, as this used to, showed the part's untouched outside.
     function alignToSection(oppositeSide) {
         if (!controller) return
         if (oppositeSide) controller.section.flipped = !controller.section.flipped
-        const normal = effectiveSectionNormal
-        navigation.alignToNormal(oppositeSide ? Qt.vector3d(-normal.x, -normal.y, -normal.z) : normal)
+        const removed = sceneSectionManipulator.removedSideNormal(effectiveSectionNormal, controller.section.flipped)
+        navigation.alignToNormal(removed)
         Qt.callLater(fitVisibleGeometry)
     }
 
@@ -1733,6 +1822,7 @@ Item {
             id: explodeHandle
             objectName: "explodeHandle"
             position: root.handleCentre
+            rotation: root.handleFrame
             length: root.handleLength
             xColor: root.theme && root.theme.axisX !== undefined ? root.theme.axisX : "transparent"
             yColor: root.theme && root.theme.axisY !== undefined ? root.theme.axisY : "transparent"
@@ -1741,6 +1831,27 @@ Item {
             centreColor: root.theme && root.theme.foreground !== undefined ? root.theme.foreground : "transparent"
             activeKind: root.handleDrag ? root.handleDrag.kind : root.handleHover ? root.handleHover.kind : ""
             activeAxis: root.handleDrag ? root.handleDrag.axis : root.handleHover ? root.handleHover.axis : -1
+        }
+    }
+
+    Rectangle {
+        id: pivotPickHint
+        objectName: "pivotPickHint"
+        visible: root.pickingPivot && !root.captureUiHidden
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 16
+        z: 6
+        width: pivotPickLabel.implicitWidth + 24
+        height: pivotPickLabel.implicitHeight + 14
+        radius: root.theme && root.theme.radius2 !== undefined ? root.theme.radius2 : 6
+        color: root.theme ? root.theme.surfaceRaised : "transparent"
+        border.color: root.theme ? root.theme.accent : "transparent"
+        Label {
+            id: pivotPickLabel
+            anchors.centerIn: parent
+            text: qsTr("Click a point on a part to move the handle there  ·  Esc to cancel")
+            color: root.theme ? root.theme.foreground : "transparent"
         }
     }
 
@@ -1825,7 +1936,8 @@ Item {
         property real rollApplied: 0
         hoverEnabled: true
 
-        cursorShape: root.handleDrag || root.handleHover ? Qt.PointingHandCursor : Qt.ArrowCursor
+        cursorShape: root.pickingPivot ? Qt.CrossCursor
+                   : root.handleDrag || root.handleHover ? Qt.PointingHandCursor : Qt.ArrowCursor
 
         onPressed: function(mouse) {
             root.forceActiveFocus()
@@ -1913,6 +2025,13 @@ Item {
             if (root.handleDrag) {
                 root.endHandleDrag(true)
                 pressButton = Qt.NoButton
+                return
+            }
+            // Picking the pivot: a click puts the handle on the part there, selecting nothing.
+            if (root.pickingPivot && !dragging && pressButton === Qt.LeftButton) {
+                root.pickPivotAt(mouse.x, mouse.y)
+                pressButton = Qt.NoButton
+                navigation.clearPendingOrbitPivot()
                 return
             }
             if (!dragging && pressButton === Qt.LeftButton && root.faceFrameSelectionEnabled) {
@@ -2371,6 +2490,11 @@ Item {
         onActivated: root.endHandleDrag(false)
     }
     Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && !root.presentationOnly && root.pickingPivot && root.handleDrag === null
+        onActivated: root.cancelPivotPick()
+    }
+    Shortcut {
         sequences: [StandardKey.Undo]
         enabled: root.visible && root.explodeToolActive && root.explode !== null && root.explode.canUndo
                  && !root.isTextEditFocused()
@@ -2384,7 +2508,8 @@ Item {
     }
     Shortcut {
         sequence: "Esc"
-        enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null)
+        enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null
+                                  && !root.pickingPivot)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")

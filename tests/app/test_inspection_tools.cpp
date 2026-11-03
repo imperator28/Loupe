@@ -37,6 +37,7 @@ private slots:
     void explodeRotationTurnsAboutTheGivenPivot();
     void explodeAutoComesApartLevelByLevel();
     void explodeAutoOnlyMovesTheChosenSubAssembly();
+    void explodeAutoTakesStackedLayersApartInOrder();
     void explodeResetUndoAndRedo();
     void explodeCancelRestoresWhereTheDragBegan();
     void explodeBlendEasesPartsHome();
@@ -445,6 +446,40 @@ void InspectionToolsTest::explodeAutoOnlyMovesTheChosenSubAssembly()
     QCOMPARE(explode.autoExplodeScope({QStringLiteral("left"), QStringLiteral("far")}), QString{});
 }
 
+void InspectionToolsTest::explodeAutoTakesStackedLayersApartInOrder()
+{
+    // Three 100 x 100 plates stacked 2 mm thick, and two identical liners: their centres
+    // all but coincide, so moving away from the centre alone left them where they were.
+    loupe::app::tools::ExplodeController explode;
+    explode.setHierarchy({
+        {QStringLiteral("stack"), QString{}},
+        {QStringLiteral("bottom"), QStringLiteral("stack")},
+        {QStringLiteral("middle"), QStringLiteral("stack")},
+        {QStringLiteral("top"), QStringLiteral("stack")},
+        {QStringLiteral("linerA"), QStringLiteral("stack")},
+        {QStringLiteral("linerB"), QStringLiteral("stack")},
+    });
+    explode.includePartBounds(QStringLiteral("bottom"), {-50, -50, 0}, {50, 50, 2});
+    explode.includePartBounds(QStringLiteral("middle"), {-50, -50, 2}, {50, 50, 4});
+    explode.includePartBounds(QStringLiteral("top"), {-50, -50, 4}, {50, 50, 6});
+    explode.includePartBounds(QStringLiteral("linerA"), {200, -10, 0}, {240, 10, 1});
+    explode.includePartBounds(QStringLiteral("linerB"), {200, -10, 0}, {240, 10, 1});
+    explode.autoExplode(QStringLiteral("stack"), 1.0);
+
+    const auto z = [&](const char* part) { return displayedCentre(explode, QString::fromLatin1(part)).z(); };
+    // Apart along the stacking direction, in the order they were stacked, by more than their
+    // own thickness.
+    QVERIFY2(z("bottom") < z("middle") && z("middle") < z("top"),
+             qPrintable(QStringLiteral("%1 %2 %3").arg(z("bottom")).arg(z("middle")).arg(z("top"))));
+    QVERIFY(z("middle") - z("bottom") > 4.0F);
+    QVERIFY(z("top") - z("middle") > 4.0F);
+    // Still level across the plate: a stack comes apart along its thin axis only.
+    QVERIFY(std::abs(displayedCentre(explode, QStringLiteral("top")).x()
+                     - displayedCentre(explode, QStringLiteral("bottom")).x()) < 1e-3F);
+    // The two identical liners separate too.
+    QVERIFY(std::abs(z("linerA") - z("linerB")) > 4.0F);
+}
+
 void InspectionToolsTest::explodeResetUndoAndRedo()
 {
     loupe::app::tools::ExplodeController explode;
@@ -507,8 +542,12 @@ void InspectionToolsTest::explodeBlendEasesPartsHome()
     QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 20, 0}));
     explode.setBlend(0.0);
     QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 0}));
-    // The placement itself is kept until reset.
+    // The placement itself is kept until reset: this is the assembled view of a layout.
     QVERIFY(explode.exploded());
+    // An edit is made to the layout, so it comes back into view.
+    explode.translateBy({QStringLiteral("far")}, {0, 0, 1});
+    QCOMPARE(explode.blend(), 1.0);
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 40, 1}));
     explode.resetAll();
     QCOMPARE(explode.blend(), 1.0);
 }
@@ -551,6 +590,16 @@ void InspectionToolsTest::explodeTypedOffsetsAndAnglesAndSnapping()
     explode.undo();
     QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 4, 5}));
     QVERIFY(!explode.isMoved(QStringLiteral("far")));
+
+    // A handle on a picked face: its Z is the face's normal, X and Y square to it.
+    for (const auto& normal : {QVector3D(0, 0, 1), QVector3D(1, 1, 0).normalized(), QVector3D(0, 0.2F, -1).normalized()}) {
+        const auto frame = loupe::app::tools::ExplodeController::frameForNormal(normal);
+        const auto x = frame.rotatedVector({1, 0, 0});
+        const auto y = frame.rotatedVector({0, 1, 0});
+        QVERIFY(closeTo(frame.rotatedVector({0, 0, 1}), normal));
+        QVERIFY(std::abs(QVector3D::dotProduct(x, normal)) < 1e-5F);
+        QVERIFY(closeTo(QVector3D::crossProduct(x, y), normal));
+    }
 
     QVERIFY(explode.snapEnabled());
     explode.setTranslationStep(10);

@@ -309,6 +309,17 @@ QString ExplodeController::autoExplodeScope(const QStringList& selectedNodeIds) 
     return childrenByNode_.value(node).isEmpty() ? parentOf(node) : node;
 }
 
+QQuaternion ExplodeController::frameForNormal(const QVector3D& normal)
+{
+    if (normal.lengthSquared() < 1e-12F) return {};
+    const auto z = normal.normalized();
+    // Lie X in the world's XY plane unless the normal is nearly vertical, then use world X.
+    const QVector3D reference = std::abs(z.z()) < 0.9F ? QVector3D(0, 0, 1) : QVector3D(0, 1, 0);
+    const auto x = QVector3D::crossProduct(reference, z).normalized();
+    const auto y = QVector3D::crossProduct(z, x);
+    return QQuaternion::fromAxes(x, y, z).normalized();
+}
+
 double ExplodeController::snapTranslation(const double millimetres, const bool free) const
 {
     if (free || !snapEnabled_ || translationStep_ <= 0.0) return millimetres;
@@ -379,6 +390,7 @@ void ExplodeController::applyEdit(const State& before, const QStringList& change
 
 void ExplodeController::beginInteraction(const QStringList& nodeIds)
 {
+    showLayoutForEditing();
     if (interacting()) commitInteraction();
     QStringList nodes;
     for (const auto& nodeId : nodeIds) {
@@ -445,13 +457,74 @@ void ExplodeController::cancelInteraction()
 
 void ExplodeController::beginAutoExplode(const QString& scopeId)
 {
+    showLayoutForEditing();
     if (interacting()) commitInteraction();
     if (!scopeId.isEmpty() && !hasNode(scopeId)) return;
     interactionStart_ = state_;
     autoScope_ = scopeId;
     autoStartFactor_ = autoFactor(scopeId);
+    autoVectors_ = autoExplodeVectors(scopeId);
     interaction_ = Interaction::AutoExplode;
     emit interactionChanged();
+}
+
+QHash<QString, QVector3D> ExplodeController::autoExplodeVectors(const QString& scopeId) const
+{
+    // Where each node goes at factor 1, relative to its parent: away from the parent's
+    // centre by its distance from it, and, for siblings whose boxes overlap, apart from each
+    // other along the axis they overlap least. The first alone leaves parts that share a
+    // centre -- layers stacked on one another, a part inside another -- moving as one; the
+    // second is what takes a stack apart, in order, along its stacking direction.
+    QHash<QString, QVector3D> vectors;
+    QStringList parents{scopeId};
+    parents.append(descendantsOf(scopeId));
+    for (const auto& parent : parents) {
+        const auto parentBounds = nodeBounds(parent);
+        if (!parentBounds.valid) continue;
+        QStringList children;
+        QVector<Bounds> boxes;
+        for (const auto& child : childrenByNode_.value(parent)) {
+            const auto bounds = nodeBounds(child);
+            if (!bounds.valid) continue;
+            children.append(child);
+            boxes.append(bounds);
+        }
+        if (children.isEmpty()) continue;
+        const auto diagonal = (parentBounds.maximum - parentBounds.minimum).length();
+        // A gap a little over the overlap itself, so even parts that only touch come apart.
+        const auto gap = std::max(1e-3F, diagonal * 0.04F);
+        const auto touching = diagonal * 1e-6F;
+        QVector<QVector3D> pushes(children.size());
+        for (qsizetype first = 0; first < children.size(); ++first) {
+            for (qsizetype second = first + 1; second < children.size(); ++second) {
+                const auto& a = boxes.at(first);
+                const auto& b = boxes.at(second);
+                float overlaps[3];
+                bool overlapping = true;
+                for (int axis = 0; axis < 3; ++axis) {
+                    overlaps[axis] = std::min(a.maximum[axis], b.maximum[axis]) - std::max(a.minimum[axis], b.minimum[axis]);
+                    if (overlaps[axis] < -touching) overlapping = false;
+                }
+                if (!overlapping) continue;
+                int axis = 0;
+                for (int candidate = 1; candidate < 3; ++candidate) {
+                    if (overlaps[candidate] < overlaps[axis]) axis = candidate;
+                }
+                const auto apart = b.centre()[axis] - a.centre()[axis];
+                // Centres level along that axis: the tree's order decides which goes first.
+                const auto sign = std::abs(apart) > touching ? (apart > 0 ? 1.0F : -1.0F) : 1.0F;
+                QVector3D push;
+                push[axis] = sign * (std::max(0.0F, overlaps[axis]) + gap) * 0.5F;
+                pushes[first] -= push;
+                pushes[second] += push;
+            }
+        }
+        for (qsizetype index = 0; index < children.size(); ++index) {
+            const auto vector = boxes.at(index).centre() - parentBounds.centre() + pushes.at(index);
+            if (vector.lengthSquared() > 1e-12F) vectors.insert(children.at(index), vector);
+        }
+    }
+    return vectors;
 }
 
 void ExplodeController::previewAutoExplode(const double factor)
@@ -461,14 +534,9 @@ void ExplodeController::previewAutoExplode(const double factor)
     const auto delta = static_cast<float>(target - autoStartFactor_);
     state_.transforms = interactionStart_.transforms;
     effectiveCache_.clear();
-    for (const auto& node : descendantsOf(autoScope_)) {
-        const auto bounds = nodeBounds(node);
-        const auto parentBounds = nodeBounds(parentOf(node));
-        if (!bounds.valid || !parentBounds.valid) continue;
-        const auto direction = bounds.centre() - parentBounds.centre();
-        if (direction.lengthSquared() < 1e-12F) continue;
+    for (auto it = autoVectors_.cbegin(); it != autoVectors_.cend(); ++it) {
         // In the parent's frame, so a turned sub-assembly still comes apart along its own axes.
-        setOwnTransform(node, translation(direction * delta) * state_.transforms.value(node));
+        setOwnTransform(it.key(), translation(it.value() * delta) * state_.transforms.value(it.key()));
     }
     if (target < 1e-6) state_.autoFactors.remove(autoScope_);
     else state_.autoFactors.insert(autoScope_, target);
@@ -493,6 +561,7 @@ void ExplodeController::translateBy(const QStringList& nodeIds, const QVector3D&
 
 void ExplodeController::setOffset(const QString& nodeId, const QVector3D& offset)
 {
+    showLayoutForEditing();
     if (!hasNode(nodeId)) return;
     if (interacting()) commitInteraction();
     const auto before = state_;
@@ -503,6 +572,7 @@ void ExplodeController::setOffset(const QString& nodeId, const QVector3D& offset
 
 void ExplodeController::setAngles(const QString& nodeId, const QVector3D& degrees)
 {
+    showLayoutForEditing();
     if (!hasNode(nodeId)) return;
     if (interacting()) commitInteraction();
     const auto before = state_;
@@ -514,6 +584,7 @@ void ExplodeController::setAngles(const QString& nodeId, const QVector3D& degree
 
 void ExplodeController::resetNode(const QString& nodeId)
 {
+    showLayoutForEditing();
     if (!hasNode(nodeId)) return;
     if (interacting()) commitInteraction();
     const auto before = state_;
@@ -558,6 +629,13 @@ void ExplodeController::redo()
     blend_ = 1.0;
     announceStateChange(before);
     emit historyChanged();
+}
+
+void ExplodeController::showLayoutForEditing()
+{
+    // An edit is made to the exploded layout, so it is what has to be on screen: a view eased
+    // back to the assembly comes out again first.
+    if (blend_ < 1.0) setBlend(1.0);
 }
 
 void ExplodeController::setBlend(const double blend)

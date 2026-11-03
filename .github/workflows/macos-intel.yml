@@ -81,7 +81,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
             -DVCPKG_HOST_TRIPLET="$VCPKG_TRIPLET" \
             -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
-            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build"
+            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build" \
+            -DLOUPE_RELEASE_LABEL="${{ steps.tag.outputs.value }}"
 
       - name: Save vcpkg binary cache
         if: always()

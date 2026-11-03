@@ -14,8 +14,11 @@ Rectangle {
     implicitWidth: 320
     implicitHeight: content.implicitHeight + 32
     radius: root.theme.radius4
-    color: root.theme.surfaceRaised
-    border.color: root.theme.border
+    // Inside a floating tool window, which draws the frame and the title bar with its own
+    // close and minimise controls.
+    property bool embedded: false
+    color: embedded ? "transparent" : root.theme.surfaceRaised
+    border.color: embedded ? "transparent" : root.theme.border
 
     ColumnLayout {
         id: content
@@ -25,6 +28,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
+            visible: !root.embedded
             Label { text: qsTr("Capture PNG"); font.bold: true; Layout.fillWidth: true; color: root.foreground }
             ThemedToolButton { theme: root.theme; text: "×"; Accessible.name: qsTr("Close capture"); onClicked: root.closeRequested() }
         }

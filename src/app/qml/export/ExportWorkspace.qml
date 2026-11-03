@@ -187,7 +187,7 @@ Item {
         panel: componentPicker
         gap: workspaceRow.spacing
         defaultWidth: 290
-        minimumWidth: 220
+        minimumWidth: 180
         maximumWidth: Math.min(560, root.sidePanelRoom - settingsSplitter.staticWidth)
     }
     Inspect.PanelSplitter {
@@ -200,7 +200,7 @@ Item {
         panelOnLeft: false
         gap: workspaceRow.spacing
         defaultWidth: 360
-        minimumWidth: 300
+        minimumWidth: 260
         maximumWidth: Math.min(640, root.sidePanelRoom - pickerSplitter.effectiveWidth)
     }
 }

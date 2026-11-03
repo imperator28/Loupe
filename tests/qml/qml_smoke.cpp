@@ -5,6 +5,7 @@
 #include "app/models/AssemblyTreeModel.h"
 #include "app/models/ThemePreference.h"
 #include "app/platform/FileAssociation.h"
+#include "app/platform/UpdateController.h"
 #include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
@@ -27,6 +28,7 @@
 #include <QQmlEngine>
 #include <QJsonDocument>
 #include <QJSValue>
+#include <QQuaternion>
 #include <QVector4D>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
@@ -98,6 +100,7 @@ private slots:
     void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
     void explodedViewHandlesMoveAndTurnTheSelection();
     void explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly();
+    void floatingToolWindowDragsMinimisesAndStaysInside();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
@@ -119,6 +122,9 @@ void QmlSmokeTest::initTestCase()
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
     qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
+    // One per engine (the app has one). Checks GitHub for a newer release at launch (#3).
+    qmlRegisterSingletonType<loupe::app::platform::UpdateController>("Loupe.App", 1, 0, "Updates",
+        [](QQmlEngine*, QJSEngine*) -> QObject* { return new loupe::app::platform::UpdateController; });
 }
 
 void QmlSmokeTest::mainLoads()
@@ -552,6 +558,19 @@ void QmlSmokeTest::sectionViewActivatesWithRenderedMesh()
     section->setEnabled(true);
     QTest::qWait(500);
     QVERIFY(section->enabled());
+
+    // View normal to section looks at the cut: from the side the section takes away, which
+    // is against the normal while the positive side is kept.
+    const auto normal = section->effectiveNormal();
+    QVERIFY(QMetaObject::invokeMethod(viewport, "alignToSection", Q_ARG(QVariant, false)));
+    auto direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY2((direction + normal).length() < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(direction.x()).arg(direction.y()).arg(direction.z())));
+    // The opposite side keeps the other half and looks at its cut.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "alignToSection", Q_ARG(QVariant, true)));
+    QVERIFY(section->flipped());
+    direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY((direction - normal).length() < 1e-3F);
 }
 
 void QmlSmokeTest::viewportDrawsAFacingFaceInItsPickedColour()
@@ -878,6 +897,64 @@ void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
     QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("sectionFinalizing").toBool(), 3000);
     section->setEnabled(false);
 
+    // Several parts selected move together, by the same amount.
+    explode.resetAll();
+    QVERIFY(QMetaObject::invokeMethod(viewport, "setStandardView", Q_ARG(QVariant, QVariant::fromValue(QVector3D(0, 0, 1)))));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "fitCamera"));
+    controller.selectNode(QStringLiteral("a"), false);
+    controller.selectNode(QStringLiteral("b"), true);
+    QCOMPARE(controller.selectedNodeIds().size(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+    QTest::qWait(100);
+    handles = layout();
+    const auto pairCentre = point(handles.value(QStringLiteral("centre")));
+    const auto pairTip = point(handles.value(QStringLiteral("tips")).toList().at(1)); // Y arrow
+    const auto pairGrab = (pairCentre + (pairTip - pairCentre) * 0.6).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, {}, pairGrab);
+    for (int step = 1; step <= 8; ++step) QTest::mouseMove(&window, pairGrab + QPoint(0, -60) * step / 8, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, pairGrab + QPoint(0, -60));
+    const auto pairA = explode.offsetOf(QStringLiteral("a"));
+    QVERIFY2(pairA.y() > 4.0F, qPrintable(QString::number(pairA.y())));
+    QVERIFY((explode.offsetOf(QStringLiteral("b")) - pairA).length() < 1e-3F);
+
+    // A picked pivot: the handle goes to the point clicked on the part, and stays on it as
+    // the part moves.
+    controller.selectNode(QStringLiteral("b"), false);
+    QVERIFY(QMetaObject::invokeMethod(viewport, "beginPivotPick"));
+    QVERIFY(viewport->property("pickingPivot").toBool());
+    QVERIFY(!viewport->property("handlesShown").toBool());
+    QVariant bCentre;
+    QMetaObject::invokeMethod(viewport, "screenPoint", Q_RETURN_ARG(QVariant, bCentre),
+                              Q_ARG(QVariant, QVariant::fromValue(QVector3D(45.0F, 5.0F, 0.0F) + explode.offsetOf(QStringLiteral("b")))));
+    const auto pivotClick = point(bCentre).toPoint();
+    // A pick sees the scene as last drawn: let the moved parts be drawn where they now are.
+    QTest::qWait(150);
+    QTest::mouseClick(&window, Qt::LeftButton, {}, pivotClick);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("pickingPivot").toBool(), 3000);
+    QVERIFY(!viewport->property("handlePivot").isNull());
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("b")}); // the click selected nothing
+    const auto pivotAt = viewport->property("handleCentre").value<QVector3D>();
+    QVERIFY2((pivotAt - (QVector3D(45, 5, 0) + explode.offsetOf(QStringLiteral("b")))).length() < 0.5F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(pivotAt.x()).arg(pivotAt.y()).arg(pivotAt.z())));
+    explode.translateBy({QStringLiteral("b")}, {0, 0, 7});
+    QTRY_VERIFY_WITH_TIMEOUT((viewport->property("handleCentre").value<QVector3D>() - (pivotAt + QVector3D(0, 0, 7))).length() < 1e-2F, 3000);
+    // Lined up with the picked face: the plate faces +Z, so the handle's Z is the face normal.
+    viewport->setProperty("handleAlignToFace", true);
+    const auto frame = viewport->property("handleFrame").value<QQuaternion>();
+    QVERIFY((frame.rotatedVector({0, 0, 1}) - QVector3D(0, 0, 1)).length() < 1e-3F);
+    QVERIFY(QMetaObject::invokeMethod(viewport, "clearPivot"));
+    QVERIFY(viewport->property("handlePivot").isNull());
+
+    // Assembled and Exploded: the view eases between the assembly and the layout, keeping it.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "showAssembled"));
+    QTRY_VERIFY_WITH_TIMEOUT(explode.blend() < 1e-3, 3000);
+    QVERIFY(explode.exploded());
+    QTRY_VERIFY_WITH_TIMEOUT(partNode(QStringLiteral("b"))->property("position").value<QVector3D>().length() < 1e-3F, 3000);
+    QVERIFY(!viewport->property("handlesShown").toBool());
+    QVERIFY(QMetaObject::invokeMethod(viewport, "showExploded"));
+    QTRY_VERIFY_WITH_TIMEOUT(explode.blend() > 0.999, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+
     // Reset brings everything home.
     QVERIFY(QMetaObject::invokeMethod(viewport, "animateExplodeReset"));
     QTRY_VERIFY_WITH_TIMEOUT(!explode.exploded(), 3000);
@@ -910,7 +987,7 @@ void QmlSmokeTest::explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly()
     QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
     auto* scopeLabel = panel->findChild<QObject*>(QStringLiteral("explodeScopeLabel"));
     QVERIFY(scopeLabel != nullptr);
-    QCOMPARE(scopeLabel->property("text").toString(), QStringLiteral("Whole model"));
+    QVERIFY(scopeLabel->property("text").toString().startsWith(QStringLiteral("Whole model")));
 
     // A part selected: auto-explode takes apart the sub-assembly it is in.
     controller.selectNode(QStringLiteral("left"), false);
@@ -969,6 +1046,75 @@ void QmlSmokeTest::explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly()
     QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.obj"))), QString{});
     // Nothing to export from an empty document.
     QVERIFY(!controller.exportExplodedAssembly(QUrl::fromLocalFile(QStringLiteral("/x/a.step")), {0, 0, 1}, {0, 1, 0}));
+}
+
+void QmlSmokeTest::floatingToolWindowDragsMinimisesAndStaysInside()
+{
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(R"(
+import QtQuick
+Item {
+    width: 800; height: 600
+    property alias window: tool
+    FloatingToolWindow {
+        id: tool
+        objectName: "tool"
+        title: "Section"
+        shown: true
+        defaultRightMargin: 40
+        defaultBottomMargin: 40
+        Rectangle { implicitWidth: 300; implicitHeight: 400 }
+    }
+}
+)"), QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/harness.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* harness = qobject_cast<QQuickItem*>(object.get());
+    auto* tool = harness->property("window").value<QQuickItem*>();
+    tool->setProperty("theme", QVariant::fromValue(theme.get()));
+    QQuickWindow window;
+    window.resize(800, 600);
+    harness->setParentItem(window.contentItem());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // Opens at its corner, sized to the panel under a title bar.
+    const auto titleHeight = tool->property("titleHeight").toDouble();
+    QCOMPARE(tool->width(), 300.0);
+    QCOMPARE(tool->height(), 400.0 + titleHeight);
+    QCOMPARE(tool->x(), 800.0 - 40 - 300);
+    QCOMPARE(tool->y(), 600.0 - 40 - tool->height());
+
+    // Dragged by its title bar.
+    const QPoint grab(qRound(tool->x() + 150), qRound(tool->y() + titleHeight / 2));
+    QTest::mousePress(&window, Qt::LeftButton, {}, grab);
+    for (int step = 1; step <= 6; ++step) QTest::mouseMove(&window, grab + QPoint(-200, -60) * step / 6, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, grab + QPoint(-200, -60));
+    QCOMPARE(tool->x(), 800.0 - 40 - 300 - 200);
+    QCOMPARE(tool->y(), 600.0 - 40 - (400.0 + titleHeight) - 60);
+
+    // Never off the workspace, however far it is dragged.
+    const QPoint again(qRound(tool->x() + 150), qRound(tool->y() + titleHeight / 2));
+    QTest::mousePress(&window, Qt::LeftButton, {}, again);
+    for (int step = 1; step <= 6; ++step) QTest::mouseMove(&window, again + QPoint(-2000, -2000) * step / 6, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, again + QPoint(-2000, -2000));
+    QCOMPARE(tool->x(), 8.0);
+    QCOMPARE(tool->y(), 8.0);
+
+    // Minimised to its title bar, which stays where it is; a double-click restores it.
+    QVERIFY(QMetaObject::invokeMethod(tool, "toggleMinimized"));
+    QCOMPARE(tool->height(), titleHeight);
+    QCOMPARE(tool->y(), 8.0);
+    QTest::mouseDClick(&window, Qt::LeftButton, {}, QPoint(qRound(tool->x() + 150), qRound(tool->y() + titleHeight / 2)));
+    QTRY_COMPARE(tool->height(), 400.0 + titleHeight);
+
+    // A workspace too short for the panel scrolls it instead of pushing it off screen.
+    harness->setHeight(300);
+    QTRY_VERIFY(tool->height() <= 300.0 - 16);
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()
