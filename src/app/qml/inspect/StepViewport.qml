@@ -1639,6 +1639,7 @@ Item {
 
     ViewportNavigation {
         id: navigation
+        objectName: "viewportNavigation"
         cameraRig: cameraRig
         perspectiveCamera: perspectiveCamera
         orthographicCamera: orthographicCamera

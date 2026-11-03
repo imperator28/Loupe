@@ -130,17 +130,17 @@ Item {
                         font.bold: true
                         Layout.fillWidth: true
                     }
-                    ThemedToolButton {
+                    IconButton {
                         theme: root.theme
-                        text: "⊞"
+                        glyph: "expandAll"
                         Accessible.name: qsTr("Expand all")
                         enabled: assemblyTree.rows > 0
                         onClicked: assemblyTree.expandRecursively()
                         ThemedToolTip { theme: root.theme; text: qsTr("Expand all"); visible: parent.hovered }
                     }
-                    ThemedToolButton {
+                    IconButton {
                         theme: root.theme
-                        text: "⊟"
+                        glyph: "collapseAll"
                         Accessible.name: qsTr("Collapse all")
                         enabled: assemblyTree.rows > 0
                         // Keep the top level open: collapsing the root would leave one row.
@@ -184,17 +184,17 @@ Item {
                               : qsTr("%1/%2").arg(root.treeMatchIndex + 1).arg(root.treeMatches.length)
                         color: root.treeMatches.length === 0 ? root.theme.error : root.subduedForeground
                     }
-                    ThemedToolButton {
+                    IconButton {
                         theme: root.theme
                         visible: root.treeMatches.length > 1
-                        text: "▴"
+                        glyph: "chevronUp"
                         Accessible.name: qsTr("Previous match")
                         onClicked: root.stepTreeMatch(-1)
                     }
-                    ThemedToolButton {
+                    IconButton {
                         theme: root.theme
                         visible: root.treeMatches.length > 1
-                        text: "▾"
+                        glyph: "chevronDown"
                         Accessible.name: qsTr("Next match")
                         onClicked: root.stepTreeMatch(1)
                     }
@@ -287,13 +287,17 @@ Item {
                                 Layout.preferredHeight: 1
                             }
 
-                            ThemedToolButton {
+                            IconButton {
                                 id: disclosureButton
                                 theme: root.theme
+                                // A 20 px square with radius.1: 4 px clear of the 28 px row's
+                                // edges, concentric with its highlight.
                                 Layout.preferredWidth: 20
-                                Layout.preferredHeight: 24
+                                Layout.preferredHeight: 20
+                                Layout.alignment: Qt.AlignVCenter
+                                cornerRadius: root.theme.radius1
                                 visible: treeDelegate.hasChildren
-                                text: treeDelegate.expanded ? "▾" : "▸"
+                                glyph: treeDelegate.expanded ? "chevronDown" : "chevronRight"
                                 Accessible.name: treeDelegate.expanded
                                                  ? qsTr("Collapse %1").arg(treeDelegate.name)
                                                  : qsTr("Expand %1").arg(treeDelegate.name)
@@ -328,29 +332,24 @@ Item {
                             // Like the eye beside it: always shown for a transparent or partly
                             // transparent row, on hover otherwise. Not for a hidden one, which
                             // draws nothing to see through.
-                            ThemedToolButton {
+                            IconButton {
                                 id: transparencyToggle
                                 objectName: "treeTransparencyToggle"
                                 theme: root.theme
                                 visible: treeDelegate.visibilityState !== 2
-                                Layout.preferredWidth: 24
-                                Layout.preferredHeight: 24
+                                // 22 px with radius.1: 3 px clear of the row's edges.
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
                                 Layout.alignment: Qt.AlignVCenter
-                                leftPadding: 2
-                                rightPadding: 2
-                                topPadding: 2
-                                bottomPadding: 2
+                                cornerRadius: root.theme.radius1
+                                glyph: "transparent"
+                                iconColor: treeDelegate.transparencyState === 2 ? root.theme.accent : root.foreground
                                 opacity: treeDelegate.transparencyState !== 0 || treeHover.hovered || hovered ? 1 : 0
                                 enabled: opacity > 0
                                 Accessible.name: treeDelegate.transparencyState === 2
                                                  ? qsTr("Make %1 opaque").arg(treeDelegate.name)
                                                  : qsTr("Make %1 transparent").arg(treeDelegate.name)
                                 onClicked: root.controller.setNodeTransparent(treeDelegate.stableId, treeDelegate.transparencyState !== 2)
-                                contentItem: ToolIcon {
-                                    name: "transparent"
-                                    color: treeDelegate.transparencyState === 2 ? root.theme.accent : root.foreground
-                                    opacity: treeDelegate.transparencyState === 1 ? 0.55 : 1
-                                }
                                 ThemedToolTip {
                                     theme: root.theme
                                     text: treeDelegate.transparencyState === 2 ? qsTr("Transparent — click to make opaque")
@@ -361,32 +360,20 @@ Item {
                             }
 
                             // Always shown for a hidden or partly hidden row; on hover otherwise.
-                            ThemedToolButton {
+                            IconButton {
                                 id: visibilityToggle
                                 theme: root.theme
-                                // 24 px square with 2 px padding: exactly the glyph's 20 px box.
-                                // The toolbar's 8/5 px text padding left an 8x12 slot the
-                                // unscaled glyph spilled out of, down and to the right.
-                                Layout.preferredWidth: 24
-                                Layout.preferredHeight: 24
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.rightMargin: root.theme.spacing1
-                                // Each side, not `padding`: ThemedToolButton sets the four sides
-                                // itself, and those win over the shorthand.
-                                leftPadding: 2
-                                rightPadding: 2
-                                topPadding: 2
-                                bottomPadding: 2
+                                cornerRadius: root.theme.radius1
+                                glyph: treeDelegate.visibilityState === 0 ? "eye" : "hide"
                                 opacity: treeDelegate.visibilityState !== 0 || treeHover.hovered || hovered ? 1 : 0
                                 enabled: opacity > 0
                                 Accessible.name: treeDelegate.visibilityState === 2
                                                  ? qsTr("Show %1").arg(treeDelegate.name) : qsTr("Hide %1").arg(treeDelegate.name)
                                 onClicked: root.controller.setNodeHidden(treeDelegate.stableId, treeDelegate.visibilityState !== 2)
-                                contentItem: ToolIcon {
-                                    name: treeDelegate.visibilityState === 0 ? "eye" : "hide"
-                                    color: root.foreground
-                                    opacity: treeDelegate.visibilityState === 1 ? 0.55 : 1
-                                }
                                 ThemedToolTip {
                                     theme: root.theme
                                     text: treeDelegate.visibilityState === 2 ? qsTr("Hidden — click to show")

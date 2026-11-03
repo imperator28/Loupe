@@ -189,8 +189,10 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedComboBox.qml
         qml/inspect/ThemedProgressBar.qml
         qml/inspect/ThemedSegmentedControl.qml
+        qml/inspect/IconButton.qml
         qml/inspect/ThemedSlider.qml
         qml/inspect/ThemedSpinBox.qml
+        qml/inspect/UpdateIndicator.qml
         qml/inspect/ThemedSwitch.qml
         qml/inspect/ThemedRadioButton.qml
         qml/inspect/ThemedTextField.qml

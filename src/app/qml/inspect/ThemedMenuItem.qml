@@ -15,7 +15,7 @@ MenuItem {
     implicitWidth: Math.max(180, implicitContentWidth + leftPadding + rightPadding)
     // A hidden item takes no room: a Menu lays its items out in a list that otherwise keeps
     // the row, which left gaps and a menu taller than its entries.
-    implicitHeight: visible ? 28 : 0
+    implicitHeight: visible ? 26 : 0
     height: visible ? implicitHeight : 0
     leftPadding: checkable ? 34 : 12
     rightPadding: subMenu ? 28 : 12
@@ -50,12 +50,13 @@ MenuItem {
         }
     }
 
-    arrow: Text {
-        x: control.width - width - 10
+    arrow: ToolIcon {
+        x: control.width - width - 8
         y: (control.height - height) / 2
+        width: 14
+        height: 14
         visible: control.subMenu
-        text: "›"
-        font.pixelSize: 16
+        name: "chevronRight"
         color: control.highlighted ? control.highlightedTextColor : control.normalTextColor
     }
 

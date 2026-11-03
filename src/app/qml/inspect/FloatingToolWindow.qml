@@ -26,7 +26,8 @@ FocusScope {
     property real placedX: 0
     property real placedY: 0
     readonly property real margin: 8
-    readonly property real titleHeight: 34
+    // 36 px: the 28 px buttons sit 4 px clear of the bar's edges, concentric with its corner.
+    readonly property real titleHeight: 36
     readonly property real panelWidth: panel ? Math.max(panel.implicitWidth, 240) : 240
     readonly property real panelHeight: panel ? panel.implicitHeight : 0
     readonly property real maximumBodyHeight: Math.max(80, (parent ? parent.height : 600) - titleHeight - margin * 2)
@@ -59,10 +60,13 @@ FocusScope {
     opacity: shown ? 1 : 0
     Behavior on opacity { NumberAnimation { duration: root.theme ? root.theme.durStandard : 0 } }
 
+    // A flat raised surface, as a popover: no gradient, which read as a stray shade on a
+    // window minimised to its title bar.
     ElevatedPanel {
         anchors.fill: parent
         theme: root.theme
-        cornerRadius: root.theme && root.theme.radius4 !== undefined ? root.theme.radius4 : 10
+        flat: true
+        cornerRadius: root.theme && root.theme.radius3 !== undefined ? root.theme.radius3 : 8
     }
 
     Item {
@@ -95,14 +99,15 @@ FocusScope {
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 10
-            anchors.rightMargin: 6
-            spacing: 6
+            anchors.rightMargin: 4
+            spacing: 2
 
             // A grip: the title bar is the handle.
             Grid {
                 columns: 2
                 spacing: 2
                 Layout.alignment: Qt.AlignVCenter
+                Layout.rightMargin: 6
                 Repeater {
                     model: 6
                     delegate: Rectangle {
@@ -120,16 +125,12 @@ FocusScope {
                 elide: Text.ElideRight
                 color: root.theme ? root.theme.foreground : "transparent"
             }
-            ThemedToolButton {
+            // Collapses to the title bar and back: a chevron saying which way it goes.
+            IconButton {
                 theme: root.theme
                 objectName: "toolWindowMinimizeButton"
-                Layout.preferredWidth: 26
-                Layout.preferredHeight: 26
-                leftPadding: 0
-                rightPadding: 0
-                topPadding: 0
-                bottomPadding: 0
-                text: root.minimized ? "▢" : "–"
+                Layout.alignment: Qt.AlignVCenter
+                glyph: root.minimized ? "chevronDown" : "chevronUp"
                 Accessible.name: root.minimized ? qsTr("Restore %1").arg(root.title) : qsTr("Minimise %1").arg(root.title)
                 onClicked: root.toggleMinimized()
                 ThemedToolTip {
@@ -138,18 +139,18 @@ FocusScope {
                     visible: parent.hovered
                 }
             }
-            ThemedToolButton {
+            IconButton {
                 theme: root.theme
                 objectName: "toolWindowCloseButton"
-                Layout.preferredWidth: 26
-                Layout.preferredHeight: 26
-                leftPadding: 0
-                rightPadding: 0
-                topPadding: 0
-                bottomPadding: 0
-                text: "×"
+                Layout.alignment: Qt.AlignVCenter
+                glyph: "close"
                 Accessible.name: qsTr("Close %1").arg(root.title)
                 onClicked: root.closeRequested()
+                ThemedToolTip {
+                    theme: root.theme
+                    text: qsTr("Close")
+                    visible: parent.hovered
+                }
             }
         }
 

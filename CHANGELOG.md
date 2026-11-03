@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.1.5-beta.8
+
+- **Update indicator in the toolbar**: a newer release shows as a download icon with a
+  dot, replacing the bar under the toolbar.
+  - While it downloads, a ring around the icon fills with the percentage beside it.
+  - Click the icon for the version, the size downloaded, and Download, Cancel,
+    **Restart to Update** or Later.
+  - Help > Check for Updates… opens the result, "up to date" included.
+- **Transparency you can see and set**:
+  - When the whole selection is transparent, the menus offer **Make opaque** instead
+    of making it transparent again, and the dock's Transparent button stays lit.
+  - Every row of the assembly tree has a transparency toggle beside its eye. It is
+    always shown for a transparent or partly transparent part or assembly, as hidden
+    ones are.
+  - **Opacity** in Properties, under Appearance: a transparent part starts at 45%
+    and can go anywhere from 10%. All the way right makes it opaque again.
+- **Right-click menus fit their entries**: hidden entries, such as the exploded-view
+  ones when nothing is exploded, no longer leave gaps, and dividers are an inset line.
+  A menu is as wide as its longest entry, so none is cut short. The menu over empty
+  space gains **Save picture…**.
+- **Export and Drawing side panels go narrower**: they now really go down to the same
+  minimum as Inspect's. The settings column was holding itself at about twice that.
+- **Perspective without shading artefacts**: the near and far clip planes now fit the
+  model instead of spanning a fixed 0.01 mm to 1 km. Large models such as the door
+  panel no longer show stripes and shades in perspective.
+- **Consistent icons and highlights**: every control that used a text character as an
+  icon now draws a real icon in the app's style. This covers ×, ▸ ▾, ⊞ ⊟ and the
+  window's – ▢.
+  - A tool window collapses to its title bar with a chevron and has a flat surface,
+    without the gradient.
+  - Exploded view's **Assembled / Exploded** is a segmented switch, and its legend
+    icons share one colour and weight.
+  - Highlights sit clear of the edges around them: menu bar titles are a rounded chip
+    rather than the bar's full height, and the tree's buttons are inset in their row.
+  - Menu rows are 26 px, per the design guide.
+  - The Drawing part list highlights the row under the pointer, as the other lists do.
+  - The Export standalone preview hides its view cube until it shows a part.
+- **Interaction guide keys** are a plain letter in a rounded outline.
+- The [impeccable](https://github.com/pbakaus/impeccable) design skill is part of the
+  project, for design work in Claude Code.
+
 ## v0.1.5-beta.7
 
 - **Auto-explode takes stacked parts apart**: parts that share a centre, such as

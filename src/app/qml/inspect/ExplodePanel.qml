@@ -132,32 +132,26 @@ Rectangle {
             Layout.fillWidth: true
             visible: !root.embedded
             Label { text: qsTr("Exploded view"); font.bold: true; Layout.fillWidth: true; color: root.foreground }
-            ThemedToolButton { theme: root.theme; text: "×"; Accessible.name: qsTr("Close exploded view"); onClicked: root.closeRequested() }
+            IconButton { theme: root.theme; glyph: "close"; Accessible.name: qsTr("Close exploded view"); onClicked: root.closeRequested() }
         }
 
         // 1. The two states, one click apart. The layout is kept either way.
         RowLayout {
             Layout.fillWidth: true
             spacing: 4
-            ThemedButton {
+            // One switch between the two states, the design's mode picker.
+            ThemedSegmentedControl {
+                id: stateSwitch
+                objectName: "explodeStateSwitch"
                 theme: root.theme
-                objectName: "explodeAssembledButton"
                 Layout.fillWidth: true
-                text: qsTr("Assembled")
-                // The one choice that matters most here, so the state it is in is the accent.
-                primary: !root.showingLayout
-                selectedAppearance: false
-                enabled: root.hasLayout
-                onClicked: root.showAssembled()
-            }
-            ThemedButton {
-                theme: root.theme
-                objectName: "explodeAutoButton"
-                Layout.fillWidth: true
-                text: qsTr("Exploded")
-                primary: root.showingLayout
-                selectedAppearance: false
-                onClicked: root.showExploded()
+                model: [qsTr("Assembled"), qsTr("Exploded")]
+                currentIndex: root.showingLayout ? 1 : 0
+                Accessible.name: qsTr("Assembled or exploded")
+                onActivated: function(index) {
+                    if (index === 1) root.showExploded()
+                    else if (root.hasLayout) root.showAssembled()
+                }
             }
         }
         Label {
@@ -212,9 +206,9 @@ Rectangle {
                 : root.selectedNodeId.length > 0 ? qsTr("Selected: %1").arg(root.nameOf(root.selectedNodeId))
                 : qsTr("Click a part to move it.")
         }
-        Legend { icon: "handleArrow"; tint: root.theme.axisX !== undefined ? root.theme.axisX : root.foreground; text: qsTr("Drag an arrow to slide along it") }
+        Legend { icon: "handleArrow"; text: qsTr("Drag an arrow to slide along it") }
         Legend { icon: "handleBall"; text: qsTr("Drag the ball to move anywhere") }
-        Legend { icon: "handleRing"; tint: root.theme.axisZ !== undefined ? root.theme.axisZ : root.foreground; text: qsTr("Drag a ring to turn") }
+        Legend { icon: "handleRing"; text: qsTr("Drag a ring to turn") }
         Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
@@ -266,7 +260,16 @@ Rectangle {
             objectName: "explodeAdvancedButton"
             Layout.fillWidth: true
             flat: true
-            text: (root.advancedOpen ? "▾  " : "▸  ") + qsTr("Advanced: exact moves, pivot, snapping")
+            text: qsTr("Advanced: exact moves, pivot, snapping")
+            leftPadding: 30
+            ToolIcon {
+                x: 8
+                anchors.verticalCenter: parent.verticalCenter
+                width: 16
+                height: 16
+                name: root.advancedOpen ? "chevronDown" : "chevronRight"
+                color: root.foreground
+            }
             onClicked: root.advancedOpen = !root.advancedOpen
         }
         ColumnLayout {

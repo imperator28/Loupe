@@ -219,10 +219,10 @@ Inspect.ElevatedPanel {
                         }
                     }
 
-                    Inspect.ThemedToolButton {
+                    Inspect.IconButton {
                         objectName: "drawingQueueRemove-" + queueRow.modelData.drawingId
                         theme: root.theme
-                        text: "×"
+                        glyph: "close"
                         Accessible.name: qsTr("Remove %1 from the queue").arg(queueRow.modelData.name)
                         enabled: !root.draft || !root.draft.exporting
                         onClicked: root.draft.removeDrawing(queueRow.modelData.drawingId)

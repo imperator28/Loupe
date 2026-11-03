@@ -7,7 +7,6 @@ MenuBarItem {
     property QtObject theme
     readonly property color foreground: theme ? theme.foreground : "transparent"
     readonly property color stateLayer: theme && theme.accentTint !== undefined ? theme.accentTint : "transparent"
-    readonly property int cornerRadius: theme && theme.radius2 !== undefined ? theme.radius2 : 6
     readonly property int fadeDuration: theme && theme.durInstant !== undefined ? theme.durInstant : 0
 
     implicitHeight: theme && theme.controlHeight !== undefined ? theme.controlHeight : 30
@@ -21,13 +20,20 @@ MenuBarItem {
         elide: Text.ElideRight
     }
 
-    background: Rectangle {
-        radius: control.cornerRadius
-        color: control.stateLayer
-        opacity: control.pressed || control.highlighted ? 1.0 : 0.0
+    // Inset from the bar's top and bottom, so the highlight is a rounded chip around the
+    // title rather than a slab the bar's full height.
+    background: Item {
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 4
+            anchors.bottomMargin: 4
+            radius: control.theme && control.theme.radius1 !== undefined ? control.theme.radius1 : 4
+            color: control.stateLayer
+            opacity: control.pressed || control.highlighted ? 1.0 : 0.0
 
-        Behavior on opacity {
-            NumberAnimation { duration: control.fadeDuration }
+            Behavior on opacity {
+                NumberAnimation { duration: control.fadeDuration }
+            }
         }
     }
 }

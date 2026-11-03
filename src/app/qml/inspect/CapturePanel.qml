@@ -30,7 +30,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: !root.embedded
             Label { text: qsTr("Capture PNG"); font.bold: true; Layout.fillWidth: true; color: root.foreground }
-            ThemedToolButton { theme: root.theme; text: "×"; Accessible.name: qsTr("Close capture"); onClicked: root.closeRequested() }
+            IconButton { theme: root.theme; glyph: "close"; Accessible.name: qsTr("Close capture"); onClicked: root.closeRequested() }
         }
         Label { text: qsTr("Background"); color: root.subduedForeground }
         RowLayout {

@@ -37,7 +37,7 @@ Loupe is deliberately focused on the inspection controls engineers use repeatedl
 | --- | --- |
 | **Open and review** | Open `.step` and `.stp` files from the picker, by dropping them onto the app, or by double-clicking them once Loupe is their default app (see below). Each file opens in its own tab, which keeps its view, selection and export queue while you work in another; drag tabs to reorder them, off the strip into a window of their own, or onto another Loupe window to move them there. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
 | **Strip parts from an assembly** | Hide the parts to drop (search, multi-select, Hide or Isolate), then File → Export Assembly Without Hidden Parts… writes the rest as one STEP file, keeping the assembly tree, names, placements, colours and the source unit. Empty subassemblies are dropped. |
-| **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide or make semi-transparent, show all, and recolor a single occurrence or a shared definition. |
+| **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide or make semi-transparent (with adjustable opacity, shown in the tree like visibility), show all, and recolor a single occurrence or a shared definition. |
 | **Visual inspection** | Choose orthographic or perspective projection, use the view cube for canonical views, and switch among Solid, Solid + Edges, and Edges Only. Edges are generated from CAD topology rather than display triangles. |
 | **Part colours** | Keep the file's colours, or give every part an automatic low-contrast colour (cool shades, warm shades, or muted) with Shuffle -- useful when a file leaves parts uncoloured or gives them all one default colour. Display only. |
 | **Materials and mass** | Assign materials to an occurrence or definition, manage a persistent custom material library, and calculate mass for a body, subassembly, or multi-selection. Standard materials cover common consumer-electronics use cases including aluminum, zinc alloy, copper, PP, HDPE, PA, PMMA, PC, FR4 PCBA, silicone, and HNBR rubber. |
@@ -108,7 +108,7 @@ Useful shortcuts:
 | `F` / `Shift+F` | Fit assembly / fit selection |
 | `I` | Isolate or restore |
 | `H` | Hide selection (Isolate, `I`, shows only the selection) |
-| `T` / `Shift+T` | Make selection transparent / make others transparent |
+| `T` / `Shift+T` | Make selection transparent (again: opaque) / make others transparent |
 | `Ctrl/Cmd+F` | Find a part in the assembly tree (Enter / Shift+Enter: next / previous) |
 | `Ctrl/Cmd+8` | View normal to the face under the pointer (again: its other side) |
 | `Ctrl/Cmd+Shift+H` | Show all |
@@ -125,7 +125,7 @@ The in-app **View > Interaction** guide contains this same mouse, trackpad, and 
 
 ## Updates
 
-Loupe checks GitHub for a newer release each time it starts. When there is one, a bar under the toolbar offers it; **Download** fetches it with a progress bar, and **Restart to Update** replaces the running copy and opens the new one, keeping your settings. **Help > Check for Updates…** checks on demand, and **Help > Include Beta Versions** chooses whether betas are offered. The update needs write access to the folder Loupe is in; on macOS, open Loupe from that folder (not straight from the downloaded zip) so it can replace itself. Set `LOUPE_NO_UPDATE_CHECK=1` to turn the check off.
+Loupe checks GitHub for a newer release each time it starts. When there is one, a download icon appears in the toolbar; click it and **Download** fetches the update, with a ring round the icon filling as it goes, and **Restart to Update** replaces the running copy and opens the new one, keeping your settings. **Help > Check for Updates…** checks on demand, and **Help > Include Beta Versions** chooses whether betas are offered. The update needs write access to the folder Loupe is in; on macOS, open Loupe from that folder (not straight from the downloaded zip) so it can replace itself. Set `LOUPE_NO_UPDATE_CHECK=1` to turn the check off.
 
 ## Install a Release Build
 

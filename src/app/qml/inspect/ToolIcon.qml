@@ -72,7 +72,7 @@ Item {
         },
         "handleBall": {
             s: "",
-            f: "M10 5.5 A4.5 4.5 0 1 0 10.01 5.5 Z",
+            f: "M10 6.4 A3.6 3.6 0 1 0 10.01 6.4 Z",
             t: ""
         },
         "handleRing": {
@@ -117,6 +117,48 @@ Item {
             f: "",
             t: "M10 2.8 L16.5 6.4 L10 10 L3.5 6.4 Z"
         },
+        // Small chrome glyphs: disclosure, collapse/expand and close.
+        "chevronRight": {
+            s: "M8 5.5 L12.5 10 L8 14.5",
+            f: "",
+            t: ""
+        },
+        "chevronDown": {
+            s: "M5.5 8 L10 12.5 L14.5 8",
+            f: "",
+            t: ""
+        },
+        "chevronUp": {
+            s: "M5.5 12 L10 7.5 L14.5 12",
+            f: "",
+            t: ""
+        },
+        // An arrow down onto a tray: a newer version to fetch.
+        "download": {
+            s: "M10 3.5 V12 M6.5 8.6 L10 12.1 L13.5 8.6 M4.5 15.5 H15.5",
+            f: "",
+            t: ""
+        },
+        "check": {
+            s: "M4.8 10.4 L8.4 14 L15.2 6.6",
+            f: "",
+            t: ""
+        },
+        "expandAll": {
+            s: "M6 5.5 L10 9.5 L14 5.5 M6 10.5 L10 14.5 L14 10.5",
+            f: "",
+            t: ""
+        },
+        "collapseAll": {
+            s: "M6 9.5 L10 5.5 L14 9.5 M6 14.5 L10 10.5 L14 14.5",
+            f: "",
+            t: ""
+        },
+        "close": {
+            s: "M6 6 L14 14 M14 6 L6 14",
+            f: "",
+            t: ""
+        },
         "capture": {
             s: "M3 7.5 H6.2 L7.7 5.5 H12.3 L13.8 7.5 H17 V15.5 H3 Z",
             f: "",
@@ -126,13 +168,20 @@ Item {
 
     readonly property var glyph: glyphs[name] !== undefined ? glyphs[name] : { s: "", f: "", t: "" }
 
+    // Drawn in a 20 px box and scaled to the item's size, the stroke kept at its width.
+    readonly property real drawScale: Math.max(0.01, Math.min(width, height) / 20)
+
     Shape {
-        anchors.fill: parent
+        width: 20
+        height: 20
+        x: (root.width - 20 * root.drawScale) / 2
+        y: (root.height - 20 * root.drawScale) / 2
+        transform: Scale { xScale: root.drawScale; yScale: root.drawScale }
         preferredRendererType: Shape.CurveRenderer
 
         ShapePath {
             strokeColor: root.color
-            strokeWidth: root.strokeWidth
+            strokeWidth: root.strokeWidth / root.drawScale
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin

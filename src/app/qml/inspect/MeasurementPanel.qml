@@ -39,7 +39,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: !root.embedded
             Label { text: qsTr("Measure"); font.bold: true; Layout.fillWidth: true; color: root.foreground }
-            ThemedToolButton { theme: root.theme; text: "×"; Accessible.name: qsTr("Close measurement"); onClicked: root.closeRequested() }
+            IconButton { theme: root.theme; glyph: "close"; Accessible.name: qsTr("Close measurement"); onClicked: root.closeRequested() }
         }
         Label {
             Layout.fillWidth: true

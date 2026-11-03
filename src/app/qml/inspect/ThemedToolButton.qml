@@ -10,7 +10,9 @@ ToolButton {
     readonly property color stateLayer: theme && theme.accentTint !== undefined ? theme.accentTint : "transparent"
     readonly property color checkedFill: theme ? theme.selection : "transparent"
     readonly property color accentFill: theme ? theme.accent : "transparent"
-    readonly property int cornerRadius: theme && theme.radius2 !== undefined ? theme.radius2 : 6
+    // radius.2 for a standalone button; a button inside a row sets radius.1 to sit
+    // concentric with the row's own highlight.
+    property int cornerRadius: theme && theme.radius2 !== undefined ? theme.radius2 : 6
     readonly property int fadeDuration: theme && theme.durInstant !== undefined ? theme.durInstant : 0
     readonly property int ringWidth: theme && theme.focusRingWidth !== undefined ? theme.focusRingWidth : 2
 

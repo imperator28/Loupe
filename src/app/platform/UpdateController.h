@@ -37,6 +37,9 @@ class UpdateController final : public QObject {
     Q_PROPERTY(QString message READ message NOTIFY changed)
     Q_PROPERTY(bool includePrereleases READ includePrereleases WRITE setIncludePrereleases NOTIFY includePrereleasesChanged)
     Q_PROPERTY(bool dismissed READ dismissed NOTIFY changed)
+    // The last check came from Help > Check for Updates, so its result is worth showing
+    // even when it is "up to date".
+    Q_PROPERTY(bool userInitiated READ userInitiated NOTIFY changed)
 
 public:
     enum class State { Idle, Checking, UpToDate, Available, Downloading, Ready, Installing, Failed };
@@ -87,6 +90,7 @@ public:
     [[nodiscard]] bool includePrereleases() const noexcept { return includePrereleases_; }
     void setIncludePrereleases(bool include);
     [[nodiscard]] bool dismissed() const noexcept { return dismissed_; }
+    [[nodiscard]] bool userInitiated() const noexcept { return userInitiated_; }
 
     // The app (not a test) turns this on: every controller then checks once, shortly
     // after it is made, which is each launch.

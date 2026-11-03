@@ -102,6 +102,7 @@ private slots:
     void explodedViewHandlesMoveAndTurnTheSelection();
     void explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly();
     void floatingToolWindowDragsMinimisesAndStaysInside();
+    void updateIndicatorShowsTheDownloadAsARing();
     void everyWorkspaceSidePanelGoesDownToTheSameMinimum();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
@@ -1034,9 +1035,10 @@ void QmlSmokeTest::explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly()
     QCOMPARE(panel->property("scopeId").toString(), QStringLiteral("sub"));
     QVERIFY(scopeLabel->property("text").toString().startsWith(QStringLiteral("Sub-assembly")));
     QSignalSpy autoExplode(panel.get(), SIGNAL(autoExplodeRequested(QString,double)));
-    auto* explodeButton = panel->findChild<QObject*>(QStringLiteral("explodeAutoButton"));
-    QVERIFY(explodeButton != nullptr);
-    QVERIFY(QMetaObject::invokeMethod(explodeButton, "clicked"));
+    auto* stateSwitch = panel->findChild<QObject*>(QStringLiteral("explodeStateSwitch"));
+    QVERIFY(stateSwitch != nullptr);
+    QCOMPARE(stateSwitch->property("currentIndex").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(stateSwitch, "activated", Q_ARG(int, 1)));
     QCOMPARE(autoExplode.count(), 1);
     QCOMPARE(autoExplode.at(0).at(0).toString(), QStringLiteral("sub"));
     QVERIFY(autoExplode.at(0).at(1).toDouble() >= 1.0);
@@ -1155,6 +1157,72 @@ Item {
     // A workspace too short for the panel scrolls it instead of pushing it off screen.
     harness->setHeight(300);
     QTRY_VERIFY(tool->height() <= 300.0 - 16);
+}
+
+void QmlSmokeTest::updateIndicatorShowsTheDownloadAsARing()
+{
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"foreground", "muted", "accent", "error", "border", "control", "surfaceRaised", "surface3", "accentTint", "selection"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    for (const auto* key : {"spacing1", "spacing2", "spacing4", "radius1", "radius2", "radius3", "fontCaption"})
+        theme->insert(QString::fromLatin1(key), 4);
+    theme->insert(QStringLiteral("durIndeterminateTravel"), 1200);
+
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(
+        "import QtQuick\n"
+        "import Loupe.App\n"
+        "Item {\n"
+        "  property QtObject theme\n"
+        "  property alias indicator: indicator\n"
+        "  property QtObject updates: QtObject {\n"
+        "    property int state: Updates.Idle\n"
+        "    property string availableVersion: \"0.2.0\"\n"
+        "    property string currentVersion: \"0.1.5\"\n"
+        "    property double progress: 0\n"
+        "    property real bytesReceived: 0\n"
+        "    property real bytesTotal: 0\n"
+        "    property string message: \"\"\n"
+        "    property string releaseUrl: \"\"\n"
+        "    property bool dismissed: false\n"
+        "    property bool userInitiated: false\n"
+        "    signal changed()\n"
+        "    signal quitRequested()\n"
+        "  }\n"
+        "  UpdateIndicator { id: indicator; theme: parent.theme; updates: parent.updates }\n"
+        "}\n"), QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/UpdateIndicatorHost.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> host(component.createWithInitialProperties(
+        {{QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))}}));
+    QVERIFY2(host != nullptr, qPrintable(component.errorString()));
+    auto* indicator = host->property("indicator").value<QObject*>();
+    QVERIFY(indicator != nullptr);
+    auto* updates = host->property("updates").value<QObject*>();
+
+    // Nothing to say: not in the toolbar at all. An automatic check stays quiet too.
+    QVERIFY(!indicator->property("visible").toBool());
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Checking));
+    QVERIFY(!indicator->property("visible").toBool());
+    // A newer version: the icon, with its dot.
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Available));
+    QVERIFY(indicator->property("visible").toBool());
+    // Downloading: the ring fills with the download, its percentage beside it.
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Downloading));
+    updates->setProperty("progress", 0.42);
+    QCOMPARE(indicator->property("percent").toInt(), 42);
+    auto* ring = indicator->findChild<QObject*>(QStringLiteral("updateProgressRing"));
+    QVERIFY(ring != nullptr);
+    QVERIFY(ring->property("visible").toBool());
+    QCOMPARE(ring->property("sweep").toDouble(), 360.0 * 42 / 100);
+    auto* percent = indicator->findChild<QObject*>(QStringLiteral("updatePercent"));
+    QVERIFY(percent != nullptr);
+    QCOMPARE(percent->property("text").toString(), QStringLiteral("42%"));
+    // Ready: a full ring. Later hides it until the next launch.
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Ready));
+    QCOMPARE(ring->property("sweep").toDouble(), 360.0);
+    updates->setProperty("dismissed", true);
+    QVERIFY(!indicator->property("visible").toBool());
 }
 
 void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
