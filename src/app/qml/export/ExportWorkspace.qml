@@ -85,6 +85,7 @@ Item {
         ExportComponentPicker {
             id: componentPicker
             Layout.preferredWidth: pickerSplitter.effectiveWidth
+            Layout.fillWidth: false
             Layout.fillHeight: true
             controller: root.controller
             draft: root.draft
@@ -118,6 +119,10 @@ Item {
         ColumnLayout {
             id: settingsColumn
             Layout.preferredWidth: settingsSplitter.effectiveWidth
+            // A layout whose children fill their width fills too, unless told otherwise:
+            // this column then shared the window's spare width with the 3D view and stood
+            // at twice the width its divider set.
+            Layout.fillWidth: false
             Layout.fillHeight: true
             spacing: root.theme.spacing3
 

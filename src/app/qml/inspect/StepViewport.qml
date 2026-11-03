@@ -105,6 +105,37 @@ Item {
     readonly property vector3d sceneCenter: Qt.vector3d((sceneMinimum.x + sceneMaximum.x) * 0.5,
                                                         (sceneMinimum.y + sceneMaximum.y) * 0.5,
                                                         (sceneMinimum.z + sceneMaximum.z) * 0.5)
+    // The perspective camera's depth range, fitted around what is drawn. A fixed 0.01 to
+    // 1,000,000 left the depth buffer far too coarse at any real distance, so faces a
+    // fraction of a millimetre apart (a tape on a panel, two coincident shells) fought and
+    // the model came out in stripes and shades. Orthographic depth is linear and was fine.
+    readonly property var depthBounds: {
+        const revision = explode ? explode.revision : -1
+        const exploded = revision >= 0 ? explodedBounds([]) : null
+        const low = exploded ? Qt.vector3d(Math.min(sceneMinimum.x, exploded.minimum.x), Math.min(sceneMinimum.y, exploded.minimum.y),
+                                           Math.min(sceneMinimum.z, exploded.minimum.z)) : sceneMinimum
+        const high = exploded ? Qt.vector3d(Math.max(sceneMaximum.x, exploded.maximum.x), Math.max(sceneMaximum.y, exploded.maximum.y),
+                                            Math.max(sceneMaximum.z, exploded.maximum.z)) : sceneMaximum
+        const centre = Qt.vector3d((low.x + high.x) * 0.5, (low.y + high.y) * 0.5, (low.z + high.z) * 0.5)
+        const radius = Math.max(0.5, high.minus(low).length() * 0.5)
+        return { centre: centre, radius: radius }
+    }
+    // How far in front of the camera the scene's centre is, along the view: a panned camera
+    // is further from the centre than that, and fitting to the straight-line distance would
+    // clip the near side.
+    readonly property real perspectiveDepthDistance: {
+        const revision = navigation.revision
+        if (revision < 0) return 0
+        const forward = navigation.orientation.times(Qt.vector3d(0, 0, -1))
+        return depthBounds.centre.minus(navigation.cameraPosition).dotProduct(forward)
+    }
+    readonly property real perspectiveClipNear: Math.max(depthBounds.radius * 0.0005,
+                                                         perspectiveDepthDistance - depthBounds.radius * 1.25)
+    readonly property real perspectiveClipFar: Math.max(perspectiveClipNear * 4,
+                                                        perspectiveDepthDistance + depthBounds.radius * 1.5)
+    // Orthographic depth is linear, but 2,000,000 mm of it still left ~0.1 mm steps.
+    readonly property real orthographicClipNear: perspectiveDepthDistance - depthBounds.radius * 1.5
+    readonly property real orthographicClipFar: perspectiveDepthDistance + depthBounds.radius * 1.5
     readonly property real sceneDiagonal: {
         const x = sceneMaximum.x - sceneMinimum.x
         const y = sceneMaximum.y - sceneMinimum.y
@@ -169,6 +200,8 @@ Item {
     // Empty-map results are not emitted, so a listener never sees a default frame.
     signal faceFrameSelected(var frame)
     signal openFileRequested()
+    // The empty-space menu's Save picture…: the workspace owns the file dialog.
+    signal savePictureRequested()
 
     // ---- Exploded-view handles (#17) ----
     // The selection the handles move, where it is drawn, and how big the handles are: a
@@ -910,6 +943,7 @@ Item {
     function applySolidState(model, sliceOnlyFinal) {
         const shown = nodeShown(model.nodeId)
         model.transparent = nodeTransparent(model.nodeId)
+        if (model.transparent) model.transparentOpacity = controller.nodeOpacity(model.nodeId)
         model.visible = renderMode !== 2 && !sliceOnlyFinal && shown
         // Picking follows the user's own hide, not the display mode. A ray
         // pick still reports a model that is merely not drawn, so leaving
@@ -1519,6 +1553,8 @@ Item {
             property bool hovered: !selected && root.hoveredNodeId === nodeId
             property bool inspectionHovered: hovered && !root.measurementActive && root.componentHoverEnabled
             property bool transparent: false
+            // The part's own opacity while transparent (Properties > Opacity).
+            property real transparentOpacity: 0.45
             pickable: true
             materials: [sectionMaterial]
             SectionClipMaterial {
@@ -1534,7 +1570,7 @@ Item {
                 sectionNormal: root.effectiveSectionNormal
                 sectionOffset: root.controller ? root.controller.section.effectiveOffset : 0
                 retainedSign: root.controller && root.controller.section.flipped ? -1 : 1
-                ghostOpacity: modelItem.transparent ? 0.45 : 1.0
+                ghostOpacity: modelItem.transparent ? modelItem.transparentOpacity : 1.0
             }
         }
     }
@@ -1624,14 +1660,14 @@ Item {
             id: cameraRig
             PerspectiveCamera {
                 id: perspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.hasSceneBounds ? root.perspectiveClipNear : 0.01
+                clipFar: root.hasSceneBounds ? root.perspectiveClipFar : 1000000
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: orthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                clipNear: root.hasSceneBounds ? root.orthographicClipNear : -1000000
+                clipFar: root.hasSceneBounds ? root.orthographicClipFar : 1000000
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1806,14 +1842,14 @@ Item {
             rotation: navigation.orientation
             PerspectiveCamera {
                 id: handlePerspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.hasSceneBounds ? root.perspectiveClipNear : 0.01
+                clipFar: root.hasSceneBounds ? root.perspectiveClipFar : 1000000
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: handleOrthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                clipNear: root.hasSceneBounds ? root.orthographicClipNear : -1000000
+                clipFar: root.hasSceneBounds ? root.orthographicClipFar : 1000000
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -2323,7 +2359,7 @@ Item {
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.transparencyActionText(); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
@@ -2359,7 +2395,7 @@ Item {
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.transparencyActionText(); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
     }
@@ -2372,6 +2408,14 @@ Item {
         return false
     }
 
+    // Make transparent, or Make opaque once the whole selection is.
+    function transparencyActionText() {
+        const opaqueAgain = controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                            && controller.isSelectionTransparent()
+        return opaqueAgain ? selectionActionText(qsTr("Make opaque"), qsTr("Make %1 selected opaque"))
+                           : selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent"))
+    }
+
     function resetSelectedPositions() {
         if (!explode || !controller) return
         for (const nodeId of controller.selectedNodeIds) explode.resetNode(nodeId)
@@ -2379,6 +2423,7 @@ Item {
 
     ThemedMenu {
         id: viewportContextMenu
+        objectName: "viewportContextMenu"
         theme: root.theme
         ThemedMenuItem { theme: viewportContextMenu.theme; text: root.requireDisplayFilter ? qsTr("Fit part") : qsTr("Fit assembly")
                                      onTriggered: root.fitCamera() }
@@ -2390,6 +2435,13 @@ Item {
             onTriggered: root.animateExplodeReset()
         }
         ThemedMenuSeparator { theme: viewportContextMenu.theme }
+        ThemedMenuItem {
+            theme: viewportContextMenu.theme
+            objectName: "viewportSavePictureItem"
+            text: qsTr("Save picture…")
+            enabled: root.controller && !root.controller.capture.inProgress
+            onTriggered: root.savePictureRequested()
+        }
         ThemedMenuItem {
             theme: viewportContextMenu.theme
             text: qsTr("Copy as transparent picture")

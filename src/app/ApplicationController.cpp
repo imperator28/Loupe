@@ -29,6 +29,7 @@
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <cmath>
 #include <algorithm>
 
 namespace {
@@ -550,6 +551,7 @@ void ApplicationController::openFile(const QUrl& file)
     parentByNode_.clear();
     definitionByNode_.clear();
     visibilityModel_.setNodes({});
+    opacityByNode_.clear();
     materialByNode_.clear();
     appearanceByNode_.clear();
     importedColorByNode_.clear();
@@ -734,6 +736,66 @@ void ApplicationController::makeOthersTransparent()
 bool ApplicationController::isNodeTransparent(const QString& nodeId) const
 {
     return visibilityModel_.isGhosted(nodeId);
+}
+
+bool ApplicationController::isSelectionTransparent() const
+{
+    const auto selected = geometryNodesForSelection();
+    return !selected.isEmpty()
+        && std::ranges::all_of(selected, [this](const QString& nodeId) { return visibilityModel_.isGhosted(nodeId); });
+}
+
+int ApplicationController::nodeTransparencyState(const QString& nodeId) const
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (parts.isEmpty()) return 0;
+    const auto transparent = std::count_if(parts.cbegin(), parts.cend(),
+                                           [this](const QString& part) { return visibilityModel_.isGhosted(part); });
+    return transparent == 0 ? 0 : transparent == parts.size() ? 2 : 1;
+}
+
+void ApplicationController::setNodeTransparent(const QString& nodeId, const bool transparent)
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (!parts.isEmpty()) visibilityModel_.setGhosted(parts, transparent);
+}
+
+double ApplicationController::nodeOpacity(const QString& nodeId) const
+{
+    return visibilityModel_.isGhosted(nodeId) ? opacityByNode_.value(nodeId, kDefaultTransparentOpacity) : 1.0;
+}
+
+double ApplicationController::selectionOpacity() const
+{
+    for (const auto& nodeId : geometryNodesForSelection())
+        if (visibilityModel_.isGhosted(nodeId)) return nodeOpacity(nodeId);
+    return 1.0;
+}
+
+void ApplicationController::setSelectionOpacity(const double opacity)
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty() || !std::isfinite(opacity)) return;
+    // Never fully clear: a part at 0 would be invisible yet still there, which is what
+    // Hide is for.
+    const double value = std::clamp(opacity, 0.05, 1.0);
+    const bool opaque = value > 0.995;
+    for (const auto& nodeId : selected) {
+        // Opaque again forgets the setting, so the next Make transparent starts at the default.
+        if (opaque) opacityByNode_.remove(nodeId);
+        else opacityByNode_.insert(nodeId, value);
+    }
+    const bool changesState = std::ranges::any_of(selected, [&](const QString& nodeId) {
+        return visibilityModel_.isGhosted(nodeId) == opaque;
+    });
+    if (changesState) {
+        visibilityModel_.setGhosted(selected, !opaque);
+    } else {
+        // Same parts transparent, new opacity: nothing in the visibility model changed, so
+        // say so here for the viewport to redraw them.
+        ++visibilityRevision_;
+        emit visibilityChanged();
+    }
 }
 
 void ApplicationController::connectWorker()

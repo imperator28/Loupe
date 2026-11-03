@@ -143,6 +143,38 @@ ElevatedPanel {
             }
         }
 
+        // How see-through the selection is. Make transparent starts it at the default;
+        // all the way right makes it opaque again.
+        Label { visible: controller && controller.activeNodeId !== ""; text: qsTr("Opacity"); color: root.foreground }
+        RowLayout {
+            visible: controller && controller.activeNodeId !== ""
+            Layout.fillWidth: true
+            spacing: root.theme.spacing2
+            ThemedSlider {
+                id: opacitySlider
+                objectName: "opacitySlider"
+                theme: root.theme
+                Layout.fillWidth: true
+                Layout.minimumWidth: 80
+                from: 0.1
+                to: 1
+                stepSize: 0.05
+                value: controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                       ? controller.selectionOpacity() : 1
+                Accessible.name: qsTr("Opacity")
+                onMoved: if (controller) controller.setSelectionOpacity(value)
+            }
+            Label {
+                objectName: "opacityValue"
+                Layout.preferredWidth: opacityMetrics.width
+                horizontalAlignment: Text.AlignRight
+                text: qsTr("%1%").arg(Math.round(opacitySlider.value * 100))
+                color: root.subduedForeground
+                font.features: { "tnum": 1 }
+                TextMetrics { id: opacityMetrics; text: "100%" }
+            }
+        }
+
         // Document-level: shown when nothing is selected, where this panel otherwise only
         // carries its title.
         ColumnLayout {

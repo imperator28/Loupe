@@ -41,6 +41,7 @@
 #include <qqml.h>
 
 #include <algorithm>
+#include <tuple>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -101,6 +102,7 @@ private slots:
     void explodedViewHandlesMoveAndTurnTheSelection();
     void explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly();
     void floatingToolWindowDragsMinimisesAndStaysInside();
+    void everyWorkspaceSidePanelGoesDownToTheSameMinimum();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
@@ -738,6 +740,32 @@ void QmlSmokeTest::viewportRightClickKeepsTheSelectionAndViewsNormalToAFace()
     QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
     direction = viewport->property("viewDirection").value<QVector3D>();
     QVERIFY((direction + normal).length() < 1.0e-4F);
+
+    // The empty-space menu is exactly as tall as the entries it shows (the exploded-view
+    // entry is hidden here), and as wide as the longest one, so nothing is cut short.
+    auto* menu = viewport->findChild<QObject*>(QStringLiteral("viewportContextMenu"));
+    QVERIFY(menu != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(menu, "popup", Q_ARG(QPointF, QPointF(20, 20))));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->property("opened").toBool(), 3000);
+    const auto count = menu->property("count").toInt();
+    double shownHeight = 0;
+    int shown = 0;
+    for (int i = 0; i < count; ++i) {
+        QQuickItem* item = nullptr;
+        QVERIFY(QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, item), Q_ARG(int, i)));
+        QVERIFY(item != nullptr);
+        if (!item->isVisible()) {
+            QCOMPARE(item->height(), 0.0);
+            continue;
+        }
+        ++shown;
+        shownHeight += item->height();
+        QVERIFY2(item->width() >= item->implicitWidth(), qPrintable(item->property("text").toString()));
+    }
+    QCOMPARE(shown, count - 1);
+    QTRY_COMPARE_WITH_TIMEOUT(menu->property("height").toDouble(),
+                              shownHeight + menu->property("topPadding").toDouble() + menu->property("bottomPadding").toDouble(), 3000);
+    QVERIFY(QMetaObject::invokeMethod(menu, "close"));
 }
 
 void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
@@ -1127,6 +1155,52 @@ Item {
     // A workspace too short for the panel scrolls it instead of pushing it off screen.
     harness->setHeight(300);
     QTRY_VERIFY(tool->height() <= 300.0 - 16);
+}
+
+void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
+{
+    // The panels are as wide as their dividers say, down to the same minimums in every
+    // workspace: Export's and Drawing's settings column used to fill half the spare width as
+    // well, standing at 525 px when its divider said 260.
+    const QList<std::tuple<const char*, const char*, double>> expected{
+        {"/inspect/InspectWorkspace.qml", "inspectTreeSplitter", 180.0},
+        {"/inspect/InspectWorkspace.qml", "inspectPropertiesSplitter", 260.0},
+        {"/export/ExportWorkspace.qml", "pickerSplitter", 180.0},
+        {"/export/ExportWorkspace.qml", "settingsSplitter", 260.0},
+        {"/drawing/DrawingWorkspace.qml", "pickerSplitter", 180.0},
+        {"/drawing/DrawingWorkspace.qml", "settingsSplitter", 260.0},
+    };
+    loupe::app::models::ThemePreference preferences;
+    const QStringList keys{QStringLiteral("outputPicker"), QStringLiteral("outputSettings"),
+                           QStringLiteral("inspectTree"), QStringLiteral("inspectProperties")};
+    for (const auto& key : keys) preferences.setPanelWidth(key, 120); // under every minimum
+    const auto restore = qScopeGuard([&] { for (const auto& key : keys) preferences.clearPanelWidth(key); });
+    for (const auto& [file, splitterName, minimum] : expected) {
+        loupe::app::ApplicationController controller;
+        QQmlEngine engine;
+        QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+        std::unique_ptr<QObject> theme(themeComponent.create());
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QString::fromLatin1(file)));
+        std::unique_ptr<QObject> object(component.createWithInitialProperties({
+            {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+            {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+            {QStringLiteral("preferences"), QVariant::fromValue(static_cast<QObject*>(&preferences))}}));
+        QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+        auto* workspace = qobject_cast<QQuickItem*>(object.get());
+        QQuickWindow window;
+        window.resize(1600, 900);
+        workspace->setParentItem(window.contentItem());
+        workspace->setSize({1600, 900});
+        window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+        auto* splitter = workspace->findChild<QQuickItem*>(QString::fromLatin1(splitterName));
+        QVERIFY2(splitter != nullptr, splitterName);
+        auto* panel = splitter->property("panel").value<QQuickItem*>();
+        QCOMPARE(splitter->property("effectiveWidth").toDouble(), minimum);
+        QTRY_VERIFY2_WITH_TIMEOUT(std::abs(panel->width() - minimum) < 0.5,
+                                  qPrintable(QStringLiteral("%1 %2: %3").arg(QString::fromLatin1(file), QString::fromLatin1(splitterName))
+                                                 .arg(panel->width())), 3000);
+    }
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()

@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 
 // The exploded view's panel (#17). Laid out for someone who has never used a CAD package:
@@ -183,11 +182,11 @@ Rectangle {
             Layout.fillWidth: true
             spacing: root.theme.spacing2
             Label { text: qsTr("Together"); color: root.subduedForeground; font.pixelSize: root.theme.fontCaption }
-            Basic.Slider {
+            ThemedSlider {
                 id: factorSlider
                 objectName: "explodeFactorSlider"
                 Layout.fillWidth: true
-                implicitHeight: root.theme && root.theme.controlHeight !== undefined ? root.theme.controlHeight + 2 : 34
+                theme: root.theme
                 from: 0
                 to: 3
                 stepSize: 0.05
@@ -199,33 +198,6 @@ Rectangle {
                     else root.taskController.commitInteraction()
                 }
                 onMoved: if (root.taskController && root.taskController.interacting) root.taskController.previewAutoExplode(value)
-
-                background: Rectangle {
-                    x: factorSlider.leftPadding
-                    y: factorSlider.topPadding + factorSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 160
-                    implicitHeight: 4
-                    width: factorSlider.availableWidth
-                    height: 4
-                    radius: 2
-                    color: root.theme.control
-                    Rectangle {
-                        width: parent.width * factorSlider.visualPosition
-                        height: parent.height
-                        radius: parent.radius
-                        color: root.theme.accent
-                    }
-                }
-                handle: Rectangle {
-                    x: factorSlider.leftPadding + factorSlider.visualPosition * (factorSlider.availableWidth - width)
-                    y: factorSlider.topPadding + factorSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 18
-                    implicitHeight: 18
-                    radius: 9
-                    color: factorSlider.pressed ? Qt.darker(root.theme.accent, 1.08) : root.theme.accent
-                    border.color: root.theme.surfaceRaised
-                    border.width: 2
-                }
             }
             Label { text: qsTr("Apart"); color: root.subduedForeground; font.pixelSize: root.theme.fontCaption }
         }

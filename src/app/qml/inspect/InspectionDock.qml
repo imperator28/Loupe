@@ -11,11 +11,13 @@ ElevatedPanel {
     // which works on the assembled model, waits until they are reset.
     property bool exploded: false
     property bool measureBlocked: false
+    // The whole selection is transparent: the button stays lit and turns it opaque again.
+    property bool selectionTransparent: false
     property var tools: [
         { key: "fit", icon: "fit", label: qsTr("Fit") },
         { key: "isolate", icon: "isolate", label: qsTr("Isolate"), active: viewerPresentation === AppState.Isolate },
         { key: "hide", icon: "hide", label: qsTr("Hide") },
-        { key: "transparent", icon: "transparent", label: qsTr("Transparent") },
+        { key: "transparent", icon: "transparent", label: qsTr("Transparent"), active: selectionTransparent },
         { key: "section", icon: "section", label: qsTr("Section") },
         { key: "explode", icon: "explode", label: qsTr("Explode"), active: exploded },
         { key: "measure", icon: "measure", label: qsTr("Measure"), disabled: measureBlocked,

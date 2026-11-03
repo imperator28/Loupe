@@ -350,13 +350,47 @@ void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
     QSignalSpy visibility(&controller, &loupe::app::ApplicationController::visibilityChanged);
 
     controller.setActiveNodeId(parts.at(0));
+    QVERIFY(!controller.isSelectionTransparent());
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 1.0);
     controller.toggleTransparentSelection();
     QVERIFY(controller.isNodeTransparent(parts.at(0)));
     QVERIFY(!controller.isNodeTransparent(parts.at(1)));
     QVERIFY(controller.isNodeVisible(parts.at(0)));
     QVERIFY(visibility.count() > 0);
+    // The menus now offer Make opaque; the part draws at the default opacity.
+    QVERIFY(controller.isSelectionTransparent());
+    QCOMPARE(controller.nodeTransparencyState(parts.at(0)), 2);
+    QCOMPARE(controller.nodeTransparencyState(parts.at(1)), 0);
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), loupe::app::ApplicationController::kDefaultTransparentOpacity);
+    QCOMPARE(controller.selectionOpacity(), loupe::app::ApplicationController::kDefaultTransparentOpacity);
+    // Opacity is adjustable, and says so to the viewport even though the part stays transparent.
+    const auto before = visibility.count();
+    controller.setSelectionOpacity(0.2);
+    QVERIFY(visibility.count() > before);
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 0.2);
+    // It is kept across a toggle off and on.
+    controller.toggleTransparentSelection();
+    QVERIFY(!controller.isSelectionTransparent());
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 1.0);
+    controller.toggleTransparentSelection();
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 0.2);
+    // All the way up makes it opaque and forgets the setting.
+    controller.setSelectionOpacity(1.0);
+    QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+    // The slider on an opaque part makes it transparent at that opacity.
+    controller.setSelectionOpacity(0.6);
+    QVERIFY(controller.isNodeTransparent(parts.at(0)));
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 0.6);
+    controller.setSelectionOpacity(1.0);
+    controller.toggleTransparentSelection();
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), loupe::app::ApplicationController::kDefaultTransparentOpacity);
     controller.toggleTransparentSelection();
     QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+    // The tree row's own toggle.
+    controller.setNodeTransparent(parts.at(1), true);
+    QVERIFY(controller.isNodeTransparent(parts.at(1)));
+    controller.setNodeTransparent(parts.at(1), false);
+    QVERIFY(!controller.isNodeTransparent(parts.at(1)));
 
     controller.makeOthersTransparent();
     QVERIFY(!controller.isNodeTransparent(parts.at(0)));

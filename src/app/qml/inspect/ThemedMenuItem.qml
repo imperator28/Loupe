@@ -13,7 +13,10 @@ MenuItem {
     readonly property int cornerRadius: theme && theme.radius1 !== undefined ? theme.radius1 : 4
 
     implicitWidth: Math.max(180, implicitContentWidth + leftPadding + rightPadding)
-    implicitHeight: 28
+    // A hidden item takes no room: a Menu lays its items out in a list that otherwise keeps
+    // the row, which left gaps and a menu taller than its entries.
+    implicitHeight: visible ? 28 : 0
+    height: visible ? implicitHeight : 0
     leftPadding: checkable ? 34 : 12
     rightPadding: subMenu ? 28 : 12
 

@@ -13,7 +13,17 @@ Menu {
     readonly property int exitDuration: Math.round(enterDuration * 0.7)
     readonly property bool travelOk: theme && theme.reducedMotion !== undefined ? !theme.reducedMotion : true
 
-    implicitWidth: Math.max(180, contentItem.implicitWidth + leftPadding + rightPadding)
+    // As wide as the widest shown entry, so none is cut short ("Copy as transparent pi…").
+    // The list's own implicit width is 0, which left every menu at the 180 px floor.
+    readonly property real widestItem: {
+        let widest = 0
+        for (let i = 0; i < count; ++i) {
+            const item = itemAt(i)
+            if (item && item.visible) widest = Math.max(widest, item.implicitWidth)
+        }
+        return widest
+    }
+    implicitWidth: Math.max(180, widestItem + leftPadding + rightPadding)
     topPadding: 4
     bottomPadding: 4
     leftPadding: 4

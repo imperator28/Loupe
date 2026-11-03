@@ -232,6 +232,21 @@ public:
     Q_INVOKABLE void toggleTransparentSelection();
     Q_INVOKABLE void makeOthersTransparent();
     Q_INVOKABLE bool isNodeTransparent(const QString& nodeId) const;
+    // Whether every part of the selection is transparent: the menus then offer
+    // "Make opaque" instead of making it transparent again.
+    Q_INVOKABLE [[nodiscard]] bool isSelectionTransparent() const;
+    // As nodeVisibilityState, for transparency: 0 opaque, 1 partly transparent, 2 transparent.
+    Q_INVOKABLE [[nodiscard]] int nodeTransparencyState(const QString& nodeId) const;
+    // The tree row's own toggle: that part, or every part under that assembly.
+    Q_INVOKABLE void setNodeTransparent(const QString& nodeId, bool transparent);
+    // How opaque a part draws: 1 unless it is transparent, then its own setting, which
+    // starts at the default and is changed with the Properties panel's Opacity slider.
+    Q_INVOKABLE [[nodiscard]] double nodeOpacity(const QString& nodeId) const;
+    // The opacity the selection draws with (its first transparent part's), or 1.
+    Q_INVOKABLE [[nodiscard]] double selectionOpacity() const;
+    // Below 1 makes the selection transparent at that opacity; 1 makes it opaque again.
+    Q_INVOKABLE void setSelectionOpacity(double opacity);
+    static constexpr double kDefaultTransparentOpacity = 0.45;
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId, const QString& scope);
     Q_INVOKABLE bool setActiveAppearanceColor(const QString& color, const QString& scope);
@@ -347,6 +362,8 @@ private:
     std::uint64_t activeAssemblyExportRequestId_{};
     bool activeAssemblyExportExploded_{false};
     int visibilityRevision_{};
+    // A transparent part's own opacity, when it was set to other than the default.
+    QHash<QString, double> opacityByNode_;
     QString assemblyExportMessage_;
     bool assemblyExportSucceeded_{false};
     std::uint64_t activeDrawingRequestId_{};

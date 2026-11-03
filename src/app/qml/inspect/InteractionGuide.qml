@@ -32,34 +32,21 @@ Dialog {
         return name
     }
 
-    // One key on the keyboard: a raised cap.
+    // One key: its label in a plain rounded outline.
     component KeyCap: Rectangle {
         property string key
-        implicitWidth: Math.max(26, capLabel.implicitWidth + 14)
-        implicitHeight: 26
+        implicitWidth: Math.max(24, capLabel.implicitWidth + 12)
+        implicitHeight: 24
         radius: 5
-        color: root.theme.surfaceRaised
-        border.color: root.theme.borderStrong
-        // The cap's lower lip, so it reads as a key and not a button on screen.
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.leftMargin: 1
-            anchors.rightMargin: 1
-            anchors.bottomMargin: 1
-            height: 3
-            radius: 4
-            color: root.theme.control
-        }
+        color: "transparent"
+        border.color: root.theme.border
+        border.width: 1
         Label {
             id: capLabel
             anchors.centerIn: parent
-            anchors.verticalCenterOffset: -1
             text: root.keyLabel(parent.key)
             color: root.theme.foreground
             font.pixelSize: root.theme.fontCaption
-            font.bold: true
         }
     }
 
@@ -68,7 +55,7 @@ Dialog {
         property string icon
         property string verb
         // As tall as a key cap, so a row of keys and pictures sits on one line.
-        implicitHeight: 26
+        implicitHeight: 24
         spacing: 3
         ToolIcon { name: parent.icon; color: root.theme.foreground }
         Label {
@@ -110,7 +97,7 @@ Dialog {
                     Component {
                         id: textToken
                         Label {
-                            height: 26
+                            height: 24
                             verticalAlignment: Text.AlignVCenter
                             text: parts[0] === "t" ? parts.slice(1).join(":") : modelData
                             color: root.theme.muted

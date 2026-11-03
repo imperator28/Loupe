@@ -52,6 +52,10 @@ Item {
     readonly property bool exploded: root.controller && root.controller.explode ? root.controller.explode.exploded : false
     // ... and on screen. In the Assembled view they are where the file has them, so measuring
     // is fine there.
+    // Every selected part is transparent: Make transparent reads Make opaque.
+    readonly property bool selectionTransparent: root.controller && root.controller.visibilityRevision >= 0
+                                                 && root.controller.selectedNodeCount >= 0
+                                                 && root.controller.isSelectionTransparent()
     readonly property bool explodedShowing: exploded && root.controller.explode.blend > 0.001
 
     function showTask(tool) {
@@ -110,6 +114,7 @@ Item {
             theme: root.theme
             // Draggable at its right edge, so a deep assembly's names get the room they need.
             Layout.preferredWidth: treeSplitter.effectiveWidth
+            Layout.fillWidth: false
             Layout.fillHeight: true
 
             ColumnLayout {
@@ -218,6 +223,9 @@ Item {
                         // updates whenever anything is hidden or shown.
                         readonly property int visibilityState: root.controller && root.controller.visibilityRevision >= 0
                             ? root.controller.nodeVisibilityState(stableId) : 0
+                        // The same for transparency: 0 opaque, 1 partly, 2 transparent.
+                        readonly property int transparencyState: root.controller && root.controller.visibilityRevision >= 0
+                            ? root.controller.nodeTransparencyState(stableId) : 0
                         highlighted: root.controller && root.controller.selectedNodeIds.indexOf(stableId) >= 0
                         implicitHeight: root.theme.rowCompact
                         // Keep the label centered against the complete selection
@@ -314,6 +322,41 @@ Item {
                                     theme: root.theme
                                     text: treeLabel.text
                                     visible: treeHover.hovered && treeLabel.truncated
+                                }
+                            }
+
+                            // Like the eye beside it: always shown for a transparent or partly
+                            // transparent row, on hover otherwise. Not for a hidden one, which
+                            // draws nothing to see through.
+                            ThemedToolButton {
+                                id: transparencyToggle
+                                objectName: "treeTransparencyToggle"
+                                theme: root.theme
+                                visible: treeDelegate.visibilityState !== 2
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                                Layout.alignment: Qt.AlignVCenter
+                                leftPadding: 2
+                                rightPadding: 2
+                                topPadding: 2
+                                bottomPadding: 2
+                                opacity: treeDelegate.transparencyState !== 0 || treeHover.hovered || hovered ? 1 : 0
+                                enabled: opacity > 0
+                                Accessible.name: treeDelegate.transparencyState === 2
+                                                 ? qsTr("Make %1 opaque").arg(treeDelegate.name)
+                                                 : qsTr("Make %1 transparent").arg(treeDelegate.name)
+                                onClicked: root.controller.setNodeTransparent(treeDelegate.stableId, treeDelegate.transparencyState !== 2)
+                                contentItem: ToolIcon {
+                                    name: "transparent"
+                                    color: treeDelegate.transparencyState === 2 ? root.theme.accent : root.foreground
+                                    opacity: treeDelegate.transparencyState === 1 ? 0.55 : 1
+                                }
+                                ThemedToolTip {
+                                    theme: root.theme
+                                    text: treeDelegate.transparencyState === 2 ? qsTr("Transparent — click to make opaque")
+                                          : treeDelegate.transparencyState === 1 ? qsTr("Partly transparent — click to make all transparent")
+                                                                                 : qsTr("Make transparent")
+                                    visible: transparencyToggle.hovered
                                 }
                             }
 
@@ -428,6 +471,7 @@ Item {
                         }
                     })
                     item.openFileRequested.connect(function() { root.openFileRequested() })
+                    item.savePictureRequested.connect(function() { captureDialog.open() })
                     // A document that arrives already loaded -- a tab dragged into a new
                     // window (#15) -- has no geometry streaming in, so ask for a replay.
                     if (root.controller.documentState === AppState.TreeReady) {
@@ -546,6 +590,7 @@ Item {
                 viewerPresentation: root.controller ? root.controller.viewerPresentation : AppState.Full
                 exploded: root.exploded
                 measureBlocked: root.explodedShowing
+                selectionTransparent: root.selectionTransparent
                 theme: root.theme
                 onToolTriggered: function(tool) {
                     if (tool === "fit") root.controller.fitView()
@@ -561,6 +606,7 @@ Item {
         ContextPanel {
             id: contextPanel
             Layout.preferredWidth: contextSplitter.effectiveWidth
+            Layout.fillWidth: false
             Layout.fillHeight: true
             controller: root.controller
             theme: root.theme
@@ -611,7 +657,7 @@ Item {
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: root.selectionTransparent ? qsTr("Make opaque") : qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make others transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }

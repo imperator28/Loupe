@@ -347,7 +347,8 @@ ApplicationWindow {
             }
             Inspect.ThemedMenuItem {
                 theme: appTheme
-                text: qsTr("Make Selection Transparent")
+                text: root.controller.visibilityRevision >= 0 && root.controller.selectedNodeCount >= 0
+                      && root.controller.isSelectionTransparent() ? qsTr("Make Selection Opaque") : qsTr("Make Selection Transparent")
                 enabled: root.controller.activeNodeId.length > 0
                 onTriggered: root.controller.toggleTransparentSelection()
             }
