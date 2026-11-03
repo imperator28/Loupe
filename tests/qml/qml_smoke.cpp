@@ -353,11 +353,23 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
         }
         return parts.join(QStringLiteral("; "));
     };
+    const auto tabsLaidOut = [&] {
+        // A strip not yet laid out has every tab at 0 x 0, which is also perfectly still: a
+        // fresh macOS runner sat like that past the first checks, and the drag missed.
+        const auto items = tabItems();
+        return !items.isEmpty() && std::all_of(items.cbegin(), items.cend(), [](QQuickItem* item) {
+            return item->width() > 0 && item->height() > 0;
+        });
+    };
     const auto waitForSettledTabs = [&] {
         QString previous;
-        QDeadlineTimer deadline(5000);
+        QDeadlineTimer deadline(8000);
         while (!deadline.hasExpired()) {
             QTest::qWait(100);
+            if (!tabsLaidOut()) {
+                previous.clear();
+                continue;
+            }
             const auto current = tabLayout();
             if (current == previous) return true;
             previous = current;
