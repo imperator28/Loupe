@@ -12,3 +12,5 @@ CMakePresets.json text eol=lf
 *.qml text eol=lf
 # vcpkg overlay ports are kept byte for byte as vcpkg ships them (some patches need CRLF).
 ports/** -text
+# Vendored skill: kept byte-for-byte as installed.
+.agents/** -text
