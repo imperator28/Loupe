@@ -42,6 +42,9 @@ commercial import SDK and is not in this release.
   installed. Help → Include Beta Versions offers pre-releases.
 - **What's New**: the first launch of a new version lists its highlights. Help → What's
   New in Loupe… shows them again.
+- **About Loupe**: shows the release channel for a beta or release candidate, and links
+  to this version's release notes, What's New, Check for Updates, all releases, the
+  source and licences. Copy Version Info is there for bug reports.
 - **Workspace layout**: every side panel is resizable and remembered. Measure, Section,
   Capture and Exploded view open in small windows that can be dragged or collapsed to
   their title bar.

@@ -47,8 +47,10 @@ Button {
         Rectangle {
             anchors.fill: parent
             radius: control.cornerRadius
+            // Primary: hover lifts the fill a little, press darkens it ~8% (design.md buttons).
             color: control.primary
-                   ? (control.down ? Qt.darker(control.accentFill, 1.08) : control.accentFill)
+                   ? (control.down ? Qt.darker(control.accentFill, 1.08)
+                      : control.hovered && control.enabled ? Qt.lighter(control.accentFill, 1.08) : control.accentFill)
                    : control.selectedAppearance ? control.selectionFill
                    : control.down ? control.pressFill
                    : control.hovered ? control.hoverFill

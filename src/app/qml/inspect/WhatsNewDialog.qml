@@ -16,7 +16,8 @@ Dialog {
     readonly property string version: updates ? updates.whatsNewVersion : ""
 
     modal: true
-    // A raised card, not a dimmed screen: Qt's dimmer drew as a grey block on Windows.
+    // Qt's own dimmer drew as a grey block on Windows; the window's ModalBackdrop blurs and
+    // tints it instead (Main.qml).
     dim: false
     anchors.centerIn: Overlay.overlay
     width: Math.min(460, Overlay.overlay ? Overlay.overlay.width - 48 : 460)
@@ -27,6 +28,7 @@ Dialog {
     footer: null
     // Dismissed however it goes: not again for this release.
     onClosed: if (updates) updates.markWhatsNewSeen()
+
 
     background: Rectangle {
         radius: root.theme ? root.theme.radius4 : 10

@@ -966,10 +966,14 @@ ApplicationWindow {
         }
     }
 
+    // The window's parts the sheets blur behind them.
+    readonly property var sheetBackdropSources: [root.menuBar, root.header, root.contentItem].filter(function(item) { return item })
+
     Inspect.AboutLoupeDialog {
         id: aboutLoupe
         theme: appTheme
         version: root.controller.applicationVersion
+        onWhatsNewRequested: whatsNew.open()
     }
 
     Inspect.InteractionGuide {
@@ -981,6 +985,13 @@ ApplicationWindow {
     Inspect.WhatsNewDialog {
         id: whatsNew
         theme: appTheme
+    }
+    // Behind those two sheets: the window blurred and tinted, in the overlay under them.
+    Inspect.ModalBackdrop {
+        parent: Overlay.overlay
+        theme: appTheme
+        shown: aboutLoupe.visible || whatsNew.visible
+        sources: root.sheetBackdropSources
     }
     // A moment after the window is up, so it opens over a drawn app rather than with it.
     Timer {
