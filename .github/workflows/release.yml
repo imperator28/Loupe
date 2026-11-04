@@ -313,12 +313,16 @@ jobs:
           case "${RELEASE_TAG}" in *-*) prerelease=(--prerelease) ;; esac
           notes_file=""
           if [ -f CHANGELOG.md ]; then
-            awk -v tag="## ${RELEASE_TAG}" '
-              $0 == tag { capture = 1; next }
-              capture && /^## / { exit }
-              capture { print }
-            ' CHANGELOG.md > release-notes.md
-            if [ -s release-notes.md ]; then notes_file="release-notes.md"; fi
+            # A pre-release without its own section (an rc, or a beta once its notes
+            # are folded into the release's) takes the section of the version it leads to.
+            for heading in "## ${RELEASE_TAG}" "## ${RELEASE_TAG%%-*}"; do
+              awk -v tag="${heading}" '
+                $0 == tag { capture = 1; next }
+                capture && /^## / { exit }
+                capture { print }
+              ' CHANGELOG.md > release-notes.md
+              if [ -s release-notes.md ]; then notes_file="release-notes.md"; break; fi
+            done
           fi
           # Idempotent: a moved tag (README/changelog landing after the first
           # publish, or any retag) re-runs this workflow against a release that
