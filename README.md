@@ -125,7 +125,7 @@ The in-app **View > Interaction** guide contains this same mouse, trackpad, and 
 
 ## Updates
 
-Loupe checks GitHub for a newer release each time it starts. When there is one, a download icon appears in the toolbar; click it and **Download** fetches the update, with a ring round the icon filling as it goes, and **Restart to Update** replaces the running copy and opens the new one, keeping your settings. **Help > Check for Updates…** checks on demand, and **Help > Include Beta Versions** chooses whether betas are offered. The update needs write access to the folder Loupe is in; on macOS, open Loupe from that folder (not straight from the downloaded zip) so it can replace itself. Set `LOUPE_NO_UPDATE_CHECK=1` to turn the check off.
+Loupe checks GitHub for a newer release each time it starts. When there is one, a download icon appears in the toolbar; click it and **Download** fetches the update, with a ring round the icon filling as it goes, and **Restart to Update** replaces the running copy and opens the new one, keeping your settings. **Help > Check for Updates…** checks on demand, and **Help > Include Beta Versions** chooses whether betas are offered. Betas are published as GitHub pre-releases: a manual run of the Release workflow with a label such as `v0.1.5-beta.9` builds, tags and publishes one. The update needs write access to the folder Loupe is in; on macOS, open Loupe from that folder (not straight from the downloaded zip) so it can replace itself. Set `LOUPE_NO_UPDATE_CHECK=1` to turn the check off.
 
 ## Install a Release Build
 
