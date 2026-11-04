@@ -77,9 +77,12 @@ Inspect.ElevatedPanel {
                         Layout.fillHeight: true
                         spacing: 2
 
-                        Inspect.ThemedToolButton {
+                        Inspect.IconButton {
                             theme: root.theme
-                            text: "↑"
+                            glyph: "chevronUp"
+                            implicitWidth: 24
+                            implicitHeight: 24
+                            cornerRadius: root.theme.radius1
                             Accessible.name: qsTr("Move %1 earlier").arg(queueRow.modelData.name)
                             enabled: queueRow.index > 0 && (!root.draft || !root.draft.exporting)
                             onClicked: root.draft.moveDrawing(queueRow.modelData.drawingId,
@@ -90,9 +93,12 @@ Inspect.ElevatedPanel {
                                 visible: parent.hovered
                             }
                         }
-                        Inspect.ThemedToolButton {
+                        Inspect.IconButton {
                             theme: root.theme
-                            text: "↓"
+                            glyph: "chevronDown"
+                            implicitWidth: 24
+                            implicitHeight: 24
+                            cornerRadius: root.theme.radius1
                             Accessible.name: qsTr("Move %1 later").arg(queueRow.modelData.name)
                             enabled: queueRow.index + 1 < queueList.count
                                      && (!root.draft || !root.draft.exporting)

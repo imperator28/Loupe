@@ -120,16 +120,10 @@ Item {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: root.theme.spacing3
-                spacing: root.theme.spacing2
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: root.theme.spacing1
-                    Label {
-                        text: qsTr("Assembly tree")
-                        color: root.foreground
-                        font.bold: true
-                        Layout.fillWidth: true
-                    }
+                spacing: root.theme.spacing2 + 2
+                PanelTitle {
+                    theme: root.theme
+                    text: qsTr("Assembly tree")
                     IconButton {
                         theme: root.theme
                         glyph: "expandAll"

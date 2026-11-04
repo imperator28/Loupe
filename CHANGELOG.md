@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.5-beta.10
+
+- **Section finalizes much faster on large assemblies**:
+  - Parts the plane does not touch, usually most of them, finish at once instead of each
+    going through a background build.
+  - The parts it does cut are built six at a time instead of one after another.
+  - The viewport no longer recounts every part each time one finishes, which made
+    finishing N parts cost N².
+  - Each build measures every vertex's distance to the plane once, and skips triangles
+    wholly on one side before any work.
+- **Transparent parts keep their edges**: edges stay on by default.
+  - For a clean ghost, Properties now has **Show edges when transparent**, under Opacity.
+- **Rename keeps the suffix**: in the export bucket only the name is edited, and `.step` or
+  `.stl` stays fixed after it. Clicking into the field no longer clears it.
+- **Panel titles match**: every side panel's heading (Assembly tree, Components, Parts,
+  properties, Export bucket, Drawing setup) is one style, at one height, with its count
+  on the right.
+  - Counts read "1 file" rather than "1 files".
+- **Colour picker without the grey block**: it opens as a raised card over the app.
+  - On Windows, Qt's dimmer had drawn as a grey rectangle in the middle of the view.
+- **Icons**: the exploded view's ring icon has its arrowhead joined to the arc.
+  - The export bucket's and drawing queue's arrows, close buttons and grip are drawn
+    icons instead of text characters.
+
 ## v0.1.5-beta.9
 
 - **Solid edges again**: beta.8's fitted clip planes made the pull that keeps edges in

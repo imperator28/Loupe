@@ -98,7 +98,7 @@ ColumnLayout {
         Layout.fillWidth: true
         text: root.draft && root.draft.exporting
               ? qsTr("Exporting %1%").arg(Math.round(root.draft.exportProgress * 100))
-              : root.draft ? qsTr("Export %1 files").arg(root.draft.checkedCount) : qsTr("Export files")
+              : !root.draft ? qsTr("Export files") : root.draft.checkedCount === 1 ? qsTr("Export 1 file") : qsTr("Export %1 files").arg(root.draft.checkedCount)
         enabled: root.draft && root.draft.canExport
         onClicked: root.draft.exportReviewedPlan()
         Inspect.ThemedToolTip {

@@ -554,6 +554,7 @@ void ApplicationController::openFile(const QUrl& file)
     definitionByNode_.clear();
     visibilityModel_.setNodes({});
     opacityByNode_.clear();
+    transparentWithoutEdges_.clear();
     materialByNode_.clear();
     appearanceByNode_.clear();
     importedColorByNode_.clear();
@@ -760,6 +761,30 @@ void ApplicationController::setNodeTransparent(const QString& nodeId, const bool
 {
     const auto parts = geometryNodesForAction(nodeId);
     if (!parts.isEmpty()) visibilityModel_.setGhosted(parts, transparent);
+}
+
+bool ApplicationController::nodeShowsTransparentEdges(const QString& nodeId) const
+{
+    return !transparentWithoutEdges_.contains(nodeId);
+}
+
+bool ApplicationController::selectionShowsTransparentEdges() const
+{
+    const auto selected = geometryNodesForSelection();
+    return std::ranges::none_of(selected, [this](const QString& nodeId) { return transparentWithoutEdges_.contains(nodeId); });
+}
+
+void ApplicationController::setSelectionTransparentEdges(const bool shown)
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty()) return;
+    for (const auto& nodeId : selected) {
+        if (shown) transparentWithoutEdges_.remove(nodeId);
+        else transparentWithoutEdges_.insert(nodeId);
+    }
+    // Nothing in the visibility model changed: say so here for the viewport to redraw.
+    ++visibilityRevision_;
+    emit visibilityChanged();
 }
 
 QString ApplicationController::assemblyExportStage() const

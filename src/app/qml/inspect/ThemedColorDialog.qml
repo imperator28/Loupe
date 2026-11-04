@@ -36,6 +36,10 @@ Dialog {
     readonly property int rgbB: Math.round(pickedColor.b * 255)
 
     modal: true
+    // A quick choice, not a data-loss decision, so a raised card over the app rather than
+    // a dimmed screen (design.md dialogs). Qt's dimmer also came out on Windows as a grey
+    // block smaller than the window, in the middle of the view.
+    dim: false
     anchors.centerIn: Overlay.overlay
     width: 400
     padding: theme ? theme.spacing4 : 16

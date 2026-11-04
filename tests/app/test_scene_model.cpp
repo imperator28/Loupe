@@ -29,6 +29,7 @@ private slots:
     void meshGeometryPreviewOmitsCapUntilCommit();
     void meshGeometryBuildsSectionOverlayWithoutBodyFaces();
     void sectionOverlayBuildsFilledContoursWithRoundedJoins();
+    void sectionOverlaySkipsAPartThePlaneMisses();
     void topologyRangesResolveAndCopyCompleteEntities();
     void faceBoundaryExcludesInternalTessellationEdges();
     void faceFrameDistinguishesAFlatFaceFromACurvedOne();
@@ -234,6 +235,35 @@ void SceneModelTest::sectionOverlayBuildsFilledContoursWithRoundedJoins()
     const auto outlineIndexCount = result.indices.size() - result.fillIndexCount;
     QVERIFY(outlineIndexCount >= 240);
     QCOMPARE(result.capTriangleCount, result.indices.size() / 3);
+}
+
+void SceneModelTest::sectionOverlaySkipsAPartThePlaneMisses()
+{
+    // A plane clear of the part: nothing to build, so the overlay is empty at once, with
+    // no worker thread -- most parts of a large assembly, which used to be built one by one.
+    QVERIFY(!loupe::app::render::sectionPlaneCrossesBox({-1, -1, -1}, {1, 1, 1}, {0, 0, 1}, 5.0));
+    QVERIFY(!loupe::app::render::sectionPlaneCrossesBox({-1, -1, -1}, {1, 1, 1}, {0, 0, 1}, -1.5));
+    QVERIFY(loupe::app::render::sectionPlaneCrossesBox({-1, -1, -1}, {1, 1, 1}, {0, 0, 1}, 0.5));
+    QVERIFY(loupe::app::render::sectionPlaneCrossesBox({-1, -1, -1}, {1, 1, 1}, {0, 0, 1}, 1.0)); // touching a face
+    // Tilted: the box's corner reaches sqrt(3) along the diagonal.
+    const QVector3D diagonal(1, 1, 1);
+    QVERIFY(loupe::app::render::sectionPlaneCrossesBox({-1, -1, -1}, {1, 1, 1}, diagonal, 1.7));
+    QVERIFY(!loupe::app::render::sectionPlaneCrossesBox({-1, -1, -1}, {1, 1, 1}, diagonal, 1.8));
+
+    loupe::app::render::MeshGeometry source;
+    QVERIFY(source.appendWorkerMesh(QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7]}")));
+    loupe::app::render::MeshGeometry overlay;
+    QVERIFY(overlay.copySectionOverlayFrom(&source));
+    // Cut first, so there is a cap to clear.
+    overlay.configureSection(true, 0.0, 0.0, 1.0, 0.0, false, true, false, true, true, false, 0.1);
+    QTRY_VERIFY_WITH_TIMEOUT(overlay.sectionCapTriangleCount() >= 2, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!overlay.sectionBusy(), 3000);
+    overlay.configureSection(true, 0.0, 0.0, 1.0, 5.0, false, true, false, true, true, false, 0.1);
+    QVERIFY(!overlay.sectionBusy());
+    QCOMPARE(overlay.triangleCount(), 0);
+    QCOMPARE(overlay.sectionCapTriangleCount(), 0);
 }
 
 void SceneModelTest::topologyRangesResolveAndCopyCompleteEntities()

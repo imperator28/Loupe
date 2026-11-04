@@ -78,7 +78,12 @@ Item {
     property var sectionApplyRequest: null
     property int sectionBusyCount: 0
     property int sectionFinalizeTotal: 0
-    readonly property int maximumConcurrentSectionBuilds: 1
+    // Section builds run on worker threads: several at once, so a large assembly is not
+    // finalized one part after another.
+    readonly property int maximumConcurrentSectionBuilds: 6
+    // Parts handed to their geometry per pass of the event loop. Parts the plane misses
+    // finish on the spot, so a pass gets through many of them; the cap keeps the UI live.
+    readonly property int sectionItemsPerPass: 150
     property var hoverTopology: null
     property var acceptedTopologies: []
     readonly property bool hasAcceptedFaceHighlight: {
@@ -1012,7 +1017,9 @@ Item {
         const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
         const sectionPreview = section && section.enabled && (section.interacting || root.explodeSettling)
         edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
-                && nodeShown(edgeModel.nodeId) && !nodeTransparent(edgeModel.nodeId)
+                && nodeShown(edgeModel.nodeId)
+                // A transparent part keeps its edges unless they were turned off for it.
+                && (!nodeTransparent(edgeModel.nodeId) || controller.nodeShowsTransparentEdges(edgeModel.nodeId))
     }
 
     function applyRenderMode() {
@@ -1117,13 +1124,10 @@ Item {
         if (queue.length > 0) sectionApplyTimer.restart()
     }
 
-    function updateSectionBusyCount() {
-        let count = 0
-        for (let id in sectionOverlayGeometryByNode) {
-            if (sectionOverlayGeometryByNode[id].sectionBusy) count += 1
-        }
-        sectionBusyCount = count
-        applyRenderMode()
+    // One part's build started or finished. Counted as it changes: counting every part
+    // each time made finishing N parts cost N squared.
+    function sectionBuildBusyChanged(busy) {
+        sectionBusyCount = Math.max(0, sectionBusyCount + (busy ? 1 : -1))
         if (sectionApplyRequest && sectionApplyIndex < sectionApplyQueue.length
                 && sectionBusyCount < maximumConcurrentSectionBuilds
                 && !sectionApplyTimer.running) {
@@ -1132,19 +1136,29 @@ Item {
     }
 
     function applyNextSectionItem() {
-        if (!sectionApplyRequest || sectionApplyIndex >= sectionApplyQueue.length) return
-        if (sectionBusyCount >= maximumConcurrentSectionBuilds) return
-        const item = sectionApplyQueue[sectionApplyIndex]
-        const geometry = item.geometry
         const request = sectionApplyRequest
-        sectionApplyIndex += 1
-        const plane = sectionPlaneFor(item.nodeId, request.normal, request.offset)
-        geometry.configureSection(request.enabled, plane.x, plane.y, plane.z,
-                                  plane.w, request.flipped, request.capEnabled, request.sliceOnly,
-                                  request.sliceFill, request.sliceOutline, request.preview,
-                                  request.outlineWidth)
-        updateSectionBusyCount()
+        let handed = 0
+        while (request && sectionApplyIndex < sectionApplyQueue.length
+               && sectionBusyCount < maximumConcurrentSectionBuilds && handed < sectionItemsPerPass) {
+            const item = sectionApplyQueue[sectionApplyIndex]
+            sectionApplyIndex += 1
+            handed += 1
+            const plane = sectionPlaneFor(item.nodeId, request.normal, request.offset)
+            item.geometry.configureSection(request.enabled, plane.x, plane.y, plane.z,
+                                           plane.w, request.flipped, request.capEnabled, request.sliceOnly,
+                                           request.sliceFill, request.sliceOutline, request.preview,
+                                           request.outlineWidth)
+        }
+        // More to hand out and room for it: carry on next pass. Otherwise a finishing
+        // build restarts this.
+        if (request && sectionApplyIndex < sectionApplyQueue.length
+                && sectionBusyCount < maximumConcurrentSectionBuilds)
+            sectionApplyTimer.restart()
     }
+
+    // The render state depends on whether the section is still being finalized, not on
+    // each part's progress: set it when that changes.
+    onSectionFinalizingChanged: applyRenderMode()
 
     function ensureSectionOverlay(segmentKey) {
         if (root.presentationOnly) return null
@@ -1159,7 +1173,7 @@ Item {
             overlayGeometry.destroy()
             return null
         }
-        overlayGeometry.sectionBusyChanged.connect(root.updateSectionBusyCount)
+        overlayGeometry.sectionBusyChanged.connect(function() { root.sectionBuildBusyChanged(overlayGeometry.sectionBusy) })
         const overlayModel = sectionOverlayModelComponent.createObject(partNode(sourceModel.nodeId), {
             "geometry": overlayGeometry,
             "nodeId": sourceModel.nodeId,

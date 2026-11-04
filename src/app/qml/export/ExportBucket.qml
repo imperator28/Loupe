@@ -14,19 +14,10 @@ Inspect.ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Export bucket")
-                color: root.foreground
-                font.bold: true
-                font.pixelSize: root.theme.fontTitle
-            }
-            Label {
-                text: root.draft ? root.draft.checkedCount : 0
-                color: root.theme ? root.theme.muted : "transparent"
-            }
+        Inspect.PanelTitle {
+            theme: root.theme
+            text: qsTr("Export bucket")
+            detail: !root.draft ? "" : root.draft.checkedCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft.checkedCount)
         }
 
         ListView {
@@ -122,11 +113,10 @@ Inspect.ElevatedPanel {
                         Accessible.name: qsTr("Drag %1 to reorder").arg(bucketRow.modelData.name)
                         activeFocusOnTab: true
 
-                        Label {
+                        Inspect.ToolIcon {
                             anchors.centerIn: parent
-                            text: "\u22ee\u22ee"
+                            name: "grip"
                             color: root.theme ? root.theme.muted : "transparent"
-                            font.pixelSize: 18
                         }
 
                         MouseArea {
@@ -156,9 +146,12 @@ Inspect.ElevatedPanel {
 
                     Column {
                         spacing: 2
-                        Inspect.ThemedToolButton {
+                        Inspect.IconButton {
                             theme: root.theme
-                            text: "\u2191"
+                            glyph: "chevronUp"
+                            implicitWidth: 24
+                            implicitHeight: 24
+                            cornerRadius: root.theme.radius1
                             enabled: bucketRow.index > 0
                                      && (!root.draft || !root.draft.exporting)
                             onClicked: root.draft.moveBucketItemById(bucketRow.modelData.nodeId,
@@ -169,9 +162,12 @@ Inspect.ElevatedPanel {
                                 visible: parent.hovered
                             }
                         }
-                        Inspect.ThemedToolButton {
+                        Inspect.IconButton {
                             theme: root.theme
-                            text: "\u2193"
+                            glyph: "chevronDown"
+                            implicitWidth: 24
+                            implicitHeight: 24
+                            cornerRadius: root.theme.radius1
                             enabled: bucketRow.index + 1 < bucketList.count
                                      && (!root.draft || !root.draft.exporting)
                             onClicked: root.draft.moveBucketItemById(bucketRow.modelData.nodeId,
@@ -206,10 +202,20 @@ Inspect.ElevatedPanel {
                                 visible: sourceNameHover.hovered
                             }
                         }
+                        // Only the name is edited; the suffix the format gives it (.step, .stl)
+                        // stays put after it, so renaming never means typing it again.
                         Inspect.ThemedTextField {
                             id: filenameEditor
+                            objectName: "bucketFilename-" + bucketRow.modelData.nodeId
                             theme: root.theme
                             Layout.fillWidth: true
+                            readonly property string suffix: {
+                                const match = bucketRow.modelData.filename.match(/\.(step|stp|stl)$/i)
+                                return match ? match[0] : ""
+                            }
+                            readonly property string stem: suffix.length > 0
+                                ? bucketRow.modelData.filename.slice(0, -suffix.length) : bucketRow.modelData.filename
+                            rightPadding: suffixLabel.visible ? suffixLabel.implicitWidth + 14 : 8
                             enabled: !root.draft || !root.draft.exporting
                             onTextEdited: bucketRow.filenameEdited = true
                             onEditingFinished: {
@@ -218,12 +224,25 @@ Inspect.ElevatedPanel {
                                 bucketRow.filenameEdited = false
                             }
                             Accessible.name: qsTr("Output filename for %1").arg(bucketRow.modelData.name)
+                            Label {
+                                id: suffixLabel
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: filenameEditor.suffix.length > 0
+                                text: filenameEditor.suffix
+                                color: root.theme ? root.theme.muted : "transparent"
+                            }
                         }
+                        // The name shown follows the plan except while it is being typed in.
+                        // RestoreNone: restoring on focus put back the field's first, empty
+                        // text, so clicking in to rename cleared the name.
                         Binding {
                             target: filenameEditor
                             property: "text"
-                            value: bucketRow.modelData.filename
+                            value: filenameEditor.stem
                             when: !filenameEditor.activeFocus
+                            restoreMode: Binding.RestoreNone
                         }
                         Label {
                             Layout.fillWidth: true
@@ -236,9 +255,9 @@ Inspect.ElevatedPanel {
                         }
                     }
 
-                    Inspect.ThemedToolButton {
+                    Inspect.IconButton {
                         theme: root.theme
-                        text: "\u00d7"
+                        glyph: "close"
                         enabled: !root.draft || !root.draft.exporting
                         onClicked: root.draft.setChecked(bucketRow.modelData.nodeId, false)
                         Inspect.ThemedToolTip {

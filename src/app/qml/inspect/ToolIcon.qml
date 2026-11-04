@@ -76,7 +76,8 @@ Item {
             t: ""
         },
         "handleRing": {
-            s: "M16.2 7.4 A6.6 6.6 0 1 1 13.4 4.2 M13.4 4.2 L16.6 3.6 M13.4 4.2 L14.4 7.2",
+            // Most of a circle, and an arrowhead growing from the arc's end along its turn.
+            s: "M13.00 4.80 A6 6 0 1 1 6.14 5.40 M5.12 8.22 L6.14 5.40 L3.19 5.92",
             f: "",
             t: ""
         },
@@ -164,6 +165,12 @@ Item {
         "themeDark": {
             s: "M15.6 12.4 A6.4 6.4 0 1 1 7.6 3.9 A5.1 5.1 0 0 0 15.6 12.4 Z",
             f: "",
+            t: ""
+        },
+        // A drag grip: two columns of three dots.
+        "grip": {
+            s: "",
+            f: "M8 5.2 A1.2 1.2 0 1 0 8.01 5.2 Z M12 5.2 A1.2 1.2 0 1 0 12.01 5.2 Z M8 8.8 A1.2 1.2 0 1 0 8.01 8.8 Z M12 8.8 A1.2 1.2 0 1 0 12.01 8.8 Z M8 12.4 A1.2 1.2 0 1 0 8.01 12.4 Z M12 12.4 A1.2 1.2 0 1 0 12.01 12.4 Z",
             t: ""
         },
         "expandAll": {

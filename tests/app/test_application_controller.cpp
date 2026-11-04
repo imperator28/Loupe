@@ -386,6 +386,18 @@ void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
     QCOMPARE(controller.nodeOpacity(parts.at(0)), loupe::app::ApplicationController::kDefaultTransparentOpacity);
     controller.toggleTransparentSelection();
     QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+    // Edges stay on a transparent part by default, and can be turned off for it.
+    controller.toggleTransparentSelection();
+    QVERIFY(controller.nodeShowsTransparentEdges(parts.at(0)));
+    QVERIFY(controller.selectionShowsTransparentEdges());
+    const auto beforeEdges = visibility.count();
+    controller.setSelectionTransparentEdges(false);
+    QVERIFY(visibility.count() > beforeEdges);
+    QVERIFY(!controller.nodeShowsTransparentEdges(parts.at(0)));
+    QVERIFY(controller.nodeShowsTransparentEdges(parts.at(1)));
+    controller.setSelectionTransparentEdges(true);
+    QVERIFY(controller.nodeShowsTransparentEdges(parts.at(0)));
+    controller.toggleTransparentSelection();
     // The tree row's own toggle.
     controller.setNodeTransparent(parts.at(1), true);
     QVERIFY(controller.isNodeTransparent(parts.at(1)));

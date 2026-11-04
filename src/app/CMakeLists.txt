@@ -190,6 +190,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedProgressBar.qml
         qml/inspect/ThemedSegmentedControl.qml
         qml/inspect/IconButton.qml
+        qml/inspect/PanelTitle.qml
         qml/inspect/ThemedSlider.qml
         qml/inspect/ThemedSpinBox.qml
         qml/inspect/UpdateIndicator.qml

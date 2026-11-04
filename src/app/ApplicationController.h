@@ -251,6 +251,11 @@ public:
     Q_INVOKABLE [[nodiscard]] double selectionOpacity() const;
     // Below 1 makes the selection transparent at that opacity; 1 makes it opaque again.
     Q_INVOKABLE void setSelectionOpacity(double opacity);
+    // Whether a transparent part still draws its edges: yes unless turned off for it, in
+    // the Properties panel.
+    Q_INVOKABLE [[nodiscard]] bool nodeShowsTransparentEdges(const QString& nodeId) const;
+    Q_INVOKABLE [[nodiscard]] bool selectionShowsTransparentEdges() const;
+    Q_INVOKABLE void setSelectionTransparentEdges(bool shown);
     static constexpr double kDefaultTransparentOpacity = 0.45;
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId, const QString& scope);
@@ -370,6 +375,8 @@ private:
     int visibilityRevision_{};
     // A transparent part's own opacity, when it was set to other than the default.
     QHash<QString, double> opacityByNode_;
+    // Transparent parts whose edges are turned off.
+    QSet<QString> transparentWithoutEdges_;
     QString assemblyExportMessage_;
     bool assemblyExportSucceeded_{false};
     QString assemblyExportStageKey_;

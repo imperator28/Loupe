@@ -34,13 +34,11 @@ ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2 + 2
 
-        Label {
+        PanelTitle {
+            theme: root.theme
             text: !controller || controller.selectedNodeCount === 0 ? qsTr("Document properties")
-                  : controller.selectedNodeCount === 1 ? qsTr("Component properties")
-                                                       : qsTr("Selection properties  %1 bodies").arg(controller.selectedNodeCount)
-            color: root.foreground
-            font.bold: true
-            Layout.fillWidth: true
+                  : controller.selectedNodeCount === 1 ? qsTr("Component properties") : qsTr("Selection properties")
+            detail: controller && controller.selectedNodeCount > 1 ? qsTr("%1 bodies").arg(controller.selectedNodeCount) : ""
         }
         Label {
             visible: controller && controller.activeNodeId !== ""
@@ -173,6 +171,16 @@ ElevatedPanel {
                 font.features: { "tnum": 1 }
                 TextMetrics { id: opacityMetrics; text: "100%" }
             }
+        }
+        // Only for a transparent selection: edges on by default, off for a clean ghost.
+        ThemedSwitch {
+            objectName: "transparentEdgesSwitch"
+            theme: root.theme
+            visible: controller && controller.activeNodeId !== "" && opacitySlider.value < 0.995
+            text: qsTr("Show edges when transparent")
+            checked: controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                     ? controller.selectionShowsTransparentEdges() : true
+            onToggled: if (controller) controller.setSelectionTransparentEdges(checked)
         }
 
         // Document-level: shown when nothing is selected, where this panel otherwise only

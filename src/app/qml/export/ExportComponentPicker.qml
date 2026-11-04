@@ -101,19 +101,10 @@ Inspect.ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2 + 2
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Components")
-                color: root.foreground
-                font.bold: true
-                font.pixelSize: root.theme.fontTitle
-            }
-            Label {
-                text: root.draft ? qsTr("%1 files").arg(root.draft.checkedCount) : qsTr("0 files")
-                color: root.theme ? root.theme.muted : "transparent"
-            }
+        Inspect.PanelTitle {
+            theme: root.theme
+            text: qsTr("Components")
+            detail: root.draft && root.draft.checkedCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft ? root.draft.checkedCount : 0)
         }
 
         RowLayout {

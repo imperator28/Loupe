@@ -403,6 +403,17 @@ bool MeshGeometry::copySectionOverlayFrom(QObject* source)
     auto sectionSource = QSharedPointer<SectionSourceData>::create();
     sectionSource->vertices = sourceGeometry->sourceVertexData_;
     sectionSource->indices = sourceGeometry->sourceIndexData_;
+    QVector3D minimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    QVector3D maximum(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+    const auto& vertices = sectionSource->vertices;
+    for (qsizetype index = 0; index + 2 < vertices.size(); index += 3) {
+        minimum = QVector3D(std::min(minimum.x(), vertices.at(index)), std::min(minimum.y(), vertices.at(index + 1)),
+                            std::min(minimum.z(), vertices.at(index + 2)));
+        maximum = QVector3D(std::max(maximum.x(), vertices.at(index)), std::max(maximum.y(), vertices.at(index + 1)),
+                            std::max(maximum.z(), vertices.at(index + 2)));
+    }
+    sectionSource->minimum = minimum;
+    sectionSource->maximum = maximum;
     sectionSource_ = sectionSource;
     sourceVertexData_.clear();
     sourceNormalData_.clear();
@@ -697,6 +708,19 @@ void MeshGeometry::startSectionOverlayBuild()
 {
     if (!sectionSource_) return;
     const auto generation = ++sectionBuildGeneration_;
+    // Most parts of a large assembly lie wholly on one side of the plane: their overlay is
+    // simply empty, so set it here rather than send each through a worker thread.
+    if (!sectionPlaneCrossesBox(sectionSource_->minimum, sectionSource_->maximum, sectionNormal_, sectionOffset_)) {
+        if (!vertexData_.isEmpty() || !indexData_.isEmpty()) {
+            vertexData_.clear();
+            normalData_.clear();
+            indexData_.clear();
+            sectionCapTriangleCount_ = 0;
+            sectionFillIndexCount_ = 0;
+            upload();
+        }
+        return;
+    }
     SectionBuildRequest request{sectionSource_, sectionNormal_, sectionOffset_,
                                 sectionFlipped_, sectionCapEnabled_, sectionSliceOnly_, sectionSliceFill_,
                                 sectionSliceOutline_, static_cast<float>(sectionOutlineWidth_)};

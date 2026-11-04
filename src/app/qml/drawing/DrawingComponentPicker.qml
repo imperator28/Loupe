@@ -101,19 +101,10 @@ Inspect.ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2 + 2
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Parts")
-                color: root.foreground
-                font.bold: true
-                font.pixelSize: root.theme.fontTitle
-            }
-            Label {
-                text: root.draft ? qsTr("%1 queued").arg(root.draft.queueCount) : qsTr("0 queued")
-                color: root.theme ? root.theme.muted : "transparent"
-            }
+        Inspect.PanelTitle {
+            theme: root.theme
+            text: qsTr("Parts")
+            detail: root.draft ? qsTr("%1 queued").arg(root.draft.queueCount) : qsTr("0 queued")
         }
 
         Inspect.ThemedTextField {
