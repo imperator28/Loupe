@@ -43,6 +43,7 @@ private:
     void executeExportPlan(std::uint64_t requestId, const QByteArray& planJson, const QString& fingerprint);
     void executeDrawingPlan(std::uint64_t requestId, const QByteArray& planJson, const QString& fingerprint);
     void requestDrawingPreview(std::uint64_t requestId, const QByteArray& requestJson, int revision);
+    void exportAssembly(const protocol::ExportAssembly& command);
     void cancel(std::uint64_t requestId);
 
     QLocalServer server_;

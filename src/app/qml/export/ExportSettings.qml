@@ -29,6 +29,14 @@ ColumnLayout {
             onClicked: destinationDialog.open()
         }
     }
+    Label {
+        Layout.fillWidth: true
+        visible: root.draft && root.draft.destinationIsDefault
+        text: qsTr("Beside the STEP file. The folder is created on the first export.")
+        color: root.theme.muted
+        font.pixelSize: root.theme.fontCaption !== undefined ? root.theme.fontCaption : 11
+        wrapMode: Text.Wrap
+    }
 
     RowLayout {
         Layout.fillWidth: true
@@ -90,7 +98,7 @@ ColumnLayout {
         Layout.fillWidth: true
         text: root.draft && root.draft.exporting
               ? qsTr("Exporting %1%").arg(Math.round(root.draft.exportProgress * 100))
-              : root.draft ? qsTr("Export %1 files").arg(root.draft.checkedCount) : qsTr("Export files")
+              : !root.draft ? qsTr("Export files") : root.draft.checkedCount === 1 ? qsTr("Export 1 file") : qsTr("Export %1 files").arg(root.draft.checkedCount)
         enabled: root.draft && root.draft.canExport
         onClicked: root.draft.exportReviewedPlan()
         Inspect.ThemedToolTip {

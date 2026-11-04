@@ -73,7 +73,7 @@ jobs:
       matrix:
         include:
           - name: macOS Apple Silicon release
-            os: macos-14
+            os: macos-15
             configure_preset: macos-arm64-release
             vcpkg_triplet: arm64-osx-release
             vcpkg_cache_path: ~/.cache/vcpkg/archives
@@ -139,7 +139,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ matrix.vcpkg_cache_path }}
-          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**', 'ports/**') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-
             vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-
@@ -155,14 +155,15 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg_triplet }}" \
             -DVCPKG_HOST_TRIPLET="${{ matrix.vcpkg_triplet }}" \
             -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
-            -DVCPKG_INSTALL_OPTIONS="${{ matrix.vcpkg_install_options }}"
+            -DVCPKG_INSTALL_OPTIONS="${{ matrix.vcpkg_install_options }}" \
+            -DLOUPE_RELEASE_LABEL="${PACKAGE_LABEL}"
 
       - name: Save vcpkg binary cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ${{ matrix.vcpkg_cache_path }}
-          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.vcpkg_triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build
         shell: bash
@@ -174,14 +175,17 @@ jobs:
           ctest --preset "${{ matrix.configure_preset }}" --output-on-failure --timeout 600 || {
             # Keep the failing run's QML log; the re-run below would overwrite it.
             cp "build/${{ matrix.configure_preset }}/tests/qml-smoke.log" qml-smoke-first-run.log 2>/dev/null || true
+            cp "build/${{ matrix.configure_preset }}/tests/application-controller.log" application-controller-first-run.log 2>/dev/null || true
             ctest --preset "${{ matrix.configure_preset }}" --rerun-failed --extra-verbose --timeout 600
             exit 1
           }
 
-      - name: Show QML smoke log
+      - name: Show test logs
         if: failure()
         shell: bash
-        run: cat qml-smoke-first-run.log || echo "qml-smoke did not fail, or wrote no log"
+        run: |
+          cat qml-smoke-first-run.log || echo "qml-smoke did not fail, or wrote no log"
+          cat application-controller-first-run.log || echo "application-controller did not fail, or wrote no log"
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -226,9 +230,26 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         # The bundle as a tester runs it, with no Qt environment pointing at the build tree.
+        # A crash prints nothing by itself, so on failure the launch is repeated under lldb for
+        # a backtrace, and any crash report macOS wrote is shown.
         run: |
-          env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QT_QPA_PLATFORM QT_FORCE_STDERR_LOGGING=1 \
-            perl -e 'alarm 120; exec @ARGV' "dist/loupe-macos-arm64/Loupe.app/Contents/MacOS/Loupe" --self-check
+          app="dist/loupe-macos-arm64/Loupe.app/Contents/MacOS/Loupe"
+          launch() {
+            env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QT_QPA_PLATFORM QT_FORCE_STDERR_LOGGING=1 "$@"
+          }
+          status=0
+          launch perl -e 'alarm 120; exec @ARGV' "$app" --self-check || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::Backtrace (lldb)"
+            launch perl -e 'alarm 180; exec @ARGV' lldb --batch -o run -k "thread backtrace all" -k "quit 1" -- "$app" --self-check || true
+            echo "::endgroup::"
+            echo "::group::Crash reports"
+            for report in $(ls -t ~/Library/Logs/DiagnosticReports/Loupe* 2>/dev/null | head -2); do
+              echo "== $report"; head -c 60000 "$report"; echo
+            done
+            echo "::endgroup::"
+            exit "$status"
+          fi
 
       - name: Upload packaged app
         uses: actions/upload-artifact@v4
@@ -239,13 +260,49 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    # Only tags publish a release; manual dispatch runs stop at artifacts.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A tag publishes its release. A manual run publishes too when its label is a
+    # pre-release name (v1.2.3-beta.N or v1.2.3-rc.N), so a beta reaches the in-app
+    # updater without anyone pushing a tag by hand: the release creates the tag, at the
+    # commit that was built. A manual run on master labelled with the project version
+    # itself (v1.2.3) publishes the final release the same way. Any other manual run
+    # stops at artifacts; the step below holds each label to its exact form.
+    # The tag check is skipped on a manual run, and a job downstream of a skipped one is
+    # skipped too unless its condition says otherwise -- hence the explicit build result.
+    if: >-
+      !cancelled() && needs.build.result == 'success'
+      && (startsWith(github.ref, 'refs/tags/v')
+          || (github.event_name == 'workflow_dispatch'
+              && (contains(inputs.label, '-beta.') || contains(inputs.label, '-rc.')
+                  || (github.ref == 'refs/heads/master' && startsWith(inputs.label, 'v')))))
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.label }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the release label
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          # The same rules as a pushed tag: a well-formed name whose version is the
+          # project's, so the app's About and the release agree. A final release (no
+          # suffix) is published only from master, as the merged code.
+          if ! [[ "${RELEASE_TAG}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-(beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::A published manual run needs a label like v1.2.3, v1.2.3-beta.N or v1.2.3-rc.N, not ${RELEASE_TAG}"
+            exit 1
+          fi
+          label_version="${BASH_REMATCH[1]}"
+          if [ -z "${BASH_REMATCH[2]}" ] && [ "${GITHUB_REF}" != "refs/heads/master" ]; then
+            echo "::error::The final release ${RELEASE_TAG} is published from master, not ${GITHUB_REF}"
+            exit 1
+          fi
+          project_version="$(sed -n 's/^project(Loupe VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
+          if [ "${label_version}" != "${project_version}" ]; then
+            echo "::error::Label ${RELEASE_TAG} is not project version ${project_version}"
+            exit 1
+          fi
 
       - name: Download packaged apps
         uses: actions/download-artifact@v4
@@ -265,39 +322,45 @@ jobs:
           # A suffixed tag is a pre-release: published for testing, never marked
           # as the latest release the README's download link resolves to.
           prerelease=()
-          case "${{ github.ref_name }}" in *-*) prerelease=(--prerelease) ;; esac
+          case "${RELEASE_TAG}" in *-*) prerelease=(--prerelease) ;; esac
           notes_file=""
           if [ -f CHANGELOG.md ]; then
-            awk -v tag="## ${{ github.ref_name }}" '
-              $0 == tag { capture = 1; next }
-              capture && /^## / { exit }
-              capture { print }
-            ' CHANGELOG.md > release-notes.md
-            if [ -s release-notes.md ]; then notes_file="release-notes.md"; fi
+            # A pre-release without its own section (an rc, or a beta once its notes
+            # are folded into the release's) takes the section of the version it leads to.
+            for heading in "## ${RELEASE_TAG}" "## ${RELEASE_TAG%%-*}"; do
+              awk -v tag="${heading}" '
+                $0 == tag { capture = 1; next }
+                capture && /^## / { exit }
+                capture { print }
+              ' CHANGELOG.md > release-notes.md
+              if [ -s release-notes.md ]; then notes_file="release-notes.md"; break; fi
+            done
           fi
           # Idempotent: a moved tag (README/changelog landing after the first
           # publish, or any retag) re-runs this workflow against a release that
           # already exists. `gh release create` would fail outright in that
           # case, so update in place instead -- same notes logic, existing
           # assets replaced via --clobber.
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists; updating in place"
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; updating in place"
             if [ -n "$notes_file" ]; then
-              gh release edit "${{ github.ref_name }}" "${prerelease[@]}" \
-                --title "Loupe ${{ github.ref_name }}" \
+              gh release edit "${RELEASE_TAG}" "${prerelease[@]}" \
+                --title "Loupe ${RELEASE_TAG}" \
                 --notes-file "$notes_file"
             fi
-            gh release upload "${{ github.ref_name }}" loupe-*.zip --clobber
+            gh release upload "${RELEASE_TAG}" loupe-*.zip --clobber
           elif [ -n "$notes_file" ]; then
-            echo "Using CHANGELOG.md section for ${{ github.ref_name }}"
-            gh release create "${{ github.ref_name }}" "${prerelease[@]}" \
-              --title "Loupe ${{ github.ref_name }}" \
+            echo "Using CHANGELOG.md section for ${RELEASE_TAG}"
+            gh release create "${RELEASE_TAG}" "${prerelease[@]}" \
+              --target "${{ github.sha }}" \
+              --title "Loupe ${RELEASE_TAG}" \
               --notes-file "$notes_file" \
               loupe-*.zip
           else
-            echo "No CHANGELOG.md section for ${{ github.ref_name }}; generating notes"
-            gh release create "${{ github.ref_name }}" "${prerelease[@]}" \
-              --title "Loupe ${{ github.ref_name }}" \
+            echo "No CHANGELOG.md section for ${RELEASE_TAG}; generating notes"
+            gh release create "${RELEASE_TAG}" "${prerelease[@]}" \
+              --target "${{ github.sha }}" \
+              --title "Loupe ${RELEASE_TAG}" \
               --generate-notes \
               loupe-*.zip
           fi

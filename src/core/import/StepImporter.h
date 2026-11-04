@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 
 #include <Standard_Handle.hxx>
@@ -41,9 +42,13 @@ struct ImportResult {
     std::shared_ptr<const NativeDocument> native;
 };
 
+// How far the translation into the XCAF document has got, 0 to 1. Parsing the file comes
+// first and reports nothing: OCCT's STEP parser takes no progress range.
+using TransferProgress = std::function<void(double fraction)>;
+
 class StepImporter {
 public:
-    [[nodiscard]] ImportResult read(const std::filesystem::path& file) const;
+    [[nodiscard]] ImportResult read(const std::filesystem::path& file, const TransferProgress& transferProgress = {}) const;
 };
 
 } // namespace loupe::import

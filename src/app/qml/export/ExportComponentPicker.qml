@@ -101,19 +101,10 @@ Inspect.ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2 + 2
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Components")
-                color: root.foreground
-                font.bold: true
-                font.pixelSize: root.theme.fontTitle
-            }
-            Label {
-                text: root.draft ? qsTr("%1 files").arg(root.draft.checkedCount) : qsTr("0 files")
-                color: root.theme ? root.theme.muted : "transparent"
-            }
+        Inspect.PanelTitle {
+            theme: root.theme
+            text: qsTr("Components")
+            detail: root.draft && root.draft.checkedCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft ? root.draft.checkedCount : 0)
         }
 
         RowLayout {
@@ -197,14 +188,16 @@ Inspect.ElevatedPanel {
                         anchors.rightMargin: 6
                         spacing: root.theme.spacing1
 
-                        Inspect.ThemedToolButton {
+                        Inspect.IconButton {
                             id: disclosureButton
                             objectName: "exportComponentDisclosure-" + componentRow.modelData.nodeId
                             theme: root.theme
                             Layout.preferredWidth: 20
-                            Layout.preferredHeight: 24
+                            Layout.preferredHeight: 20
+                            Layout.alignment: Qt.AlignVCenter
+                            cornerRadius: root.theme.radius1
                             visible: componentRow.modelData.hasChildren
-                            text: root.isCollapsed(componentRow.modelData.nodeId) ? "▸" : "▾"
+                            glyph: root.isCollapsed(componentRow.modelData.nodeId) ? "chevronRight" : "chevronDown"
                             Accessible.name: root.isCollapsed(componentRow.modelData.nodeId)
                                              ? qsTr("Expand %1").arg(componentRow.modelData.name)
                                              : qsTr("Collapse %1").arg(componentRow.modelData.name)

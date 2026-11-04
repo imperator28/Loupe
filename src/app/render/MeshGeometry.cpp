@@ -5,6 +5,7 @@
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolTypes.h"
 
+#include <QHash>
 #include <QVector3D>
 #include <QVector2D>
 #include <QJsonArray>
@@ -264,6 +265,105 @@ QVariantMap MeshGeometry::faceFrameFor(const quint32 topologyId) const
             {QStringLiteral("triangleCount"), triangleNormals.size()}};
 }
 
+QVariantMap MeshGeometry::faceViewFor(const quint32 topologyId) const
+{
+    const auto range = std::find_if(sourceTopology_.cbegin(), sourceTopology_.cend(),
+                                    [topologyId](const auto& value) {
+                                        return value.topologyId == topologyId
+                                            && value.kind == protocol::TopologyKind::Face;
+                                    });
+    if (range == sourceTopology_.cend()) return {};
+    const auto pointAt = [this](const quint32 index) {
+        const auto offset = static_cast<qsizetype>(index) * 3;
+        return QVector3D{sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1),
+                         sourceVertexData_.at(offset + 2)};
+    };
+
+    // Triangle normals, not vertex normals: a vertex on a face border carries a normal
+    // blended with the neighbouring face. Edges are keyed by vertex position rather than
+    // index, since the mesher may duplicate a vertex along a seam.
+    QVector<QVector3D> triangleNormals;
+    QVector3D areaWeightedNormal;
+    QVector3D areaWeightedCentroid;
+    double totalArea = 0.0;
+    struct Edge final { QVector3D from; QVector3D to; int uses{}; };
+    QHash<QString, Edge> edges;
+    const auto keyOf = [](const QVector3D& point) {
+        return QStringLiteral("%1,%2,%3").arg(point.x(), 0, 'g', 7).arg(point.y(), 0, 'g', 7).arg(point.z(), 0, 'g', 7);
+    };
+    const auto addEdge = [&](const QVector3D& from, const QVector3D& to) {
+        const auto a = keyOf(from);
+        const auto b = keyOf(to);
+        auto& edge = edges[a < b ? a + QLatin1Char('|') + b : b + QLatin1Char('|') + a];
+        edge.from = from;
+        edge.to = to;
+        ++edge.uses;
+    };
+    const auto end = static_cast<qsizetype>(range->firstIndex) + range->indexCount;
+    for (auto index = static_cast<qsizetype>(range->firstIndex); index + 2 < end; index += 3) {
+        const auto first = pointAt(sourceIndexData_.at(index));
+        const auto second = pointAt(sourceIndexData_.at(index + 1));
+        const auto third = pointAt(sourceIndexData_.at(index + 2));
+        const auto cross = QVector3D::crossProduct(second - first, third - first);
+        const auto doubleArea = static_cast<double>(cross.length());
+        if (doubleArea <= 0.0) continue;
+        areaWeightedNormal += cross;
+        areaWeightedCentroid += (first + second + third) / 3.0F * static_cast<float>(doubleArea * 0.5);
+        totalArea += doubleArea * 0.5;
+        triangleNormals.append(cross / static_cast<float>(doubleArea));
+        addEdge(first, second);
+        addEdge(second, third);
+        addEdge(third, first);
+    }
+    if (totalArea <= 0.0 || triangleNormals.isEmpty()) return {};
+
+    // A view is only called face-on within a tenth of a degree; a tessellated curve's
+    // facets differ by far more than that.
+    constexpr double kFlatToleranceRadians = 0.1 * std::numbers::pi / 180.0;
+    constexpr double kAxisToleranceRadians = 1.0 * std::numbers::pi / 180.0;
+    QVariantMap view{{QStringLiteral("topologyId"), topologyId},
+                     {QStringLiteral("centroid"), QVariant::fromValue(areaWeightedCentroid / static_cast<float>(totalArea))}};
+    const auto normal = areaWeightedNormal.normalized();
+    const bool flat = !areaWeightedNormal.isNull()
+        && std::ranges::all_of(triangleNormals, [&normal](const QVector3D& triangleNormal) {
+               return std::acos(std::clamp(static_cast<double>(QVector3D::dotProduct(triangleNormal, normal)), -1.0, 1.0))
+                   <= kFlatToleranceRadians;
+           });
+    if (flat) {
+        view.insert(QStringLiteral("kind"), QStringLiteral("plane"));
+        view.insert(QStringLiteral("direction"), QVariant::fromValue(normal));
+    } else {
+        // A cylinder's facet normals all lie across its axis, so the axis is the cross
+        // product of the two most different ones -- provided every facet agrees.
+        const auto reference = triangleNormals.front();
+        auto farthest = reference;
+        for (const auto& triangleNormal : triangleNormals)
+            if (std::abs(QVector3D::dotProduct(triangleNormal, reference)) < std::abs(QVector3D::dotProduct(farthest, reference)))
+                farthest = triangleNormal;
+        const auto axis = QVector3D::crossProduct(reference, farthest);
+        if (axis.length() > 0.05F) {
+            const auto unitAxis = axis.normalized();
+            const bool cylindrical = std::ranges::all_of(triangleNormals, [&unitAxis](const QVector3D& triangleNormal) {
+                return std::abs(static_cast<double>(QVector3D::dotProduct(triangleNormal, unitAxis))) <= std::sin(kAxisToleranceRadians);
+            });
+            if (cylindrical) {
+                view.insert(QStringLiteral("kind"), QStringLiteral("axis"));
+                view.insert(QStringLiteral("direction"), QVariant::fromValue(unitAxis));
+            }
+        }
+    }
+
+    // The longest boundary segment, if it is a real straight edge rather than one chord of
+    // a curve: it must span a good part of the face.
+    const Edge* longest = nullptr;
+    for (const auto& edge : edges)
+        if (edge.uses == 1 && (!longest || (edge.to - edge.from).lengthSquared() > (longest->to - longest->from).lengthSquared()))
+            longest = &edge;
+    if (longest && static_cast<double>((longest->to - longest->from).length()) >= 0.25 * std::sqrt(totalArea))
+        view.insert(QStringLiteral("edgeDirection"), QVariant::fromValue((longest->to - longest->from).normalized()));
+    return view;
+}
+
 bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
 {
     const auto* sourceGeometry = qobject_cast<MeshGeometry*>(source);
@@ -303,6 +403,17 @@ bool MeshGeometry::copySectionOverlayFrom(QObject* source)
     auto sectionSource = QSharedPointer<SectionSourceData>::create();
     sectionSource->vertices = sourceGeometry->sourceVertexData_;
     sectionSource->indices = sourceGeometry->sourceIndexData_;
+    QVector3D minimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+    QVector3D maximum(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
+    const auto& vertices = sectionSource->vertices;
+    for (qsizetype index = 0; index + 2 < vertices.size(); index += 3) {
+        minimum = QVector3D(std::min(minimum.x(), vertices.at(index)), std::min(minimum.y(), vertices.at(index + 1)),
+                            std::min(minimum.z(), vertices.at(index + 2)));
+        maximum = QVector3D(std::max(maximum.x(), vertices.at(index)), std::max(maximum.y(), vertices.at(index + 1)),
+                            std::max(maximum.z(), vertices.at(index + 2)));
+    }
+    sectionSource->minimum = minimum;
+    sectionSource->maximum = maximum;
     sectionSource_ = sectionSource;
     sourceVertexData_.clear();
     sourceNormalData_.clear();
@@ -597,6 +708,19 @@ void MeshGeometry::startSectionOverlayBuild()
 {
     if (!sectionSource_) return;
     const auto generation = ++sectionBuildGeneration_;
+    // Most parts of a large assembly lie wholly on one side of the plane: their overlay is
+    // simply empty, so set it here rather than send each through a worker thread.
+    if (!sectionPlaneCrossesBox(sectionSource_->minimum, sectionSource_->maximum, sectionNormal_, sectionOffset_)) {
+        if (!vertexData_.isEmpty() || !indexData_.isEmpty()) {
+            vertexData_.clear();
+            normalData_.clear();
+            indexData_.clear();
+            sectionCapTriangleCount_ = 0;
+            sectionFillIndexCount_ = 0;
+            upload();
+        }
+        return;
+    }
     SectionBuildRequest request{sectionSource_, sectionNormal_, sectionOffset_,
                                 sectionFlipped_, sectionCapEnabled_, sectionSliceOnly_, sectionSliceFill_,
                                 sectionSliceOutline_, static_cast<float>(sectionOutlineWidth_)};

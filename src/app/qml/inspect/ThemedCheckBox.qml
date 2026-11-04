@@ -41,12 +41,15 @@ CheckBox {
                 ColorAnimation { duration: control.fadeDuration }
             }
 
-            Text {
+            // A drawn check, not the "✓" character: that came out in each platform's
+            // symbol font, which on Windows is a heavy, dated glyph.
+            ToolIcon {
                 anchors.centerIn: parent
-                text: "✓"
+                width: 12
+                height: 12
+                name: "check"
+                strokeWidth: 2
                 color: control.accentForegroundColor
-                font.bold: true
-                font.pixelSize: 11
                 opacity: control.checked ? 1 : 0
 
                 Behavior on opacity {

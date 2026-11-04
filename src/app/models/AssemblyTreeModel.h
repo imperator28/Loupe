@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractItemModel>
+#include <QHash>
 #include <QString>
 
 #include <vector>
@@ -35,6 +36,11 @@ public:
     // as a value type with a `valid` property, and both TreeView.expandToIndex and
     // TableView.positionViewAtIndex take one, so a row would have to be converted back.
     Q_INVOKABLE [[nodiscard]] QModelIndex indexForStableId(const QString& stableId) const;
+    // Nodes whose name contains `text`, ignoring case, in the order the tree shows them, so
+    // stepping through matches walks down the tree.
+    Q_INVOKABLE [[nodiscard]] QStringList findNodes(const QString& text) const;
+    // The node a TreeView row shows, for a Shift-click range taken row by row.
+    Q_INVOKABLE [[nodiscard]] QString stableIdAt(const QModelIndex& index) const { return data(index, StableIdRole).toString(); }
 
     [[nodiscard]] QModelIndex index(int row, int column, const QModelIndex& parent = {}) const override;
     [[nodiscard]] QModelIndex parent(const QModelIndex& child) const override;
@@ -44,10 +50,14 @@ public:
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;
 
 private:
+    void rebuildIndex();
     [[nodiscard]] int rowForNode(int nodeIndex) const;
-    [[nodiscard]] std::vector<int> childrenOf(int parentIndex) const;
+    [[nodiscard]] const std::vector<int>& childrenOf(int parentIndex) const;
 
     std::vector<SnapshotNode> nodes_;
+    QHash<QString, std::vector<int>> childrenByParent_;
+    QHash<QString, int> nodeIndexById_;
+    std::vector<int> rowByNode_;
     bool initialized_{false};
 };
 

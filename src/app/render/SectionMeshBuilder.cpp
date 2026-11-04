@@ -1,4 +1,6 @@
 #include "app/render/SectionMeshBuilder.h"
+#include <vector>
+#include <array>
 
 #include <QHash>
 #include <QSet>
@@ -325,6 +327,21 @@ void appendRoundedOutline(SectionBuildResult* result, const QVector<Contour>& co
 
 } // namespace
 
+bool sectionPlaneCrossesBox(const QVector3D& minimum, const QVector3D& maximum, const QVector3D& normal,
+                            const double offset)
+{
+    if (normal.isNull() || minimum.x() > maximum.x()) return false;
+    const auto unit = normal.normalized();
+    const QVector3D centre = (minimum + maximum) * 0.5F;
+    const QVector3D half = (maximum - minimum) * 0.5F;
+    // The box's reach along the normal, either side of its centre, plus a hair so a face
+    // lying exactly in the plane still counts as cut.
+    const auto reach = static_cast<double>(std::abs(unit.x()) * half.x() + std::abs(unit.y()) * half.y()
+                                           + std::abs(unit.z()) * half.z());
+    const auto distance = static_cast<double>(QVector3D::dotProduct(unit, centre)) - offset;
+    return std::abs(distance) <= reach + std::max(1.0e-5, reach * 1.0e-6);
+}
+
 SectionBuildResult buildSectionOverlay(const SectionBuildRequest& request)
 {
     SectionBuildResult result;
@@ -347,26 +364,38 @@ SectionBuildResult buildSectionOverlay(const SectionBuildRequest& request)
     };
     const auto inside = [&request](const double value) { return request.flipped ? value <= 0.0 : value >= 0.0; };
 
+    // Each vertex's distance to the plane, once: shared vertices were measured again for
+    // every triangle and edge they belong to.
+    const auto vertexCount = sourceVertices.size() / 3;
+    std::vector<double> distances(static_cast<std::size_t>(vertexCount));
+    for (qsizetype vertex = 0; vertex < vertexCount; ++vertex)
+        distances[static_cast<std::size_t>(vertex)] = distance(pointAt(static_cast<quint32>(vertex)));
+
     QVector<Segment> segments;
     for (qsizetype triangle = 0; triangle + 2 < sourceIndices.size(); triangle += 3) {
-        const QVector<QVector3D> input{pointAt(sourceIndices.at(triangle)), pointAt(sourceIndices.at(triangle + 1)),
-                                       pointAt(sourceIndices.at(triangle + 2))};
-        QVector<QVector3D> intersections;
-        for (qsizetype index = 0; index < input.size(); ++index) {
-            const auto& start = input.at(index);
-            const auto& end = input.at((index + 1) % input.size());
-            const auto startDistance = distance(start);
-            const auto endDistance = distance(end);
+        const std::array<quint32, 3> corner{sourceIndices.at(triangle), sourceIndices.at(triangle + 1),
+                                            sourceIndices.at(triangle + 2)};
+        const std::array<double, 3> cornerDistance{distances[corner[0]], distances[corner[1]], distances[corner[2]]};
+        // A triangle wholly on one side has nothing to add: the common case, skipped
+        // before any point is built.
+        if (inside(cornerDistance[0]) == inside(cornerDistance[1]) && inside(cornerDistance[1]) == inside(cornerDistance[2]))
+            continue;
+        std::array<QVector3D, 2> intersections;
+        int found = 0;
+        for (int index = 0; index < 3 && found < 2; ++index) {
+            const auto next = (index + 1) % 3;
+            const auto startDistance = cornerDistance[index];
+            const auto endDistance = cornerDistance[next];
             if (inside(startDistance) == inside(endDistance)) continue;
+            const auto start = pointAt(corner[index]);
+            const auto end = pointAt(corner[next]);
             const auto amount = static_cast<float>(startDistance / (startDistance - endDistance));
             const auto intersection = start + (end - start) * amount;
-            if (intersections.isEmpty()
-                || (intersections.constLast() - intersection).lengthSquared() > toleranceSquared)
-                intersections.append(intersection);
+            if (found == 0 || (intersections[found - 1] - intersection).lengthSquared() > toleranceSquared)
+                intersections[found++] = intersection;
         }
-        if (intersections.size() == 2
-            && (intersections.at(0) - intersections.at(1)).lengthSquared() > toleranceSquared)
-            segments.append({intersections.at(0), intersections.at(1)});
+        if (found == 2 && (intersections[0] - intersections[1]).lengthSquared() > toleranceSquared)
+            segments.append({intersections[0], intersections[1]});
     }
 
     auto contours = assembleContours(segments, tolerance);

@@ -34,13 +34,11 @@ ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2 + 2
 
-        Label {
+        PanelTitle {
+            theme: root.theme
             text: !controller || controller.selectedNodeCount === 0 ? qsTr("Document properties")
-                  : controller.selectedNodeCount === 1 ? qsTr("Component properties")
-                                                       : qsTr("Selection properties  %1 bodies").arg(controller.selectedNodeCount)
-            color: root.foreground
-            font.bold: true
-            Layout.fillWidth: true
+                  : controller.selectedNodeCount === 1 ? qsTr("Component properties") : qsTr("Selection properties")
+            detail: controller && controller.selectedNodeCount > 1 ? qsTr("%1 bodies").arg(controller.selectedNodeCount) : ""
         }
         Label {
             visible: controller && controller.activeNodeId !== ""
@@ -143,6 +141,48 @@ ElevatedPanel {
             }
         }
 
+        // How see-through the selection is. Make transparent starts it at the default;
+        // all the way right makes it opaque again.
+        Label { visible: controller && controller.activeNodeId !== ""; text: qsTr("Opacity"); color: root.foreground }
+        RowLayout {
+            visible: controller && controller.activeNodeId !== ""
+            Layout.fillWidth: true
+            spacing: root.theme.spacing2
+            ThemedSlider {
+                id: opacitySlider
+                objectName: "opacitySlider"
+                theme: root.theme
+                Layout.fillWidth: true
+                Layout.minimumWidth: 80
+                from: 0.1
+                to: 1
+                stepSize: 0.05
+                value: controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                       ? controller.selectionOpacity() : 1
+                Accessible.name: qsTr("Opacity")
+                onMoved: if (controller) controller.setSelectionOpacity(value)
+            }
+            Label {
+                objectName: "opacityValue"
+                Layout.preferredWidth: opacityMetrics.width
+                horizontalAlignment: Text.AlignRight
+                text: qsTr("%1%").arg(Math.round(opacitySlider.value * 100))
+                color: root.subduedForeground
+                font.features: { "tnum": 1 }
+                TextMetrics { id: opacityMetrics; text: "100%" }
+            }
+        }
+        // Only for a transparent selection: edges on by default, off for a clean ghost.
+        ThemedSwitch {
+            objectName: "transparentEdgesSwitch"
+            theme: root.theme
+            visible: controller && controller.activeNodeId !== "" && opacitySlider.value < 0.995
+            text: qsTr("Show edges when transparent")
+            checked: controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                     ? controller.selectionShowsTransparentEdges() : true
+            onToggled: if (controller) controller.setSelectionTransparentEdges(checked)
+        }
+
         // Document-level: shown when nothing is selected, where this panel otherwise only
         // carries its title.
         ColumnLayout {
@@ -197,8 +237,72 @@ ElevatedPanel {
                       : qsTr("This file gives every part the same colour. An automatic palette tells them apart.")
                 color: root.subduedForeground
             }
+
+            // How long this file took to open, against the clock from opening it -- the
+            // figures to set against another CAD program's. History lists every open.
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.topMargin: root.theme.spacing3
+                Layout.preferredHeight: 1
+                color: root.theme.border
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Opening time"); color: root.foreground; Layout.fillWidth: true }
+                Label {
+                    visible: root.openTiming.cached === true
+                    text: qsTr("from cache")
+                    color: root.subduedForeground
+                    font.pixelSize: root.theme.fontCaption
+                }
+            }
+            Repeater {
+                model: [{ key: "viewMs", label: qsTr("Ready to view"), hint: qsTr("The first parts are on screen; the model can be turned and zoomed") },
+                        { key: "previewMs", label: qsTr("All parts shown"), hint: qsTr("Every part is on screen, at preview detail") },
+                        { key: "fullMs", label: qsTr("Fully detailed"), hint: qsTr("Every part at full detail, ready to measure and export") }]
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Label {
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        color: root.subduedForeground
+                        HoverHandler { id: timingHover }
+                        ThemedToolTip { theme: root.theme; text: modelData.hint; visible: timingHover.hovered }
+                    }
+                    Label {
+                        objectName: "openTiming-" + modelData.key
+                        text: root.formatDuration(root.openTiming[modelData.key])
+                        color: root.foreground
+                        font.features: { "tnum": 1 }
+                    }
+                }
+            }
+            ThemedButton {
+                objectName: "openHistoryButton"
+                theme: root.theme
+                Layout.topMargin: root.theme.spacing1
+                text: qsTr("Opening History…")
+                onClicked: openHistoryDialog.open()
+            }
         }
         Item { Layout.fillHeight: true }
+    }
+
+    readonly property var openTiming: controller ? controller.openTiming : ({})
+    // 840 ms, 4.2 s, 1 min 12 s; a dash until reached.
+    function formatDuration(ms) {
+        if (ms === undefined || ms < 0) return root.openTiming.opening ? qsTr("…") : qsTr("—")
+        if (ms < 1000) return qsTr("%1 ms").arg(Math.round(ms))
+        if (ms < 60000) return qsTr("%1 s").arg((ms / 1000).toFixed(ms < 10000 ? 1 : 0))
+        return qsTr("%1 min %2 s").arg(Math.floor(ms / 60000)).arg(Math.round((ms % 60000) / 1000))
+    }
+
+    OpenHistoryDialog {
+        id: openHistoryDialog
+        theme: root.theme
+        history: controller ? controller.openHistory : null
+        formatDuration: root.formatDuration
     }
 
     ThemedColorDialog {

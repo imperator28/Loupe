@@ -4,6 +4,7 @@
 
 #include <QtEndian>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -79,6 +80,11 @@ public:
         const auto value = QString::fromUtf8(bytes_.constData() + offset_, static_cast<qsizetype>(length));
         offset_ += static_cast<qsizetype>(length);
         return value;
+    }
+    void skip(const qsizetype count)
+    {
+        ensure(count);
+        offset_ += count;
     }
     void ensureRemaining() const
     {
@@ -273,6 +279,68 @@ GeometryPayload decodeGeometry(const QByteArray& bytes)
         return payload;
     }
     throw ProtocolError("Geometry payload type is invalid");
+}
+
+double meshFaceArea(const QByteArray& bytes) noexcept
+{
+    try {
+        Reader reader(bytes);
+        if (reader.u32() != kMagic || reader.u16() != kVersion) return 0.0;
+        if (reader.u8() != static_cast<quint8>(GeometryType::Mesh)) return 0.0;
+        static_cast<void>(reader.u8());
+        static_cast<void>(reader.u64());
+        static_cast<void>(reader.u64());
+        for (int field = 0; field < 4; ++field) static_cast<void>(reader.string());
+        const auto vertexCount = reader.u32();
+        const auto indexCount = reader.u32();
+        const auto topologyCount = reader.u32();
+        if (vertexCount > kMaximumVertices || indexCount > kMaximumIndices || topologyCount > kMaximumTopologyRanges)
+            return 0.0;
+        // Vertices and normals (3 floats each per vertex), then the u32 indices.
+        reader.skip(static_cast<qsizetype>(vertexCount) * 6 * 4 + static_cast<qsizetype>(indexCount) * 4);
+        double area = 0.0;
+        for (quint32 index = 0; index < topologyCount; ++index) {
+            reader.skip(4 + 1 + 4 + 4); // topologyId, kind, firstIndex, indexCount
+            const auto measure = reader.number();
+            reader.skip(4); // radiusMm
+            if (std::isfinite(measure) && measure > 0.0F) area += measure;
+        }
+        return area;
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+std::optional<MeshBounds> meshBounds(const QByteArray& bytes) noexcept
+{
+    try {
+        Reader reader(bytes);
+        if (reader.u32() != kMagic || reader.u16() != kVersion) return std::nullopt;
+        if (reader.u8() != static_cast<quint8>(GeometryType::Mesh)) return std::nullopt;
+        static_cast<void>(reader.u8());
+        static_cast<void>(reader.u64());
+        static_cast<void>(reader.u64());
+        for (int field = 0; field < 4; ++field) static_cast<void>(reader.string());
+        const auto vertexCount = reader.u32();
+        static_cast<void>(reader.u32());
+        static_cast<void>(reader.u32());
+        if (vertexCount == 0 || vertexCount > kMaximumVertices) return std::nullopt;
+        MeshBounds bounds;
+        bool found = false;
+        for (quint32 vertex = 0; vertex < vertexCount; ++vertex) {
+            std::array<float, 3> point{reader.number(), reader.number(), reader.number()};
+            if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2])) continue;
+            for (int axis = 0; axis < 3; ++axis) {
+                bounds.minimum[axis] = found ? std::min(bounds.minimum[axis], point[axis]) : point[axis];
+                bounds.maximum[axis] = found ? std::max(bounds.maximum[axis], point[axis]) : point[axis];
+            }
+            found = true;
+        }
+        if (!found) return std::nullopt;
+        return bounds;
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 } // namespace loupe::protocol

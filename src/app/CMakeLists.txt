@@ -1,6 +1,18 @@
 qt_add_executable(loupe-app
     main.cpp
     ApplicationController.cpp
+    DocumentTabs.cpp
+    DocumentTabs.h
+    platform/FileAssociation.cpp
+    platform/FileAssociation.h
+    platform/FileOpenRouter.cpp
+    platform/FileOpenRouter.h
+    platform/WindowManager.cpp
+    platform/WindowManager.h
+    platform/TempHygiene.cpp
+    platform/TempHygiene.h
+    platform/UpdateController.cpp
+    platform/UpdateController.h
     ApplicationController.h
     export/ExportWorkspaceController.cpp
     export/ExportWorkspaceController.h
@@ -13,7 +25,13 @@ qt_add_executable(loupe-app
     models/SelectionModel.cpp
     models/SelectionModel.h
     models/VisibilityModel.cpp
+    models/SavedViews.cpp
+    models/OpenHistory.cpp
+    models/OpenHistory.h
+    models/SavedViews.h
     models/VisibilityModel.h
+    models/RemainingTimeEstimator.cpp
+    models/RemainingTimeEstimator.h
     models/UnitReviewModel.cpp
     models/UnitReviewModel.h
     models/MaterialLibraryModel.cpp
@@ -37,6 +55,8 @@ qt_add_executable(loupe-app
     tools/CaptureController.h
     tools/SectionController.cpp
     tools/SectionController.h
+    tools/ExplodeController.cpp
+    tools/ExplodeController.h
     render/MeshGeometry.cpp
     render/MeshGeometry.h
     render/SectionMeshBuilder.cpp
@@ -49,11 +69,20 @@ qt_add_executable(loupe-app
     render/SceneModel.h
     render/PartPalette.cpp
     render/PartPalette.h
+    render/HandleRingGeometry.cpp
+    render/HandleRingGeometry.h
 )
 
 set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")
 set(loupe_app_icon_svg "${loupe_branding_dir}/loupe-app-icon.svg")
 set(loupe_app_icon_png "${loupe_branding_dir}/loupe-app-icon.png")
+
+# What's New: each release's highlights, shown once after an update.
+qt_add_resources(loupe-app "loupe-whats-new"
+    PREFIX "/whats-new"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/whats-new.json"
+)
 
 qt_add_resources(loupe-app "loupe-branding"
     PREFIX "/branding"
@@ -86,6 +115,9 @@ if(APPLE)
         # with the About dialog.
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        # Declares .step/.stp as documents Loupe opens, so Finder offers it in Open With
+        # and Get Info > Change All (#8).
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/platform/Info.plist.in"
     )
     target_sources(loupe-app PRIVATE platform/WindowChrome.h platform/WindowChrome.mm)
     find_library(loupe_appkit_framework AppKit REQUIRED)
@@ -116,6 +148,8 @@ else()
         # WindowChrome.cpp calls DwmSetWindowAttribute to keep the native
         # title bar's dark/light mode in sync with the in-app theme toggle.
         target_link_libraries(loupe-app PRIVATE dwmapi)
+        # FileAssociation tells Explorer the registered file types changed (SHChangeNotify).
+        target_link_libraries(loupe-app PRIVATE shell32)
         # Without this the target links as a console-subsystem app, so a
         # console window tags along beside the QML window on every launch,
         # showing qDebug/qWarning output. qt_add_executable links Qt's
@@ -146,6 +180,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/InspectWorkspace.qml
         qml/inspect/ViewportNavigation.qml
         qml/inspect/PointerInputRouter.qml
+        qml/inspect/PanelSplitter.qml
         qml/inspect/ProjectionControl.qml
         qml/inspect/SectionManipulator.qml
         qml/inspect/SectionClipMaterial.qml
@@ -167,7 +202,15 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedComboBox.qml
         qml/inspect/ThemedProgressBar.qml
         qml/inspect/ThemedSegmentedControl.qml
+        qml/inspect/IconButton.qml
+        qml/inspect/ModalBackdrop.qml
+        qml/inspect/PanelTitle.qml
+        qml/inspect/ThemedSlider.qml
         qml/inspect/ThemedSpinBox.qml
+        qml/inspect/UpdateIndicator.qml
+        qml/inspect/ViewsPanel.qml
+        qml/inspect/OpenHistoryDialog.qml
+        qml/inspect/WhatsNewDialog.qml
         qml/inspect/ThemedSwitch.qml
         qml/inspect/ThemedRadioButton.qml
         qml/inspect/ThemedTextField.qml
@@ -180,6 +223,10 @@ qt_add_qml_module(loupe-app
         qml/inspect/ContextPanel.qml
         qml/inspect/MeasurementPanel.qml
         qml/inspect/SectionPanel.qml
+        qml/inspect/ExplodePanel.qml
+        qml/inspect/FloatingToolWindow.qml
+        qml/inspect/ExplodeHandle.qml
+        qml/inspect/ExplodeHandleMath.qml
         qml/inspect/CapturePanel.qml
         qml/inspect/CadEdgeMaterial.qml
         qml/inspect/ThemedColorDialog.qml
@@ -201,5 +248,11 @@ if(LOUPE_ENABLE_QML_PROFILING)
     target_compile_definitions(loupe-app PRIVATE QT_QML_DEBUG)
 endif()
 target_compile_definitions(loupe-app PRIVATE LOUPE_VERSION="${PROJECT_VERSION}")
+# The tag or beta label a release build is made for (v0.1.5-beta.7), so the app knows which
+# pre-release it is when it checks for updates. CI passes it; local builds leave it empty.
+set(LOUPE_RELEASE_LABEL "" CACHE STRING "Release tag or beta label this build is for")
+if(LOUPE_RELEASE_LABEL)
+    target_compile_definitions(loupe-app PRIVATE LOUPE_RELEASE_LABEL="${LOUPE_RELEASE_LABEL}")
+endif()
 
 loupe_enable_warnings(loupe-app)

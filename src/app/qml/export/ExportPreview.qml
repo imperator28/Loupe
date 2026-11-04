@@ -44,8 +44,11 @@ Inspect.ElevatedPanel {
             item.theme = Qt.binding(function() { return root.theme })
             item.presentationOnly = true
             item.renderModeControlVisible = true
-            // Both Export previews are orbitable, so both get the view cube.
-            item.viewCubeVisible = true
+            // Both Export previews are orbitable, so both get the view cube -- once there is
+            // something to orbit: over the empty preview it sat on top of the hint.
+            item.viewCubeVisible = Qt.binding(function() {
+                return !root.requireSelection || root.displayOnlyNodeId.length > 0
+            })
             item.selectionEnabled = Qt.binding(function() { return root.selectionEnabled })
             item.componentHoverEnabled = false
             item.contextActionsEnabled = true

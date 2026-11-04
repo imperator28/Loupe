@@ -1,4 +1,6 @@
 #include "app/ApplicationController.h"
+#include "app/platform/UpdateController.h"
+#include "protocol/GeometryPayload.h"
 #include "app/cache/CacheKey.h"
 #include "app/cache/CacheStore.h"
 #include "app/cache/SourceFingerprint.h"
@@ -6,6 +8,7 @@
 #include "core/domain/AssemblyTypes.h"
 #include "core/inspection/MaterialProperties.h"
 
+#include <QStandardPaths>
 #include <QCoreApplication>
 #include <QBuffer>
 #include <QColor>
@@ -13,6 +16,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QQuaternion>
 #include <QFutureWatcher>
 #include <QHash>
 #include <QJsonArray>
@@ -23,8 +27,10 @@
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
+#include <QDateTime>
 #include <QtConcurrent/QtConcurrentRun>
 
+#include <cmath>
 #include <algorithm>
 
 namespace {
@@ -161,11 +167,11 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             previewGeometryReceived_ = true;
             emit importProgressChanged();
         }
+        markOpenMilestone(openViewMs_);
         noteImportedColor(nodeId, sourceColor);
-        if (!sourceColor.isEmpty() && importedColorByNode_.value(nodeId) != sourceColor) {
-            importedColorByNode_.insert(nodeId, sourceColor);
-            if (isNodeSelected(nodeId)) emit componentPropertiesChanged();
-        }
+        if (noteSegmentColor(nodeId, segmentKey, sourceColor, meshJson) && isNodeSelected(nodeId))
+            emit componentPropertiesChanged();
+        notePartBounds(nodeId, meshJson);
         meshRevisionBySegment_.insert(segmentKey, ++geometryRevisionCounter_);
         emit meshReady(nodeId, segmentKey, sourceColor, meshJson);
     });
@@ -194,13 +200,33 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         emit edgeReady(nodeId, edgeJson);
     });
     connect(&workerClient_, &worker::WorkerClient::progress, this, [this](quint64 requestId, const QString& stage, const double fraction) {
+        if (requestId != 0 && requestId == activeAssemblyExportRequestId_) {
+            assemblyExportStageKey_ = stage;
+            assemblyExportProgress_ = std::clamp(fraction, 0.0, 1.0);
+            emit assemblyExportProgressChanged();
+            return;
+        }
         if (requestId != activeRequestId_) return;
         setImportProgress(stage, fraction);
         if (fraction >= 1.0) {
             exportWorkspaceController_.setDocumentReady(true);
             drawingWorkspaceController_.setDocumentReady(true);
             saveGeometryCache();
+            markOpenMilestone(openFullMs_);
+            // The importer's own timings follow the last progress; record once they are in.
+            const auto request = activeRequestId_;
+            QTimer::singleShot(1500, this, [this, request] { if (request == activeRequestId_) recordOpen(); });
         }
+    });
+    // The importer's timings run from when it started, after the app launched it: shifted
+    // onto the app's clock by when it finished, they give when every part was first shown.
+    connect(&workerClient_, &worker::WorkerClient::importMetrics, this,
+            [this](const quint64 requestId, const QString&, const QString&, qint64, qint64, qint64, qint64,
+                   qint64, const qint64 previewReadyMs, const qint64 finalReadyMs, qint64, qint64, int) {
+        if (requestId != activeRequestId_ || !openClock_.isValid() || openPreviewMs_ >= 0 || previewReadyMs <= 0) return;
+        const auto offset = std::max<qint64>(0, openClock_.elapsed() - finalReadyMs);
+        openPreviewMs_ = previewReadyMs + offset;
+        emit openTimingChanged();
     });
     connect(&workerClient_, &worker::WorkerClient::requestCanceled, this, [this](quint64 requestId) {
         if (requestId == activeDrawingRequestId_) {
@@ -247,11 +273,33 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             exportWorkspaceController_.handleExportFailed(message.isEmpty() ? code : message);
             return;
         }
+        if (requestId == activeAssemblyExportRequestId_) {
+            activeAssemblyExportRequestId_ = 0;
+            assemblyExportSucceeded_ = false;
+            assemblyExportMessage_ = (activeAssemblyExportExploded_ ? tr("The exploded assembly could not be exported: %1")
+                                                                    : tr("The assembly could not be exported: %1"))
+                                         .arg(message.isEmpty() ? code : message);
+            emit assemblyExportChanged();
+            return;
+        }
         if (requestId != activeRequestId_) return;
         const auto detail = message.isEmpty() ? code : message;
         setErrorMessage(tr("The STEP importer could not open this file: %1").arg(detail));
         documentState_ = DocumentState::WorkerFailed;
         emit documentStateChanged();
+    });
+    connect(&workerClient_, &worker::WorkerClient::assemblyExported, this,
+            [this](const quint64 requestId, const QString& path, const int partCount, const int removedCount) {
+        if (requestId != activeAssemblyExportRequestId_) return;
+        activeAssemblyExportRequestId_ = 0;
+        assemblyExportSucceeded_ = true;
+        // The title already says what was exported; this says where, and what was left out.
+        const auto where = QDir::toNativeSeparators(path);
+        assemblyExportMessage_ = removedCount == 0 ? tr("Saved to %1.").arg(where)
+                               : removedCount == 1 ? tr("Saved to %1, with 1 hidden part left out.").arg(where)
+                                                   : tr("Saved to %1, with %2 hidden parts left out.").arg(where).arg(removedCount);
+        Q_UNUSED(partCount);
+        emit assemblyExportChanged();
     });
     connect(&exportWorkspaceController_, &exporting::ExportWorkspaceController::executeRequested,
             this, [this](const QByteArray& planJson, const QString& fingerprint) {
@@ -348,6 +396,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         emit drawingPreviewReady(QString::fromUtf8(previewJson), revision, approximate);
     });
     connect(&visibilityModel_, &models::VisibilityModel::presentationChanged, this, [this] {
+        ++visibilityRevision_;
         emit visibilityChanged();
         emit viewerPresentationChanged();
     });
@@ -423,6 +472,18 @@ void ApplicationController::selectNode(const QString& nodeId, const bool additiv
     }
 }
 
+void ApplicationController::selectNodes(const QStringList& nodeIds, const QString& activeNodeId, const bool additive)
+{
+    if (!additive) {
+        setSelection(nodeIds, activeNodeId);
+        return;
+    }
+    auto selected = selectedNodeIds_;
+    for (const auto& nodeId : nodeIds)
+        if (!selected.contains(nodeId)) selected.append(nodeId);
+    setSelection(selected, activeNodeId);
+}
+
 void ApplicationController::setSelection(const QStringList& nodeIds, const QString& activeNodeId)
 {
     QStringList normalized;
@@ -476,6 +537,18 @@ void ApplicationController::openFile(const QUrl& file)
     setActiveNodeId({});
     assemblyTreeModel_.replaceSnapshot({});
     pendingPath_ = sourceFile.absoluteFilePath();
+    // Opening time starts now, as the user sees it.
+    openClock_.start();
+    openViewMs_ = openPreviewMs_ = openFullMs_ = -1;
+    openSizeBytes_ = sourceFile.size();
+    openRecorded_ = false;
+    emit openTimingChanged();
+    if (documentPath_ != pendingPath_) {
+        documentPath_ = pendingPath_;
+        emit documentNameChanged();
+    }
+    // This file's saved views, as they were left.
+    savedViews_.setDocument(documentPath_);
     pendingSource_ = cache::SourceFingerprint::fromFile(pendingPath_);
     if (!pendingSource_) {
         setErrorMessage(tr("Loupe could not read the selected file."));
@@ -492,6 +565,18 @@ void ApplicationController::openFile(const QUrl& file)
     snapshotJson_.clear();
     exportWorkspaceController_.reset();
     drawingWorkspaceController_.reset();
+    // Output goes beside the file by default ("<name> export", "<name> drawings"), or under
+    // Documents/Loupe when the file's folder cannot be written to (a read-only share).
+    {
+        const QFileInfo sourceFolder(sourceFile.absolutePath());
+        const auto root = sourceFolder.isWritable()
+            ? sourceFile.absolutePath()
+            : QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).filePath(QStringLiteral("Loupe"));
+        exportWorkspaceController_.setDefaultDestination(
+            QDir(root).filePath(tr("%1 export").arg(sourceFile.completeBaseName())));
+        drawingWorkspaceController_.setDefaultDestination(
+            QDir(root).filePath(tr("%1 drawings").arg(sourceFile.completeBaseName())));
+    }
     geometryCacheArchive_.clear();
     geometryReplayTimer_.stop();
     geometryReplayQueue_.clear();
@@ -504,9 +589,13 @@ void ApplicationController::openFile(const QUrl& file)
     parentByNode_.clear();
     definitionByNode_.clear();
     visibilityModel_.setNodes({});
+    opacityByNode_.clear();
+    transparentWithoutEdges_.clear();
     materialByNode_.clear();
     appearanceByNode_.clear();
     importedColorByNode_.clear();
+    segmentColorsByNode_.clear();
+    explodeController_.clear();
     importedFaceColors_.clear();
     importedUncolouredFace_ = false;
     fileColorsUniform_ = false;
@@ -520,6 +609,8 @@ void ApplicationController::openFile(const QUrl& file)
     connectionAttempts_ = 0;
     activeRequestId_ = 0;
     activeExportRequestId_ = 0;
+    activeAssemblyExportRequestId_ = 0;
+    assemblyExportMessage_.clear();
     cacheHit_ = false;
     serverName_ = QStringLiteral("/tmp/loupe-%1-%2")
                       .arg(QCoreApplication::applicationPid())
@@ -587,6 +678,16 @@ void ApplicationController::cancelImport()
 void ApplicationController::fitView()
 {
     emit fitRequested();
+}
+
+void ApplicationController::viewNormalToFace()
+{
+    emit viewNormalToFaceRequested();
+}
+
+void ApplicationController::requestExplodedExport()
+{
+    emit explodedExportRequested();
 }
 
 void ApplicationController::isolateActiveNode()
@@ -676,6 +777,207 @@ bool ApplicationController::isNodeTransparent(const QString& nodeId) const
     return visibilityModel_.isGhosted(nodeId);
 }
 
+bool ApplicationController::isSelectionTransparent() const
+{
+    const auto selected = geometryNodesForSelection();
+    return !selected.isEmpty()
+        && std::ranges::all_of(selected, [this](const QString& nodeId) { return visibilityModel_.isGhosted(nodeId); });
+}
+
+int ApplicationController::nodeTransparencyState(const QString& nodeId) const
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (parts.isEmpty()) return 0;
+    const auto transparent = std::count_if(parts.cbegin(), parts.cend(),
+                                           [this](const QString& part) { return visibilityModel_.isGhosted(part); });
+    return transparent == 0 ? 0 : transparent == parts.size() ? 2 : 1;
+}
+
+void ApplicationController::setNodeTransparent(const QString& nodeId, const bool transparent)
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (!parts.isEmpty()) visibilityModel_.setGhosted(parts, transparent);
+}
+
+bool ApplicationController::nodeShowsTransparentEdges(const QString& nodeId) const
+{
+    return !transparentWithoutEdges_.contains(nodeId);
+}
+
+bool ApplicationController::selectionShowsTransparentEdges() const
+{
+    const auto selected = geometryNodesForSelection();
+    return std::ranges::none_of(selected, [this](const QString& nodeId) { return transparentWithoutEdges_.contains(nodeId); });
+}
+
+void ApplicationController::setSelectionTransparentEdges(const bool shown)
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty()) return;
+    for (const auto& nodeId : selected) {
+        if (shown) transparentWithoutEdges_.remove(nodeId);
+        else transparentWithoutEdges_.insert(nodeId);
+    }
+    // Nothing in the visibility model changed: say so here for the viewport to redraw.
+    ++visibilityRevision_;
+    emit visibilityChanged();
+}
+
+void ApplicationController::markOpenMilestone(qint64& milestone)
+{
+    if (!openClock_.isValid() || milestone >= 0) return;
+    milestone = openClock_.elapsed();
+    emit openTimingChanged();
+}
+
+QVariantMap ApplicationController::openTiming() const
+{
+    return {{QStringLiteral("viewMs"), openViewMs_},
+            {QStringLiteral("previewMs"), openPreviewMs_},
+            {QStringLiteral("fullMs"), openFullMs_},
+            {QStringLiteral("cached"), cachedGeometryLoaded_},
+            {QStringLiteral("opening"), openClock_.isValid() && openFullMs_ < 0}};
+}
+
+void ApplicationController::recordOpen()
+{
+    if (openRecorded_ || openFullMs_ < 0) return;
+    openRecorded_ = true;
+    // Every part shown can only come after the first and before fully detailed.
+    if (openPreviewMs_ >= 0) openPreviewMs_ = std::clamp(openPreviewMs_, std::max<qint64>(0, openViewMs_), openFullMs_);
+    models::OpenHistory::shared().append({{QStringLiteral("file"), QFileInfo(documentPath_).fileName()},
+                                          {QStringLiteral("path"), QDir::toNativeSeparators(documentPath_)},
+                                          {QStringLiteral("sizeBytes"), openSizeBytes_},
+                                          {QStringLiteral("parts"), static_cast<int>(geometryByNode_.size())},
+                                          {QStringLiteral("cached"), cachedGeometryLoaded_},
+                                          {QStringLiteral("viewMs"), openViewMs_},
+                                          {QStringLiteral("previewMs"), openPreviewMs_},
+                                          {QStringLiteral("fullMs"), openFullMs_},
+                                          {QStringLiteral("openedAt"), QDateTime::currentDateTime().toString(Qt::ISODate)},
+                                          {QStringLiteral("version"), applicationVersion()}});
+    emit openTimingChanged();
+}
+
+QString ApplicationController::saveDisplayState(const QString& name)
+{
+    if (geometryByNode_.isEmpty()) return {};
+    QJsonArray hidden;
+    QJsonArray transparent;
+    QJsonObject opacity;
+    QJsonArray withoutEdges;
+    int hiddenCount = 0;
+    int transparentCount = 0;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it) {
+        const auto& nodeId = it.key();
+        if (!visibilityModel_.isVisible(nodeId)) {
+            hidden.append(nodeId);
+            ++hiddenCount;
+        } else if (visibilityModel_.isGhosted(nodeId)) {
+            transparent.append(nodeId);
+            ++transparentCount;
+            if (opacityByNode_.contains(nodeId)) opacity.insert(nodeId, opacityByNode_.value(nodeId));
+            if (transparentWithoutEdges_.contains(nodeId)) withoutEdges.append(nodeId);
+        }
+    }
+    QStringList parts;
+    if (viewerPresentation_ == ViewerPresentation::Isolate) parts << tr("Isolated");
+    if (hiddenCount > 0) parts << tr("%1 hidden").arg(hiddenCount);
+    if (transparentCount > 0) parts << tr("%1 transparent").arg(transparentCount);
+    const auto summary = parts.isEmpty() ? tr("Everything shown") : parts.join(QStringLiteral(" · "));
+    return savedViews_.add(QStringLiteral("display"), name, summary,
+                           {{QStringLiteral("hidden"), hidden.toVariantList()},
+                            {QStringLiteral("transparent"), transparent.toVariantList()},
+                            {QStringLiteral("opacity"), opacity.toVariantMap()},
+                            {QStringLiteral("withoutEdges"), withoutEdges.toVariantList()},
+                            {QStringLiteral("presentation"), static_cast<int>(viewerPresentation_)}});
+}
+
+bool ApplicationController::applyDisplayState(const QString& id)
+{
+    const auto state = savedViews_.data(id);
+    if (state.isEmpty()) return false;
+    QSet<QString> hidden;
+    QSet<QString> transparent;
+    for (const auto& value : state.value(QStringLiteral("hidden")).toList()) hidden.insert(value.toString());
+    for (const auto& value : state.value(QStringLiteral("transparent")).toList()) transparent.insert(value.toString());
+    // Each transparent part's own opacity and edges, as they were saved.
+    const auto opacity = state.value(QStringLiteral("opacity")).toMap();
+    for (const auto& nodeId : transparent) {
+        if (opacity.contains(nodeId)) opacityByNode_.insert(nodeId, std::clamp(opacity.value(nodeId).toDouble(), 0.05, 0.995));
+        else opacityByNode_.remove(nodeId);
+        transparentWithoutEdges_.remove(nodeId);
+    }
+    for (const auto& value : state.value(QStringLiteral("withoutEdges")).toList()) transparentWithoutEdges_.insert(value.toString());
+    visibilityModel_.applyState(hidden, transparent);
+    const auto presentation = state.value(QStringLiteral("presentation")).toInt();
+    viewerPresentation_ = presentation == static_cast<int>(ViewerPresentation::Isolate) ? ViewerPresentation::Isolate
+                        : presentation == static_cast<int>(ViewerPresentation::Ghost) ? ViewerPresentation::Ghost
+                                                                                         : ViewerPresentation::Full;
+    emit viewerPresentationChanged();
+    // Opacity and edges may have changed with nothing else: redraw either way.
+    ++visibilityRevision_;
+    emit visibilityChanged();
+    return true;
+}
+
+void ApplicationController::resetDisplayState()
+{
+    showAllNodes();
+}
+
+QString ApplicationController::saveCameraView(const QString& name, const QVariantMap& camera, const QString& summary)
+{
+    if (camera.isEmpty()) return {};
+    return savedViews_.add(QStringLiteral("camera"), name, summary, camera);
+}
+
+QString ApplicationController::assemblyExportStage() const
+{
+    if (assemblyExportStageKey_ == QStringLiteral("translate")) return tr("Translating to STEP");
+    if (assemblyExportStageKey_ == QStringLiteral("write")) return tr("Writing the file");
+    if (assemblyExportStageKey_ == QStringLiteral("mesh")) return tr("Meshing the parts");
+    if (assemblyExportStageKey_ == QStringLiteral("draw")) return tr("Drawing the view");
+    return tr("Preparing the assembly");
+}
+
+double ApplicationController::nodeOpacity(const QString& nodeId) const
+{
+    return visibilityModel_.isGhosted(nodeId) ? opacityByNode_.value(nodeId, kDefaultTransparentOpacity) : 1.0;
+}
+
+double ApplicationController::selectionOpacity() const
+{
+    for (const auto& nodeId : geometryNodesForSelection())
+        if (visibilityModel_.isGhosted(nodeId)) return nodeOpacity(nodeId);
+    return 1.0;
+}
+
+void ApplicationController::setSelectionOpacity(const double opacity)
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty() || !std::isfinite(opacity)) return;
+    // Never fully clear: a part at 0 would be invisible yet still there, which is what
+    // Hide is for.
+    const double value = std::clamp(opacity, 0.05, 1.0);
+    const bool opaque = value > 0.995;
+    for (const auto& nodeId : selected) {
+        // Opaque again forgets the setting, so the next Make transparent starts at the default.
+        if (opaque) opacityByNode_.remove(nodeId);
+        else opacityByNode_.insert(nodeId, value);
+    }
+    const bool changesState = std::ranges::any_of(selected, [&](const QString& nodeId) {
+        return visibilityModel_.isGhosted(nodeId) == opaque;
+    });
+    if (changesState) {
+        visibilityModel_.setGhosted(selected, !opaque);
+    } else {
+        // Same parts transparent, new opacity: nothing in the visibility model changed, so
+        // say so here for the viewport to redraw them.
+        ++visibilityRevision_;
+        emit visibilityChanged();
+    }
+}
+
 void ApplicationController::connectWorker()
 {
     if (workerClient_.connectToServer(serverName_, 100)) {
@@ -709,6 +1011,7 @@ void ApplicationController::resetImportProgress()
     preservePreviewOnCancel_ = false;
     previewGeometryReceived_ = false;
     importElapsed_.restart();
+    importRemaining_.reset();
     importProgressTimer_.start();
     emit importProgressChanged();
 }
@@ -718,6 +1021,7 @@ void ApplicationController::setImportProgress(const QString& stage, const double
     importStage_ = stage;
     importProgress_ = std::max(importProgress_, std::clamp(fraction, 0.0, 1.0));
     importElapsedSeconds_ = importElapsed_.elapsed() / 1'000;
+    importRemaining_.report(importElapsed_.elapsed(), importProgress_);
     if (importProgress_ >= 1.0) {
         importInProgress_ = false;
         importProgressTimer_.stop();
@@ -827,13 +1131,17 @@ void ApplicationController::replayGeometryChunk()
             geometryReplayQueue_.clear();
             geometryReplayIndex_ = 0;
             if (previewGeometryReceived_) emit importProgressChanged();
+            // From the cache, every part is on screen once its geometry is replayed.
+            if (cachedGeometryLoaded_) markOpenMilestone(openPreviewMs_);
             return;
         }
         auto entry = std::move(geometryReplayQueue_[geometryReplayIndex_++]);
         if (entry.kind == 1) {
             previewGeometryReceived_ = true;
+            markOpenMilestone(openViewMs_);
             noteImportedColor(entry.nodeId, entry.sourceColor);
-            if (!entry.sourceColor.isEmpty()) importedColorByNode_.insert(entry.nodeId, entry.sourceColor);
+            static_cast<void>(noteSegmentColor(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload));
+            notePartBounds(entry.nodeId, entry.payload);
             // A replay re-sends what the viewports were already given, so it keeps the
             // revision; only geometry that arrived from the cache alone gets a new one.
             if (!meshRevisionBySegment_.contains(entry.segmentKey))
@@ -858,10 +1166,130 @@ void ApplicationController::saveGeometryCache()
     static_cast<void>(cacheStore_->put(key, geometryCacheArchive_, {*pendingSource_, kImporterVersion, kGeometryCacheProfile, unit}));
 }
 
+int ApplicationController::nodeVisibilityState(const QString& nodeId) const
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (parts.isEmpty()) return 0;
+    const auto hidden = std::count_if(parts.cbegin(), parts.cend(),
+                                      [this](const QString& part) { return !visibilityModel_.isVisible(part); });
+    return hidden == 0 ? 0 : hidden == parts.size() ? 2 : 1;
+}
+
+void ApplicationController::setNodeHidden(const QString& nodeId, const bool hidden)
+{
+    const auto parts = geometryNodesForAction(nodeId);
+    if (parts.isEmpty()) return;
+    if (hidden) visibilityModel_.hide(parts);
+    else visibilityModel_.show(parts);
+}
+
+int ApplicationController::hiddenPartCount() const
+{
+    int hidden = 0;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it)
+        if (!visibilityModel_.isVisible(it.key())) ++hidden;
+    return hidden;
+}
+
+QString ApplicationController::suggestedAssemblyExportPath() const
+{
+    if (documentPath_.isEmpty()) return {};
+    const QFileInfo source(documentPath_);
+    return QDir(exportWorkspaceController_.destination()).filePath(
+        tr("%1 without hidden parts.step").arg(source.completeBaseName()));
+}
+
+QUrl ApplicationController::suggestedAssemblyExportUrl() const
+{
+    const auto path = suggestedAssemblyExportPath();
+    return path.isEmpty() ? QUrl{} : QUrl::fromLocalFile(path);
+}
+
+// The folder holding the suggestion if it exists yet, else the STEP file's own folder.
+QUrl ApplicationController::suggestedAssemblyExportFolderUrl() const
+{
+    const auto path = suggestedAssemblyExportPath();
+    if (path.isEmpty()) return {};
+    const auto folder = QFileInfo(path).absolutePath();
+    return QUrl::fromLocalFile(QDir(folder).exists() ? folder : QFileInfo(documentPath_).absolutePath());
+}
+
+bool ApplicationController::exportAssemblyWithoutHiddenParts(const QUrl& destination)
+{
+    if (activeAssemblyExportRequestId_ != 0 || documentState_ != DocumentState::TreeReady || importInProgress_) return false;
+    if (!destination.isLocalFile()) return false;
+    QStringList hidden;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it)
+        if (!visibilityModel_.isVisible(it.key())) hidden.append(it.key());
+    assemblyExportMessage_.clear();
+    assemblyExportSucceeded_ = false;
+    activeAssemblyExportExploded_ = false;
+    assemblyExportStageKey_ = QStringLiteral("copy");
+    assemblyExportProgress_ = 0.0;
+    emit assemblyExportProgressChanged();
+    activeAssemblyExportRequestId_ = workerClient_.exportAssembly(destination.toLocalFile(), hidden, effectiveUnit_);
+    emit assemblyExportChanged();
+    return true;
+}
+
+QString ApplicationController::explodedExportFormat(const QUrl& destination)
+{
+    const auto suffix = QFileInfo(destination.toLocalFile()).suffix().toLower();
+    if (suffix == QStringLiteral("step") || suffix == QStringLiteral("stp")) return QStringLiteral("step");
+    if (suffix == QStringLiteral("stl") || suffix == QStringLiteral("dxf") || suffix == QStringLiteral("svg")
+        || suffix == QStringLiteral("pdf"))
+        return suffix;
+    return {};
+}
+
+bool ApplicationController::exportExplodedAssembly(const QUrl& destination, const QVector3D& viewDirection,
+                                                   const QVector3D& upDirection)
+{
+    if (activeAssemblyExportRequestId_ != 0 || documentState_ != DocumentState::TreeReady || importInProgress_) return false;
+    if (!destination.isLocalFile()) return false;
+    const auto format = explodedExportFormat(destination);
+    if (format.isEmpty()) {
+        assemblyExportSucceeded_ = false;
+        assemblyExportMessage_ = tr("Choose a .step, .stl, .dxf, .svg or .pdf file to export the exploded assembly.");
+        emit assemblyExportChanged();
+        return false;
+    }
+    protocol::ExportAssembly request;
+    request.destination = destination.toLocalFile();
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it)
+        if (!visibilityModel_.isVisible(it.key())) request.excludedNodeIds.append(it.key());
+    request.outputUnit = effectiveUnit_;
+    request.format = format;
+    const auto& transforms = explodeController_.ownTransforms();
+    for (auto it = transforms.cbegin(); it != transforms.cend(); ++it) {
+        const auto rotation = QQuaternion::fromRotationMatrix(it.value().toGenericMatrix<3, 3>()).normalized();
+        const auto translation = it.value().column(3).toVector3D();
+        request.placements.append({it.key(),
+                                   {rotation.x(), rotation.y(), rotation.z(), rotation.scalar()},
+                                   {translation.x(), translation.y(), translation.z()}});
+    }
+    request.viewDirection = {viewDirection.x(), viewDirection.y(), viewDirection.z()};
+    request.upDirection = {upDirection.x(), upDirection.y(), upDirection.z()};
+    assemblyExportMessage_.clear();
+    assemblyExportSucceeded_ = false;
+    activeAssemblyExportExploded_ = true;
+    assemblyExportStageKey_ = QStringLiteral("copy");
+    assemblyExportProgress_ = 0.0;
+    emit assemblyExportProgressChanged();
+    activeAssemblyExportRequestId_ = workerClient_.exportAssembly(std::move(request));
+    emit assemblyExportChanged();
+    return true;
+}
+
+QString ApplicationController::documentName() const
+{
+    return documentPath_.isEmpty() ? QString{} : QFileInfo(documentPath_).fileName();
+}
+
 qint64 ApplicationController::importEtaSeconds() const noexcept
 {
-    if (importProgress_ < 0.12 || importProgress_ >= 0.995 || importElapsedSeconds_ < 1) return -1;
-    return static_cast<qint64>((static_cast<double>(importElapsedSeconds_) / importProgress_) * (1.0 - importProgress_));
+    if (!importInProgress_ || importProgress_ >= 0.995) return -1;
+    return importRemaining_.remainingSeconds(importElapsed_.elapsed());
 }
 
 void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
@@ -980,6 +1408,11 @@ void ApplicationController::applySnapshotToTree(const QByteArray& snapshot)
         });
     }
     assemblyTreeModel_.replaceSnapshot(treeNodes);
+    // The exploded view moves nodes as the tree shows them, so a sub-assembly picked in the
+    // tree moves as a whole and auto-explode comes apart level by level as the tree reads.
+    QHash<QString, QString> explodeParents;
+    for (const auto& node : treeSourceNodes) explodeParents.insert(node.id, visibleParentId(node.parentId));
+    explodeController_.setHierarchy(explodeParents);
     // One palette slot per part definition, so every instance of a repeated part shares a
     // colour, taken in tree order so neighbouring parts sit far apart in the palette walk.
     partColorKeys_.clear();
@@ -1322,6 +1755,43 @@ void ApplicationController::noteImportedColor(const QString& nodeId, const QStri
     if (partPaletteStyle(partColorMode_) && !recolorFileColors_) emit componentPropertiesChanged();
 }
 
+QString ApplicationController::nodeDisplayName(const QString& nodeId) const
+{
+    return displayNameByNode_.value(nodeId);
+}
+
+void ApplicationController::notePartBounds(const QString& nodeId, const QByteArray& payload)
+{
+    const auto bounds = protocol::meshBounds(payload);
+    if (!bounds) return;
+    explodeController_.includePartBounds(nodeId, {bounds->minimum[0], bounds->minimum[1], bounds->minimum[2]},
+                                         {bounds->maximum[0], bounds->maximum[1], bounds->maximum[2]});
+}
+
+bool ApplicationController::noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color,
+                                             const QByteArray& payload)
+{
+    auto& segments = segmentColorsByNode_[nodeId];
+    // Keyed by segment, so the refined pass replaces the preview's entry rather than adding to it.
+    segments.insert(segmentKey, {color, protocol::meshFaceArea(payload)});
+    QHash<QString, double> areaByColor;
+    for (const auto& segment : std::as_const(segments)) areaByColor[segment.color] += segment.areaMm2;
+    QString dominant;
+    double dominantArea = -1.0;
+    for (auto it = areaByColor.cbegin(); it != areaByColor.cend(); ++it) {
+        // Ties go to the lower colour, so the result does not depend on hash order.
+        if (it.value() > dominantArea || (it.value() == dominantArea && it.key() < dominant)) {
+            dominant = it.key();
+            dominantArea = it.value();
+        }
+    }
+    const auto previous = importedColorByNode_.value(nodeId);
+    // Mostly uncoloured reads as the neutral body, which an absent entry gives.
+    if (dominant.isEmpty()) importedColorByNode_.remove(nodeId);
+    else importedColorByNode_.insert(nodeId, dominant);
+    return importedColorByNode_.value(nodeId) != previous;
+}
+
 void ApplicationController::rebuildPartColorOrder()
 {
     partColorPositionByKey_.clear();
@@ -1377,6 +1847,11 @@ bool ApplicationController::setUpAxis(const QString& axis)
 
 QString ApplicationController::applicationVersion()
 {
+#ifdef LOUPE_RELEASE_LABEL
+    // A beta says which beta it is: 0.1.5-beta.7, not just 0.1.5.
+    if (const auto label = QStringLiteral(LOUPE_RELEASE_LABEL); platform::UpdateController::parseVersion(label))
+        return label.startsWith(QLatin1Char('v')) ? label.mid(1) : label;
+#endif
 #ifdef LOUPE_VERSION
     return QStringLiteral(LOUPE_VERSION);
 #else

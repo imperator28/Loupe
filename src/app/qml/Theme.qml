@@ -33,6 +33,8 @@ QtObject {
     readonly property color panelGradientTop: dark ? "#1B2030" : "#FFFFFF"
     readonly property color panelGradientBottom: dark ? "#141826" : "#F5F7FC"
     readonly property color panelHighlight: dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(1, 1, 1, 0.7)
+    // Over the blurred window behind a sheet: a faint dim, a little stronger in dark mode.
+    readonly property color scrim: dark ? Qt.rgba(0.02, 0.03, 0.06, 0.42) : Qt.rgba(0.10, 0.11, 0.18, 0.16)
     readonly property color panelHairline: dark ? Qt.rgba(1, 1, 1, 0.06) : Qt.rgba(0, 0, 0, 0.07)
 
     // Text
@@ -62,6 +64,13 @@ QtObject {
     // are deliberately brighter in dark viewports and near-black in light
     // viewports, rather than inheriting a body/material color.
     readonly property color definingEdge: dark ? "#EEF2FF" : "#111318"
+    // Axis colours, shared by the view cube and the exploded-view handles so X, Y and Z
+    // read the same everywhere.
+    readonly property color axisX: errorColor
+    readonly property color axisY: success
+    readonly property color axisZ: accentColor
+    // The handle under the pointer, or being dragged.
+    readonly property color handleActive: dark ? "#FDE272" : "#EAAA08"
 
     // Legacy role names consumed by existing panels and the C++ test harness.
     // They alias the palette above; new work should prefer the names above.

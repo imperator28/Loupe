@@ -29,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: macOS Intel release
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 360
     env:
       LOUPE_VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: vcpkg-macOS-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**') }}
+          key: vcpkg-macOS-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**', 'ports/**') }}
           restore-keys: |
             vcpkg-macOS-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-
             vcpkg-macOS-${{ env.VCPKG_TRIPLET }}-
@@ -81,14 +81,15 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TRIPLET" \
             -DVCPKG_HOST_TRIPLET="$VCPKG_TRIPLET" \
             -DVCPKG_OVERLAY_TRIPLETS="${{ github.workspace }}/triplets" \
-            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build"
+            -DVCPKG_INSTALL_OPTIONS="--clean-buildtrees-after-build;--clean-packages-after-build" \
+            -DLOUPE_RELEASE_LABEL="${{ steps.tag.outputs.value }}"
 
       - name: Save vcpkg binary cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/vcpkg/archives
-          key: vcpkg-macOS-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: vcpkg-macOS-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'triplets/**', 'ports/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build
         run: cmake --build --preset "$CONFIGURE_PRESET" --parallel

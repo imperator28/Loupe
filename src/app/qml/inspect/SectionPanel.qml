@@ -27,8 +27,11 @@ Rectangle {
     implicitHeight: content.implicitHeight + 32
     height: implicitHeight
     radius: root.theme.radius4
-    color: root.theme.surfaceRaised
-    border.color: root.theme.border
+    // Inside a floating tool window, which draws the frame and the title bar with its own
+    // close and minimise controls.
+    property bool embedded: false
+    color: embedded ? "transparent" : root.theme.surfaceRaised
+    border.color: embedded ? "transparent" : root.theme.border
 
     function syncSectionState() {
         if (!root.taskController) {
@@ -69,8 +72,9 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
+            visible: !root.embedded
             Label { text: qsTr("Section"); font.bold: true; Layout.fillWidth: true; color: root.foreground }
-            ThemedToolButton { theme: root.theme; text: "×"; Accessible.name: qsTr("Close section"); onClicked: root.closeRequested() }
+            IconButton { theme: root.theme; glyph: "close"; Accessible.name: qsTr("Close section"); onClicked: root.closeRequested() }
         }
         Label { text: qsTr("Plane"); color: root.subduedForeground }
         RowLayout {

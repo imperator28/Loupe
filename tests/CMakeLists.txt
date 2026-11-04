@@ -34,6 +34,7 @@ add_executable(loupe-core-tests
     core/test_drawing_writers.cpp
     core/test_export_plan.cpp
     core/test_selected_export.cpp
+    core/test_assembly_export.cpp
     core/test_output_validation.cpp
     core/test_geometry_analysis.cpp
     core/test_material_properties.cpp
@@ -94,7 +95,11 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.h"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
@@ -108,6 +113,10 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
@@ -123,6 +132,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.h"
 )
 target_link_libraries(loupe-application-controller-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Network Qt6::Sql Qt6::Test)
 target_include_directories(loupe-application-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
@@ -130,7 +141,7 @@ target_compile_definitions(loupe-application-controller-tests PRIVATE LOUPE_WORK
 add_dependencies(loupe-application-controller-tests loupe-worker)
 loupe_enable_warnings(loupe-application-controller-tests)
 
-add_test(NAME application-controller COMMAND loupe-application-controller-tests)
+add_test(NAME application-controller COMMAND loupe-application-controller-tests -o application-controller.log,txt -o -,txt)
 set_tests_properties(application-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
@@ -194,10 +205,20 @@ add_test(NAME worker-client COMMAND loupe-worker-client-tests)
 
 add_executable(loupe-qml-smoke-tests
     qml/qml_smoke.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileAssociation.h"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/DocumentTabs.h"
     "${PROJECT_SOURCE_DIR}/src/app/export/ExportWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/drawing/DrawingWorkspaceController.h"
@@ -213,6 +234,10 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
@@ -228,10 +253,14 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.h"
     "${PROJECT_SOURCE_DIR}/src/app/platform/WindowChrome.h"
@@ -245,6 +274,7 @@ else()
     if(WIN32)
         # WindowChrome.cpp calls DwmSetWindowAttribute (native title-bar theme).
         target_link_libraries(loupe-qml-smoke-tests PRIVATE dwmapi)
+        target_link_libraries(loupe-qml-smoke-tests PRIVATE shell32)
     endif()
 endif()
 target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Quick3D Qt6::Network Qt6::Sql Qt6::Test)
@@ -346,6 +376,8 @@ add_executable(loupe-scene-model-tests
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/CadEdgeGeometry.h"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/render/HandleRingGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/DefinitionInstances.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SceneModel.cpp"
@@ -371,6 +403,35 @@ target_include_directories(loupe-part-palette-tests PRIVATE "${PROJECT_SOURCE_DI
 loupe_enable_warnings(loupe-part-palette-tests)
 add_test(NAME part-palette COMMAND loupe-part-palette-tests)
 set_tests_properties(part-palette PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-file-open-tests
+    app/test_file_open_router.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileOpenRouter.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/FileOpenRouter.h"
+)
+target_link_libraries(loupe-file-open-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
+target_include_directories(loupe-file-open-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-file-open-tests)
+add_test(NAME file-open COMMAND loupe-file-open-tests)
+set_tests_properties(file-open PROPERTIES
+    # Without a console Qt on Windows logs to the debugger, so a failure printed nothing.
+    ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1;QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-remaining-time-tests
+    app/test_remaining_time_estimator.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.h"
+)
+target_link_libraries(loupe-remaining-time-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-remaining-time-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-remaining-time-tests)
+add_test(NAME remaining-time COMMAND loupe-remaining-time-tests)
+set_tests_properties(remaining-time PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
@@ -411,6 +472,8 @@ add_executable(loupe-inspection-tools-tests
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/ExplodeController.h"
 )
 target_link_libraries(loupe-inspection-tools-tests PRIVATE PNG::PNG Qt6::Core Qt6::Gui Qt6::Test)
 target_include_directories(loupe-inspection-tools-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
@@ -418,6 +481,25 @@ loupe_enable_warnings(loupe-inspection-tools-tests)
 
 add_test(NAME inspection-tools COMMAND loupe-inspection-tools-tests)
 set_tests_properties(inspection-tools PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
+    ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
+)
+
+add_executable(loupe-update-controller-tests
+    app/test_update_controller.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/TempHygiene.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/TempHygiene.h"
+)
+target_link_libraries(loupe-update-controller-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-update-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_compile_definitions(loupe-update-controller-tests PRIVATE LOUPE_VERSION="0.1.5" LOUPE_RELEASE_LABEL="v0.1.5-beta.6"
+    LOUPE_SOURCE_DIR="${PROJECT_SOURCE_DIR}" LOUPE_PROJECT_VERSION="${PROJECT_VERSION}")
+loupe_enable_warnings(loupe-update-controller-tests)
+
+add_test(NAME update-controller COMMAND loupe-update-controller-tests)
+set_tests_properties(update-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )

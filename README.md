@@ -14,7 +14,20 @@ Loupe is a functional desktop review build under active development. It is desig
 
 The work is organised into three workspaces: **Inspect** for review and measurement, **Export** for split-part 3D output, and **Drawing** for 2D projection. Inspect and Export are the mature paths; Drawing is newer and its projection is not yet production-reliable — see the limitation noted under [2D Drawing Export](#2d-drawing-export).
 
-The desktop targets are Windows 11 x64, Apple Silicon macOS, and Intel macOS. Geometry and export operations use the imported CAD document rather than treating display meshes as source data. Native CI gates build and test the release preset for Windows and Apple Silicon on every push, and every tag additionally publishes an Intel macOS build; signing, notarization, installer packaging, and legal distribution review remain separate release steps.
+The desktop targets are Windows 11 x64, Apple Silicon macOS, and Intel macOS. Geometry and export operations use the imported CAD document rather than treating display meshes as source data. Native CI gates build and test the release preset for Windows and Apple Silicon on every push, and every release additionally publishes an Intel macOS build; signing, notarization, installer packaging, and legal distribution review remain separate release steps.
+
+## Opening STEP Files with Loupe
+
+To open `.step` and `.stp` files with a double-click:
+
+- **macOS:** select a STEP file in Finder, choose File → Get Info, pick Loupe under
+  *Open with*, and click **Change All…**.
+- **Windows:** Loupe ships as a zip, so it registers itself: choose File → **Register
+  Loupe for STEP Files…**. Windows then opens Default Apps, where you confirm Loupe for
+  `.step` and `.stp` (Windows does not let an app make itself the default).
+
+If Loupe is already running, a double-clicked file opens as a new tab in the existing
+window.
 
 ## Inspection Tools
 
@@ -22,13 +35,19 @@ Loupe is deliberately focused on the inspection controls engineers use repeatedl
 
 | Tool | Control level |
 | --- | --- |
-| **Open and review** | Open `.step` and `.stp` files from the picker or by dropping them onto the app. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
-| **Assembly navigation** | Expand or collapse assemblies, hover to pre-highlight, select one or many occurrences, fit, isolate, hide or make semi-transparent, show all, and recolor a single occurrence or a shared definition. |
-| **Visual inspection** | Choose orthographic or perspective projection, use the view cube for canonical views, and switch among Solid, Solid + Edges, and Edges Only. Edges are generated from CAD topology rather than display triangles. |
-| **Part colours** | Keep the file's colours, or give every part an automatic low-contrast colour (cool shades, warm shades, or muted) with Shuffle -- useful when a file leaves parts uncoloured or gives them all one default colour. Display only. |
+| **Open and review** | Open `.step` and `.stp` files from the picker, by dropping them onto the app, or by double-clicking them once Loupe is their default app (see above). Each file opens in its own tab, which keeps its view, selection and export queue while you work in another; drag tabs to reorder them, off the strip into a window of their own, or onto another Loupe window to move them there. Review inferred source units before import; keep working while staged geometry refinement reports progress. |
+| **Strip parts from an assembly** | Hide the parts to drop (search, multi-select, Hide or Isolate), then File → Export Assembly Without Hidden Parts… writes the rest as one STEP file, keeping the assembly tree, names, placements, colours and the source unit. Empty subassemblies are dropped. |
+| **Assembly navigation** | Find a part by name (`Ctrl/Cmd+F`), expand or collapse assemblies (or all at once), and widen the tree by dragging its edge. Hover to pre-highlight, select one or many occurrences (⌘/Ctrl-click to add one, Shift-click for a range), fit, isolate, hide, or make semi-transparent; the tree shows what is hidden or transparent, and each row toggles both. Show all, and recolour a single occurrence or a shared definition. |
+| **Transparency** | A transparent part starts at 45% opacity; the **Opacity** slider in Properties sets it anywhere from 10%, and **Show edges when transparent** keeps or drops its outline. Once a selection is transparent, the menus offer **Make opaque**. |
+| **Visual inspection** | Choose orthographic or perspective projection, use the view cube for canonical views, look straight at a face with **View normal to face** (`Ctrl/Cmd+8`), and switch among Solid, Solid + Edges, and Edges Only. Edges are generated from CAD topology rather than display triangles. |
+| **Part colours** | Keep the file's colours, or give every part an automatic colour -- cool shades, warm shades, muted, or high contrast -- with Shuffle. Useful when a file leaves parts uncoloured or gives them all one colour. The cool and warm palettes spread across related hues, so neighbouring parts stay distinct under shading. Display only. |
 | **Materials and mass** | Assign materials to an occurrence or definition, manage a persistent custom material library, and calculate mass for a body, subassembly, or multi-selection. Standard materials cover common consumer-electronics use cases including aluminum, zinc alloy, copper, PP, HDPE, PA, PMMA, PC, FR4 PCBA, silicone, and HNBR rubber. |
+| **Layout** | Every side panel is resizable (drag its divider; double-click to reset) and remembered. The toolbar under the view keeps Fit, Isolate, Hide and Transparent, which act on the model at once, apart from Section, Explode, Measure, Views and Capture, which open small windows over the view: drag one by its title bar, or collapse it to the title bar, and its button stays lit while it is open. In a narrow viewport the toolbar drops to icons, named in their tooltips. The switch at the top right picks System, Light or Dark. |
 | **Section** | Pick a principal axis or a selected face plane, adjust offset, flip the clipped side, inspect normal or opposite views, cap cut faces, and create an outline, filled, or filled-plus-outline 2D slice. Slice outline color and thickness are adjustable. |
+| **Exploded view** | Pull an assembly apart to see how its parts fit. **Assembled / Exploded** compares the two states, and **Spread** sets how far auto-explode takes the selected sub-assembly (or the whole model) apart. Drag a part or sub-assembly (Shift- or Ctrl/⌘-click for several) by its arrows along X, Y or Z, its ball freely in the screen plane, or its rings to turn it; moves snap, and Shift moves freely. Under **Advanced**: exact offsets and angles, move by a distance, and a picked pivot that stays with its part until **Use centre**. Every move can be undone; section and view normal to face work on the layout, and measuring waits for Assembled. **Export…** saves the layout as a STEP assembly, one STL, or a DXF/SVG/PDF drawing of the current view at true scale, leaving hidden parts out. The file itself is never changed. |
 | **Measure** | Inspect points, edges, faces, radii, angles, area, volume, and bounds with topology-specific hover and persistent pick highlights. |
+| **Saved views** | **Views** (`V`) keeps snapshots to come back to, as in Photoshop or a CAD program's saved orientations: **Display** states hold what is hidden or transparent (opacity and edges included); **Camera** views hold the angle, zoom and projection, and the camera glides back to them. Each has a thumbnail and a name; **Reset** returns to the file as it opened. Kept per file on this computer; the file is never changed. |
+| **Opening time** | Document properties shows how long the file took to be ready to view, to show every part, and to be fully detailed. **Opening History…** lists every open (size, parts, from cache or not) and copies as CSV, to compare with another CAD program. |
 | **Capture** | Export the current inspection view as a PNG with transparent background and optional measurement/section content. Use 2x, 3x, or 5x presets or enter a custom render scale; the app renders at the requested resolution and reports capture progress. |
 
 ## Split-Part Export
@@ -38,7 +57,8 @@ The Export workspace turns a reviewed assembly into a pick-and-choose export buc
 - Collapse subassemblies to keep large export trees manageable.
 - Add candidates directly from component checkboxes and review the ordered export bucket.
 - Reorder bucket rows with buttons or drag and drop.
-- Choose original component names, a prefix plus original name, a sequential base name, or a per-file custom name. Sequential rows show both the source component and final filename.
+- Choose original component names, a prefix plus original name, a sequential base name, or a per-file custom name. Renaming a row edits the name only; the `.step` or `.stl` suffix stays. Sequential rows show both the source component and final filename.
+- Output goes to a folder beside the STEP file by default (`<file name> export/`), created when the first export runs; Browse picks any other.
 - Export separate STEP or STL files with reviewed coordinate, grouping, destination, and overwrite settings.
 - Validate every output, write files atomically, and report per-file progress and failures.
 
@@ -91,16 +111,35 @@ Useful shortcuts:
 | --- | --- |
 | `F` / `Shift+F` | Fit assembly / fit selection |
 | `I` | Isolate or restore |
-| `H` / `Shift+H` | Hide selection / hide others |
-| `T` / `Shift+T` | Make selection transparent / make others transparent |
+| `H` | Hide selection (Isolate, `I`, shows only the selection) |
+| `T` / `Shift+T` | Make selection transparent (again: opaque) / make others transparent |
+| `Ctrl/Cmd+F` | Find a part in the assembly tree (Enter / Shift+Enter: next / previous) |
+| `Ctrl/Cmd+8` | View normal to the face under the pointer (again: its other side) |
 | `Ctrl/Cmd+Shift+H` | Show all |
 | `M` | Open Measure |
 | `S` | Open Section |
+| `V` | Open saved views |
+| `E` | Open the exploded view; `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` undo / redo a move while it is open |
 | `1`, `2`, `3` | Solid, Solid + Edges, Edges Only |
-| `Ctrl/Cmd+O` | Open STEP |
+| `Ctrl/Cmd+O` | Open STEP (in a new tab if one is already open) |
+| `Ctrl/Cmd+W` | Close tab |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Escape` | Cancel the active manipulation or task state |
 
 The in-app **View > Interaction** guide contains this same mouse, trackpad, and keyboard reference.
+
+## Updates
+
+Loupe checks GitHub for a newer release each time it starts. When there is one, a download icon appears in the toolbar: click it, then **Download** (a ring round the icon fills as it goes) and **Restart to Update**, which replaces the running copy and opens the new one with your settings kept. The new version runs a self-check before anything is replaced, and a failed copy puts the old one back.
+
+- **Help > Check for Updates…** checks on demand.
+- **Help > Include Beta Versions** chooses whether pre-releases are offered (on by default when running a beta).
+- The update needs write access to Loupe's folder. On macOS, run Loupe from that folder rather than from inside the downloaded zip.
+- Set `LOUPE_NO_UPDATE_CHECK=1` to turn the check off.
+
+The first launch of a new version shows **What's New**, a short list of its highlights; **Help > What's New in Loupe…** shows it again.
+
+Maintainers: each release adds its highlights to [`src/app/resources/whats-new.json`](src/app/resources/whats-new.json) (the build's tests fail without them). A manual run of the Release workflow labelled like `v0.1.5-beta.9` or `v0.1.5-rc.1` builds, tags and publishes a pre-release. A full release is published by pushing a `vX.Y.Z` tag, or by a manual run on `master` labelled with the project version (`v0.1.5`).
 
 ## Install a Release Build
 

@@ -1,16 +1,25 @@
 #include "app/ApplicationController.h"
+#include "app/DocumentTabs.h"
 #include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
 #include "app/models/AssemblyTreeModel.h"
 #include "app/models/ThemePreference.h"
+#include "app/platform/FileAssociation.h"
+#include "app/platform/UpdateController.h"
+#include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
+#include "app/render/HandleRingGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/tools/CaptureController.h"
 #include "app/tools/SectionController.h"
 #include "protocol/GeometryPayload.h"
 
+#include <functional>
 #include <QColor>
+#include <QDeadlineTimer>
+#include <QDir>
+#include <QFile>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QGuiApplication>
@@ -18,15 +27,22 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QJsonDocument>
+#include <QJSValue>
+#include <QQuaternion>
+#include <QVector4D>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
+#include <QScopeGuard>
+#include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
+#include <QStandardPaths>
 #include <qqml.h>
 
 #include <algorithm>
+#include <tuple>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -70,7 +86,12 @@ class QmlSmokeTest final : public QObject
 
 private slots:
     void initTestCase();
+    // Before mainLoads: that test's synthetic drop, sent to a window it then destroys,
+    // leaves pointer state that stops a later window's DragHandler activating. The same
+    // drop into this test's own window does not (checked below).
+    void tabsDragToReorderAndOffTheStripIntoANewWindow();
     void mainLoads();
+    void sidePanelsDragWithinTheirLimitsAndRemember();
     void exportPickerCheckboxUpdatesDraft();
     void inspectionTaskPanelsLoad();
     void captureProgressStaysInCapturePanel();
@@ -78,8 +99,16 @@ private slots:
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
     void viewportDrawsAFacingFaceInItsPickedColour();
+    void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
+    void explodedViewHandlesMoveAndTurnTheSelection();
+    void explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly();
+    void floatingToolWindowDragsMinimisesAndStaysInside();
+    void updateIndicatorShowsTheDownloadAsARing();
+    void whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed();
+    void everyWorkspaceSidePanelGoesDownToTheSameMinimum();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
+    void inspectTreeTakesModifierClicksAndShiftRanges();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
     void drawingPreviewOrientationAndScaleSurviveTheScreenTransform();
     void drawingPreviewZoomKeepsThePointUnderTheCursorFixed();
@@ -90,10 +119,18 @@ void QmlSmokeTest::initTestCase()
 {
     qmlRegisterUncreatableMetaObject(loupe::app::staticMetaObject, "Loupe.App", 1, 0, "AppState", "Application state only");
     qmlRegisterType<loupe::app::ApplicationController>("Loupe.App", 1, 0, "ApplicationController");
+    qmlRegisterType<loupe::app::DocumentTabs>("Loupe.App", 1, 0, "DocumentTabs");
+    qmlRegisterType<loupe::app::platform::FileAssociation>("Loupe.App", 1, 0, "FileAssociation");
+    static loupe::app::platform::WindowManager windowManager;
+    qmlRegisterSingletonInstance("Loupe.App", 1, 0, "Windows", &windowManager);
     qmlRegisterType<loupe::app::models::ThemePreference>("Loupe.App", 1, 0, "ThemePreference");
     qmlRegisterType<loupe::app::platform::WindowChrome>("Loupe.App", 1, 0, "WindowChrome");
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
+    qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
+    // One per engine (the app has one). Checks GitHub for a newer release at launch (#3).
+    qmlRegisterSingletonType<loupe::app::platform::UpdateController>("Loupe.App", 1, 0, "Updates",
+        [](QQmlEngine*, QJSEngine*) -> QObject* { return new loupe::app::platform::UpdateController; });
 }
 
 void QmlSmokeTest::mainLoads()
@@ -158,6 +195,287 @@ void QmlSmokeTest::mainLoads()
     QVERIFY(dropEvent.isAccepted());
     QTRY_COMPARE(controller->documentState(), loupe::app::DocumentState::Invalid);
     QVERIFY(controller->errorMessage().contains(QStringLiteral("does not exist"), Qt::CaseInsensitive));
+}
+
+void QmlSmokeTest::sidePanelsDragWithinTheirLimitsAndRemember()
+{
+    // Three zones as every workspace lays them out: a picker on the left, a centre with a
+    // minimum, settings on the right. Both sides drag, within limits, and remember.
+    loupe::app::models::ThemePreference preferences;
+    preferences.clearPanelWidth(QStringLiteral("smokePicker"));
+    preferences.clearPanelWidth(QStringLiteral("smokeSettings"));
+    const auto cleanup = qScopeGuard([&] {
+        preferences.clearPanelWidth(QStringLiteral("smokePicker"));
+        preferences.clearPanelWidth(QStringLiteral("smokeSettings"));
+    });
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY2(theme != nullptr, qPrintable(themeComponent.errorString()));
+
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(R"(
+import QtQuick
+import QtQuick.Layouts
+import "inspect" as Inspect
+Item {
+    id: root
+    property QtObject theme
+    property QtObject preferences
+    readonly property real sidePanelRoom: width - 4 * 12 - 420
+    RowLayout {
+        id: row
+        anchors.fill: parent
+        anchors.margins: 12
+        spacing: 12
+        Rectangle { id: left; objectName: "left"; Layout.fillHeight: true; Layout.preferredWidth: leftSplitter.effectiveWidth }
+        Rectangle { objectName: "centre"; Layout.fillHeight: true; Layout.fillWidth: true; Layout.minimumWidth: 420 }
+        Rectangle { id: right; objectName: "right"; Layout.fillHeight: true; Layout.preferredWidth: rightSplitter.effectiveWidth }
+    }
+    Inspect.PanelSplitter {
+        id: leftSplitter; objectName: "leftSplitter"; theme: root.theme; preferences: root.preferences
+        key: "smokePicker"; panel: left; gap: row.spacing
+        defaultWidth: 290; minimumWidth: 220
+        maximumWidth: Math.min(560, root.sidePanelRoom - rightSplitter.staticWidth)
+    }
+    Inspect.PanelSplitter {
+        id: rightSplitter; objectName: "rightSplitter"; theme: root.theme; preferences: root.preferences
+        key: "smokeSettings"; panel: right; panelOnLeft: false; gap: row.spacing
+        defaultWidth: 360; minimumWidth: 300
+        maximumWidth: Math.min(640, root.sidePanelRoom - leftSplitter.effectiveWidth)
+    }
+}
+)"), QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/splitter-harness.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("preferences"), QVariant::fromValue(static_cast<QObject*>(&preferences))},
+    }));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* harness = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(1400, 600);
+    harness->setParentItem(window.contentItem());
+    harness->setSize(QSizeF(1400, 600));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    auto* left = findItemByObjectName(harness, QStringLiteral("left"));
+    auto* right = findItemByObjectName(harness, QStringLiteral("right"));
+    auto* centre = findItemByObjectName(harness, QStringLiteral("centre"));
+    auto* leftSplitter = findItemByObjectName(harness, QStringLiteral("leftSplitter"));
+    auto* rightSplitter = findItemByObjectName(harness, QStringLiteral("rightSplitter"));
+    QVERIFY(left && right && centre && leftSplitter && rightSplitter);
+    QTRY_COMPARE(left->width(), 290.0);
+    QCOMPARE(right->width(), 360.0);
+
+    const auto drag = [&](QQuickItem* splitter, const qreal dx) {
+        const auto start = splitter->mapToScene(QPointF(splitter->width() / 2.0, splitter->height() / 2.0)).toPoint();
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+        for (int step = 1; step <= 5; ++step)
+            QTest::mouseMove(&window, start + QPoint(qRound(dx * step / 5.0), 0));
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, start + QPoint(qRound(dx), 0));
+    };
+    // The divider sits in the gap, not over either panel.
+    QVERIFY(leftSplitter->x() >= left->x() + left->width() + 12 - leftSplitter->width());
+    QVERIFY(leftSplitter->x() + leftSplitter->width() <= centre->x() + 12);
+
+    drag(leftSplitter, 100);
+    QTRY_COMPARE(left->width(), 390.0);
+    QCOMPARE(preferences.panelWidths().value(QStringLiteral("smokePicker")).toInt(), 390);
+    // A right-hand panel widens leftward.
+    drag(rightSplitter, -80);
+    QTRY_COMPARE(right->width(), 440.0);
+    QCOMPARE(preferences.panelWidths().value(QStringLiteral("smokeSettings")).toInt(), 440);
+
+    // Held to its limit, and the centre keeps its minimum.
+    drag(leftSplitter, 2000);
+    QTRY_COMPARE(left->width(), 1400.0 - 4 * 12 - 420 - 440);
+    QCOMPARE(centre->width(), 420.0);
+    drag(leftSplitter, -2000);
+    QTRY_COMPARE(left->width(), 220.0);
+
+    // A narrower window narrows the panels rather than the centre; the widths come back.
+    drag(leftSplitter, 150);
+    QTRY_COMPARE(left->width(), 370.0);
+    harness->setWidth(1100);
+    QTRY_COMPARE(left->width(), 220.0);
+    QTRY_COMPARE(right->width(), 1100.0 - 4 * 12 - 420 - 220);
+    QCOMPARE(centre->width(), 420.0);
+    QCOMPARE(preferences.panelWidths().value(QStringLiteral("smokePicker")).toInt(), 370);
+    harness->setWidth(1400);
+    QTRY_COMPARE(left->width(), 370.0);
+    QTRY_COMPARE(right->width(), 440.0);
+
+    // A double click puts a panel back at its default and forgets the width.
+    const auto leftCentre = leftSplitter->mapToScene(QPointF(leftSplitter->width() / 2.0, leftSplitter->height() / 2.0)).toPoint();
+    QTest::mouseDClick(&window, Qt::LeftButton, Qt::NoModifier, leftCentre);
+    QTRY_COMPARE(left->width(), 290.0);
+    QVERIFY(!preferences.panelWidths().contains(QStringLiteral("smokePicker")));
+
+    // Remembered: a new preferences object reads the stored width back.
+    loupe::app::models::ThemePreference reloaded;
+    QCOMPARE(reloaded.panelWidths().value(QStringLiteral("smokeSettings")).toInt(), 440);
+}
+
+void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_MAIN_QML_PATH)));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* window = qobject_cast<QQuickWindow*>(object.get());
+    QTRY_VERIFY_WITH_TIMEOUT(window->isExposed(), 3000);
+    auto* tabs = qobject_cast<loupe::app::DocumentTabs*>(object->property("documents").value<QObject*>());
+    QVERIFY(tabs != nullptr);
+    auto* first = tabs->active();
+    auto* second = tabs->add();
+    auto* third = tabs->add();
+
+    const auto tabItems = [&] {
+        QList<QQuickItem*> items;
+        std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+            if (item->objectName() == QStringLiteral("documentTab") && item->isVisible()) items.append(item);
+            for (auto* child : item->childItems()) walk(child);
+        };
+        walk(window->contentItem());
+        std::sort(items.begin(), items.end(), [](QQuickItem* a, QQuickItem* b) { return a->mapToScene({}).x() < b->mapToScene({}).x(); });
+        return items;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(tabItems().size(), 3, 3000);
+    const auto centreOf = [](QQuickItem* item) {
+        return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+    };
+    // Where every tab sits, and the window's size: a drag aimed at a tab must start once
+    // these stop changing. A fixed wait is not enough on a fresh machine, where the first
+    // text layout (cold font caches) and the window settling can run on past it.
+    const auto tabLayout = [&] {
+        QStringList parts{QStringLiteral("%1x%2").arg(window->width()).arg(window->height())};
+        for (auto* item : tabItems()) {
+            const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+            parts << QStringLiteral("%1,%2 %3x%4").arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height());
+        }
+        return parts.join(QStringLiteral("; "));
+    };
+    const auto tabsLaidOut = [&] {
+        // A strip not yet laid out has every tab at 0 x 0, which is also perfectly still: a
+        // fresh macOS runner sat like that past the first checks, and the drag missed.
+        const auto items = tabItems();
+        return !items.isEmpty() && std::all_of(items.cbegin(), items.cend(), [](QQuickItem* item) {
+            return item->width() > 0 && item->height() > 0;
+        });
+    };
+    const auto waitForSettledTabs = [&] {
+        QString previous;
+        QDeadlineTimer deadline(8000);
+        while (!deadline.hasExpired()) {
+            QTest::qWait(100);
+            if (!tabsLaidOut()) {
+                previous.clear();
+                continue;
+            }
+            const auto current = tabLayout();
+            if (current == previous) return true;
+            previous = current;
+        }
+        return false;
+    };
+    const auto tabOrder = [&] {
+        QStringList order;
+        for (int i = 0; i < tabs->count(); ++i) {
+            const auto* document = tabs->documentAt(i);
+            order << (document == first ? QStringLiteral("first") : document == second ? QStringLiteral("second")
+                                                                 : document == third ? QStringLiteral("third")
+                                                                                     : QStringLiteral("other"));
+        }
+        return order.join(QStringLiteral(", "));
+    };
+    const auto drag = [&](const QPoint from, const QPoint to) {
+        QTest::mousePress(window, Qt::LeftButton, {}, from);
+        for (int step = 1; step <= 12; ++step) {
+            QTest::mouseMove(window, from + (to - from) * step / 12, 16);
+        }
+        QTest::mouseRelease(window, Qt::LeftButton, {}, to);
+        QTest::qWait(100);
+    };
+
+    // Dropping a file must not stop tabs dragging afterwards.
+    {
+        QMimeData mimeData;
+        mimeData.setUrls({QUrl(QStringLiteral("file:///tmp/missing-dropped-model.step"))});
+        QDragEnterEvent enterEvent(QPoint{window->width() / 2, window->height() / 2}, Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &enterEvent);
+        QDropEvent dropEvent(QPointF{window->width() / 2.0, window->height() / 2.0}, Qt::CopyAction, &mimeData, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &dropEvent);
+    }
+    // Drag the first tab past the second: they swap.
+    QVERIFY2(waitForSettledTabs(), qPrintable(QStringLiteral("tabs never settled: ") + tabLayout()));
+    auto items = tabItems();
+    const auto layoutBeforeReorder = tabLayout();
+    drag(centreOf(items.at(0)), centreOf(items.at(1)) + QPoint(items.at(1)->width() / 2 - 2, 0));
+    QVERIFY2(tabs->documentAt(1) == first && tabs->documentAt(0) == second,
+             qPrintable(QStringLiteral("order after the drag: %1; tabs before it: %2; tabs now: %3")
+                            .arg(tabOrder(), layoutBeforeReorder, tabLayout())));
+
+    // Drag a tab well below the strip and let go: it leaves for a window of its own.
+    const auto windowsBefore = QGuiApplication::topLevelWindows().size();
+    items = tabItems();
+    drag(centreOf(items.at(2)), centreOf(items.at(2)) + QPoint(0, 260));
+    QTRY_COMPARE_WITH_TIMEOUT(tabs->count(), 2, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(QGuiApplication::topLevelWindows().size() > windowsBefore, 3000);
+    QQuickWindow* opened = nullptr;
+    for (auto* candidate : QGuiApplication::topLevelWindows())
+        if (candidate != window && candidate->property("documents").isValid()) opened = qobject_cast<QQuickWindow*>(candidate);
+    QVERIFY(opened != nullptr);
+    auto* openedTabs = qobject_cast<loupe::app::DocumentTabs*>(opened->property("documents").value<QObject*>());
+    QCOMPARE(openedTabs->count(), 1);
+    QCOMPARE(openedTabs->active(), third);
+
+    // Side by side, then drag a tab from the first window onto the second one's toolbar
+    // and tab area: it moves there.
+    window->setPosition(0, 0);
+    window->resize(700, 500);
+    opened->setPosition(760, 0);
+    opened->resize(700, 500);
+    QVERIFY2(waitForSettledTabs(), qPrintable(QStringLiteral("tabs never settled: ") + tabLayout()));
+    const auto onOpened = opened->contentItem()->mapToGlobal(QPointF(300, 0)).toPoint() + QPoint(0, 40);
+    items = tabItems();
+    const auto moving = tabs->documentAt(0);
+    const auto start = centreOf(items.at(0));
+    // While the tab is over the other window, that window marks where it would land, and
+    // stops once it is let go.
+    auto* dropIndicator = findItemByObjectName(opened->contentItem(), QStringLiteral("tabDropIndicator"));
+    QVERIFY(dropIndicator != nullptr);
+    QVERIFY(!dropIndicator->isVisible());
+    QTest::mousePress(window, Qt::LeftButton, {}, start);
+    for (int step = 1; step <= 12; ++step)
+        QTest::mouseMove(window, start + (onOpened - window->position() - start) * step / 12, 16);
+    QTRY_VERIFY_WITH_TIMEOUT(dropIndicator->isVisible(), 3000);
+    QTest::mouseRelease(window, Qt::LeftButton, {}, onOpened - window->position());
+    QTest::qWait(100);
+    QTRY_VERIFY_WITH_TIMEOUT(!dropIndicator->isVisible(), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(openedTabs->count(), 2, 3000);
+    QCOMPARE(tabs->count(), 1);
+    QVERIFY(openedTabs->documentAt(0) == moving || openedTabs->documentAt(1) == moving);
+
+    // A window's last tab can go too, and its window closes behind it. A lone empty tab
+    // shows no strip to drag from, so give it a file first (an empty one is enough to name
+    // the tab; it is never read as geometry here).
+    QTemporaryDir files;
+    const auto named = QDir(files.path()).filePath(QStringLiteral("last.step"));
+    { QFile file(named); QVERIFY(file.open(QIODevice::WriteOnly)); }
+    tabs->documentAt(0)->openFile(QUrl::fromLocalFile(named));
+    QTRY_COMPARE_WITH_TIMEOUT(tabItems().size(), 1, 3000);
+    QVERIFY2(waitForSettledTabs(), qPrintable(QStringLiteral("tabs never settled: ") + tabLayout()));
+    items = tabItems();
+    const auto last = tabs->documentAt(0);
+    drag(centreOf(items.at(0)), onOpened - window->position());
+    QTRY_COMPARE_WITH_TIMEOUT(openedTabs->count(), 3, 3000);
+    QVERIFY(openedTabs->documentAt(0) == last || openedTabs->documentAt(1) == last || openedTabs->documentAt(2) == last);
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isVisible(), 3000);
+    opened->close();
 }
 
 void QmlSmokeTest::exportPickerCheckboxUpdatesDraft()
@@ -269,6 +587,19 @@ void QmlSmokeTest::sectionViewActivatesWithRenderedMesh()
     section->setEnabled(true);
     QTest::qWait(500);
     QVERIFY(section->enabled());
+
+    // View normal to section looks at the cut: from the side the section takes away, which
+    // is against the normal while the positive side is kept.
+    const auto normal = section->effectiveNormal();
+    QVERIFY(QMetaObject::invokeMethod(viewport, "alignToSection", Q_ARG(QVariant, false)));
+    auto direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY2((direction + normal).length() < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(direction.x()).arg(direction.y()).arg(direction.z())));
+    // The opposite side keeps the other half and looks at its cut.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "alignToSection", Q_ARG(QVariant, true)));
+    QVERIFY(section->flipped());
+    direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY((direction - normal).length() < 1e-3F);
 }
 
 void QmlSmokeTest::viewportDrawsAFacingFaceInItsPickedColour()
@@ -348,6 +679,680 @@ void QmlSmokeTest::viewportDrawsAFacingFaceInItsPickedColour()
         };
         QTRY_VERIFY_WITH_TIMEOUT(difference() <= 8, 5000);
         QVERIFY2(difference() <= 8, qPrintable(QStringLiteral("%1 rendered as %2").arg(picked, rendered.name())));
+    }
+}
+
+void QmlSmokeTest::viewportRightClickKeepsTheSelectionAndViewsNormalToAFace()
+{
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"surface", "surfaceRaised", "surfaceSubtle", "control", "border", "onSurface", "foreground",
+                            "muted", "accent", "selection", "selectedBody", "selectedEdge", "edge", "neutralBody"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#000000")));
+    theme->insert(QStringLiteral("dark"), false);
+
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(400, 400);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(400, 400));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // A 20 mm square plate tilted 30 degrees about x, centred on the origin, as one face.
+    const auto tilt = std::numbers::pi / 6.0;
+    const auto c = static_cast<float>(std::cos(tilt));
+    const auto sn = static_cast<float>(std::sin(tilt));
+    loupe::protocol::MeshPayload plate;
+    plate.requestId = 1;
+    plate.nodeId = plate.definitionId = QStringLiteral("plate");
+    plate.segmentKey = QStringLiteral("plate:0");
+    for (const auto& [u, v] : {std::pair{-10.0F, -10.0F}, {10.0F, -10.0F}, {10.0F, 10.0F}, {-10.0F, 10.0F}}) {
+        plate.vertices << u << v * c << v * sn;
+        plate.normals << 0.0F << -sn << c;
+    }
+    plate.indices = {0, 1, 2, 0, 2, 3};
+    plate.topology = {{5, loupe::protocol::TopologyKind::Face, 0, 6, 400.0F, 0.0F}};
+    QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, plate.nodeId), Q_ARG(QString, plate.segmentKey),
+                                      Q_ARG(QString, QStringLiteral("#3070C0")), Q_ARG(QByteArray, loupe::protocol::encodeGeometry(plate))));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "fitCamera"));
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("hasSceneBounds").toBool(), 3000);
+
+    const auto contextPickAt = [&](const double x, const double y) {
+        QVariant hit;
+        QMetaObject::invokeMethod(viewport, "contextPickAt", Q_RETURN_ARG(QVariant, hit), Q_ARG(QVariant, x), Q_ARG(QVariant, y));
+        return hit.toBool();
+    };
+    // Right-clicking a part that is in a multi-selection keeps the whole selection.
+    controller.selectNode(QStringLiteral("plate"), false);
+    controller.selectNode(QStringLiteral("other"), true);
+    QTRY_VERIFY_WITH_TIMEOUT(contextPickAt(200, 200), 3000);
+    QCOMPARE(controller.selectedNodeIds(), (QStringList{QStringLiteral("plate"), QStringLiteral("other")}));
+    // Empty space leaves it alone too.
+    QVERIFY(!contextPickAt(2, 2));
+    QCOMPARE(controller.selectedNodeIds().size(), 2);
+    // A part outside the selection replaces it, as before.
+    controller.selectNode(QStringLiteral("other"), false);
+    QVERIFY(contextPickAt(200, 200));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("plate")});
+
+    // Normal to face: straight down the plate's normal, then its other side.
+    const QVector3D normal(0.0F, -sn, c);
+    QVariant done;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
+    QVERIFY(done.toBool());
+    auto direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY2((direction - normal).length() < 1.0e-4F, qPrintable(QStringLiteral("%1 %2 %3").arg(direction.x()).arg(direction.y()).arg(direction.z())));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
+    direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY((direction + normal).length() < 1.0e-4F);
+
+    // A saved camera view: going back to it after turning away glides the camera home, and
+    // it stays marked as current until the camera moves again.
+    QStandardPaths::setTestModeEnabled(true);
+    controller.savedViews().setDocument(QStringLiteral("/tmp/loupe-smoke-views.step"));
+    auto* navigation = viewport->findChild<QObject*>(QStringLiteral("viewportNavigation"));
+    QVERIFY(navigation != nullptr);
+    QVariant savedId;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "saveCameraView", Q_RETURN_ARG(QVariant, savedId), Q_ARG(QVariant, QStringLiteral("Head on"))));
+    QVERIFY(!savedId.toString().isEmpty());
+    QCOMPARE(viewport->property("activeCameraViewId").toString(), savedId.toString());
+    const auto savedOrientation = navigation->property("orientation").value<QQuaternion>();
+    QVERIFY(QMetaObject::invokeMethod(navigation, "orbit", Q_ARG(QVariant, 120.0), Q_ARG(QVariant, 40.0)));
+    QVERIFY(viewport->property("activeCameraViewId").toString().isEmpty());
+    QVERIFY(qAbs(QQuaternion::dotProduct(navigation->property("orientation").value<QQuaternion>(), savedOrientation)) < 0.999F);
+    QVariant went;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "goToCameraView", Q_RETURN_ARG(QVariant, went), Q_ARG(QVariant, savedId)));
+    QVERIFY(went.toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(QQuaternion::dotProduct(navigation->property("orientation").value<QQuaternion>(), savedOrientation)) > 0.99999F, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(viewport->property("activeCameraViewId").toString(), savedId.toString(), 3000);
+    QCOMPARE(controller.savedViews().cameraViews().constFirst().toMap().value(QStringLiteral("summary")).toString(), QStringLiteral("Orthographic"));
+    controller.savedViews().remove(savedId.toString());
+
+    // The empty-space menu is exactly as tall as the entries it shows (the exploded-view
+    // entry is hidden here), and as wide as the longest one, so nothing is cut short.
+    auto* menu = viewport->findChild<QObject*>(QStringLiteral("viewportContextMenu"));
+    QVERIFY(menu != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(menu, "popup", Q_ARG(QPointF, QPointF(20, 20))));
+    QTRY_VERIFY_WITH_TIMEOUT(menu->property("opened").toBool(), 3000);
+    const auto count = menu->property("count").toInt();
+    double shownHeight = 0;
+    int shown = 0;
+    for (int i = 0; i < count; ++i) {
+        QQuickItem* item = nullptr;
+        QVERIFY(QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, item), Q_ARG(int, i)));
+        QVERIFY(item != nullptr);
+        if (!item->isVisible()) {
+            QCOMPARE(item->height(), 0.0);
+            continue;
+        }
+        ++shown;
+        shownHeight += item->height();
+        QVERIFY2(item->width() >= item->implicitWidth(), qPrintable(item->property("text").toString()));
+    }
+    QCOMPARE(shown, count - 1);
+    QTRY_COMPARE_WITH_TIMEOUT(menu->property("height").toDouble(),
+                              shownHeight + menu->property("topPadding").toDouble() + menu->property("bottomPadding").toDouble(), 3000);
+    QVERIFY(QMetaObject::invokeMethod(menu, "close"));
+}
+
+void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
+{
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"surface", "surfaceRaised", "surfaceSubtle", "control", "border", "onSurface", "foreground",
+                            "muted", "accent", "selection", "selectedBody", "selectedEdge", "edge", "neutralBody"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    theme->insert(QStringLiteral("axisX"), QColor(QStringLiteral("#D92D20")));
+    theme->insert(QStringLiteral("axisY"), QColor(QStringLiteral("#079455")));
+    theme->insert(QStringLiteral("axisZ"), QColor(QStringLiteral("#4F46E5")));
+    theme->insert(QStringLiteral("handleActive"), QColor(QStringLiteral("#EAAA08")));
+    theme->insert(QStringLiteral("viewport"), QColor(QStringLiteral("#000000")));
+    theme->insert(QStringLiteral("dark"), false);
+    theme->insert(QStringLiteral("durSpatial"), 0);
+
+    loupe::app::ApplicationController controller;
+    auto& explode = controller.explodeController();
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))},
+        {QStringLiteral("explodedLayoutEnabled"), true},
+        {QStringLiteral("explodeToolActive"), true}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(600, 600);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(600, 600));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // Two 20 mm plates in the XY plane, facing +Z: "a" at the origin, "b" 40 mm along X.
+    const auto plate = [&](const QString& id, const float centreX) {
+        loupe::protocol::MeshPayload mesh;
+        mesh.requestId = 1;
+        mesh.nodeId = mesh.definitionId = id;
+        mesh.segmentKey = id + QStringLiteral(":0");
+        for (const auto& [u, v] : {std::pair{-10.0F, -10.0F}, {10.0F, -10.0F}, {10.0F, 10.0F}, {-10.0F, 10.0F}}) {
+            mesh.vertices << centreX + u << v << 0.0F;
+            mesh.normals << 0.0F << 0.0F << 1.0F;
+        }
+        mesh.indices = {0, 1, 2, 0, 2, 3};
+        mesh.topology = {{5, loupe::protocol::TopologyKind::Face, 0, 6, 400.0F, 0.0F}};
+        explode.includePartBounds(id, {centreX - 10, -10, 0}, {centreX + 10, 10, 0});
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, id), Q_ARG(QString, mesh.segmentKey),
+                                          Q_ARG(QString, QStringLiteral("#3070C0")), Q_ARG(QByteArray, loupe::protocol::encodeGeometry(mesh))));
+    };
+    explode.setHierarchy({{QStringLiteral("a"), QString{}}, {QStringLiteral("b"), QString{}}});
+    plate(QStringLiteral("a"), 0.0F);
+    plate(QStringLiteral("b"), 40.0F);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("hasSceneBounds").toBool(), 3000);
+    QVERIFY(QMetaObject::invokeMethod(viewport, "setStandardView", Q_ARG(QVariant, QVariant::fromValue(QVector3D(0, 0, 1)))));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "fitCamera"));
+
+    const auto partNode = [&](const QString& id) {
+        return viewport->property("partNodeByNode").value<QJSValue>().property(id).toQObject();
+    };
+    QVERIFY(partNode(QStringLiteral("a")) != nullptr);
+
+    // The handles show on the selection, and nowhere without one.
+    QVERIFY(!viewport->property("handlesShown").toBool());
+    controller.selectNode(QStringLiteral("a"), false);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+    QTest::qWait(100);
+
+    const auto layout = [&] {
+        QVariant value;
+        QMetaObject::invokeMethod(viewport, "handleLayout", Q_RETURN_ARG(QVariant, value));
+        return value.toMap();
+    };
+    const auto point = [](const QVariant& value) {
+        const auto map = value.toMap();
+        return QPointF(map.value(QStringLiteral("x")).toDouble(), map.value(QStringLiteral("y")).toDouble());
+    };
+    auto handles = layout();
+    QVERIFY(!handles.isEmpty());
+    const auto centre = point(handles.value(QStringLiteral("centre")));
+    const auto xTip = point(handles.value(QStringLiteral("tips")).toList().at(0));
+    QVERIFY2((xTip - centre).manhattanLength() > 40, "the X arrow is drawn across the screen");
+
+    // Drag the X arrow by its own length on screen: the plate moves along X, in whole steps.
+    const auto grab = (centre + (xTip - centre) * 0.6).toPoint();
+    const auto drop = (centre + (xTip - centre) * 1.6).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, {}, grab);
+    for (int step = 1; step <= 10; ++step) QTest::mouseMove(&window, grab + (drop - grab) * step / 10, 10);
+    QVERIFY(explode.interacting());
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, drop);
+    QVERIFY(!explode.interacting());
+    const auto offset = explode.offsetOf(QStringLiteral("a"));
+    QVERIFY2(offset.x() > 4.0F && std::abs(offset.y()) < 1e-3F && std::abs(offset.z()) < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(offset.x()).arg(offset.y()).arg(offset.z())));
+    QCOMPARE(std::fmod(offset.x(), 5.0F), 0.0F); // snapped to the 5 mm step
+    QVERIFY(!explode.isMoved(QStringLiteral("b")));
+    // Grabbing a handle is not a click: the selection stays as it was.
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("a")});
+    // The part's node is where the controller says.
+    QTRY_VERIFY_WITH_TIMEOUT((partNode(QStringLiteral("a"))->property("position").value<QVector3D>()
+                              - explode.displayedPosition(QStringLiteral("a"))).length() < 1e-3F, 3000);
+
+    // Turn it on the Z ring, seen face-on: a quarter of the way round, from 45 degrees (clear
+    // of the arrows, which take a press where they cross the ring) to 135.
+    handles = layout();
+    const auto zRing = handles.value(QStringLiteral("rings")).toList().at(2).toList();
+    QCOMPARE(zRing.size(), 48);
+    QTest::mousePress(&window, Qt::LeftButton, {}, point(zRing.at(6)).toPoint());
+    QVERIFY(explode.interacting());
+    for (int index = 7; index <= 18; ++index) QTest::mouseMove(&window, point(zRing.at(index)).toPoint(), 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, point(zRing.at(18)).toPoint());
+    const auto angles = explode.anglesOf(QStringLiteral("a"));
+    QVERIFY2(std::abs(angles.z() - 90.0F) < 1e-2F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(angles.x()).arg(angles.y()).arg(angles.z())));
+    // Undo takes the turn back, one drag at a time.
+    explode.undo();
+    QVERIFY(std::abs(explode.anglesOf(QStringLiteral("a")).z()) < 1e-2F);
+    QVERIFY(std::abs(explode.offsetOf(QStringLiteral("a")).x() - offset.x()) < 1e-3F);
+
+    // The ball in the middle drags freely in the screen's plane, here X and Y (seen down Z),
+    // each axis snapped on its own.
+    handles = layout();
+    const auto ball = point(handles.value(QStringLiteral("centre"))).toPoint();
+    const auto beforeFree = explode.offsetOf(QStringLiteral("a"));
+    QTest::mousePress(&window, Qt::LeftButton, {}, ball);
+    QVERIFY(explode.interacting());
+    for (int step = 1; step <= 8; ++step) QTest::mouseMove(&window, ball + QPoint(60, -40) * step / 8, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, ball + QPoint(60, -40));
+    const auto freeMove = explode.offsetOf(QStringLiteral("a")) - beforeFree;
+    QVERIFY2(freeMove.x() > 4.0F && freeMove.y() > 4.0F && std::abs(freeMove.z()) < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(freeMove.x()).arg(freeMove.y()).arg(freeMove.z())));
+    QCOMPARE(std::fmod(std::round(freeMove.x() * 1000.0F) / 1000.0F, 5.0F), 0.0F);
+    QCOMPARE(std::fmod(std::round(freeMove.y() * 1000.0F) / 1000.0F, 5.0F), 0.0F);
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("a")});
+    explode.undo();
+
+    // View normal to face follows the turned part: tipped a quarter about X, its face now
+    // looks along -Y, and that is the way the view turns.
+    explode.setAngles(QStringLiteral("a"), {90, 0, 0});
+    QVERIFY(QMetaObject::invokeMethod(viewport, "setStandardView", Q_ARG(QVariant, QVariant::fromValue(QVector3D(0.4F, -0.8F, 0.45F).normalized()))));
+    QTest::qWait(150);
+    handles = layout();
+    const auto plateCentre = point(handles.value(QStringLiteral("centre")));
+    // Once only: asked again for the face it is already square to, it shows the back.
+    QVariant done;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done),
+                                      Q_ARG(QVariant, plateCentre.x()), Q_ARG(QVariant, plateCentre.y())));
+    QVERIFY(done.toBool());
+    const auto direction = viewport->property("viewDirection").value<QVector3D>();
+    QVERIFY2((direction - QVector3D(0, -1, 0)).length() < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(direction.x()).arg(direction.y()).arg(direction.z())));
+
+    // A section of the moved part is cut against its own frame.
+    QVariant plane;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "sectionPlaneFor", Q_RETURN_ARG(QVariant, plane), Q_ARG(QVariant, QStringLiteral("a")),
+                                      Q_ARG(QVariant, QVariant::fromValue(QVector3D(1, 0, 0))), Q_ARG(QVariant, 2.0)));
+    QCOMPARE(plane.value<QVector4D>(), explode.localPlane(QStringLiteral("a"), {1, 0, 0}, 2.0));
+
+    // With a section on, moving parts holds their caps back until they stop, then re-cuts
+    // them where the parts now are.
+    auto* section = qobject_cast<loupe::app::tools::SectionController*>(controller.sectionController());
+    section->setEnabled(true);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("sectionFinalizing").toBool(), 3000);
+    explode.setOffset(QStringLiteral("a"), {0, 0, 12});
+    QVERIFY(viewport->property("explodeSettling").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("explodeSettling").toBool(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("sectionFinalizing").toBool(), 3000);
+    section->setEnabled(false);
+
+    // Several parts selected move together, by the same amount.
+    explode.resetAll();
+    QVERIFY(QMetaObject::invokeMethod(viewport, "setStandardView", Q_ARG(QVariant, QVariant::fromValue(QVector3D(0, 0, 1)))));
+    QVERIFY(QMetaObject::invokeMethod(viewport, "fitCamera"));
+    controller.selectNode(QStringLiteral("a"), false);
+    controller.selectNode(QStringLiteral("b"), true);
+    QCOMPARE(controller.selectedNodeIds().size(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+    QTest::qWait(100);
+    handles = layout();
+    const auto pairCentre = point(handles.value(QStringLiteral("centre")));
+    const auto pairTip = point(handles.value(QStringLiteral("tips")).toList().at(1)); // Y arrow
+    const auto pairGrab = (pairCentre + (pairTip - pairCentre) * 0.6).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, {}, pairGrab);
+    for (int step = 1; step <= 8; ++step) QTest::mouseMove(&window, pairGrab + QPoint(0, -60) * step / 8, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, pairGrab + QPoint(0, -60));
+    const auto pairA = explode.offsetOf(QStringLiteral("a"));
+    QVERIFY2(pairA.y() > 4.0F, qPrintable(QString::number(pairA.y())));
+    QVERIFY((explode.offsetOf(QStringLiteral("b")) - pairA).length() < 1e-3F);
+
+    // A picked pivot: the handle goes to the point clicked on the part, and stays on it as
+    // the part moves.
+    controller.selectNode(QStringLiteral("b"), false);
+    QVERIFY(QMetaObject::invokeMethod(viewport, "beginPivotPick"));
+    QVERIFY(viewport->property("pickingPivot").toBool());
+    QVERIFY(!viewport->property("handlesShown").toBool());
+    QVariant bCentre;
+    QMetaObject::invokeMethod(viewport, "screenPoint", Q_RETURN_ARG(QVariant, bCentre),
+                              Q_ARG(QVariant, QVariant::fromValue(QVector3D(45.0F, 5.0F, 0.0F) + explode.offsetOf(QStringLiteral("b")))));
+    const auto pivotClick = point(bCentre).toPoint();
+    // A pick sees the scene as last drawn: let the moved parts be drawn where they now are.
+    QTest::qWait(150);
+    QTest::mouseClick(&window, Qt::LeftButton, {}, pivotClick);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("pickingPivot").toBool(), 3000);
+    QVERIFY(!viewport->property("handlePivot").isNull());
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("b")}); // the click selected nothing
+    const auto pivotAt = viewport->property("handleCentre").value<QVector3D>();
+    QVERIFY2((pivotAt - (QVector3D(45, 5, 0) + explode.offsetOf(QStringLiteral("b")))).length() < 0.5F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(pivotAt.x()).arg(pivotAt.y()).arg(pivotAt.z())));
+    explode.translateBy({QStringLiteral("b")}, {0, 0, 7});
+    QTRY_VERIFY_WITH_TIMEOUT((viewport->property("handleCentre").value<QVector3D>() - (pivotAt + QVector3D(0, 0, 7))).length() < 1e-2F, 3000);
+    // Lined up with the picked face: the plate faces +Z, so the handle's Z is the face normal.
+    viewport->setProperty("handleAlignToFace", true);
+    const auto frame = viewport->property("handleFrame").value<QQuaternion>();
+    QVERIFY((frame.rotatedVector({0, 0, 1}) - QVector3D(0, 0, 1)).length() < 1e-3F);
+    // The pivot is kept for that part: selecting another part uses its centre, and selecting
+    // this one again brings the pivot back, until Use centre clears it.
+    controller.selectNode(QStringLiteral("a"), false);
+    QVERIFY(viewport->property("handlePivot").isNull());
+    controller.selectNode(QStringLiteral("b"), false);
+    QVERIFY(!viewport->property("handlePivot").isNull());
+    QTRY_VERIFY_WITH_TIMEOUT((viewport->property("handleCentre").value<QVector3D>() - (pivotAt + QVector3D(0, 0, 7))).length() < 1e-2F, 3000);
+    QVERIFY(QMetaObject::invokeMethod(viewport, "clearPivot"));
+    QVERIFY(viewport->property("handlePivot").isNull());
+    controller.selectNode(QStringLiteral("a"), false);
+    controller.selectNode(QStringLiteral("b"), false);
+    QVERIFY(viewport->property("handlePivot").isNull());
+
+    // Assembled and Exploded: the view eases between the assembly and the layout, keeping it.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "showAssembled"));
+    QTRY_VERIFY_WITH_TIMEOUT(explode.blend() < 1e-3, 3000);
+    QVERIFY(explode.exploded());
+    QTRY_VERIFY_WITH_TIMEOUT(partNode(QStringLiteral("b"))->property("position").value<QVector3D>().length() < 1e-3F, 3000);
+    QVERIFY(!viewport->property("handlesShown").toBool());
+    QVERIFY(QMetaObject::invokeMethod(viewport, "showExploded"));
+    QTRY_VERIFY_WITH_TIMEOUT(explode.blend() > 0.999, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+
+    // Reset brings everything home.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "animateExplodeReset"));
+    QTRY_VERIFY_WITH_TIMEOUT(!explode.exploded(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(partNode(QStringLiteral("a"))->property("position").value<QVector3D>().length() < 1e-3F, 3000);
+}
+
+void QmlSmokeTest::explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly()
+{
+    loupe::app::ApplicationController controller;
+    auto& explode = controller.explodeController();
+    explode.setHierarchy({
+        {QStringLiteral("root"), QString{}},
+        {QStringLiteral("sub"), QStringLiteral("root")},
+        {QStringLiteral("left"), QStringLiteral("sub")},
+        {QStringLiteral("right"), QStringLiteral("sub")},
+    });
+    explode.includePartBounds(QStringLiteral("left"), {-11, -1, -1}, {-9, 1, 1});
+    explode.includePartBounds(QStringLiteral("right"), {9, -1, -1}, {11, 1, 1});
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    QVERIFY2(themeComponent.isReady(), qPrintable(themeComponent.errorString()));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/ExplodePanel.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> panel(component.createWithInitialProperties({
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("taskController"), QVariant::fromValue(controller.explodeControllerObject())},
+        {QStringLiteral("documentController"), QVariant::fromValue(static_cast<QObject*>(&controller))}}));
+    QVERIFY2(panel != nullptr, qPrintable(component.errorString()));
+    auto* scopeLabel = panel->findChild<QObject*>(QStringLiteral("explodeScopeLabel"));
+    QVERIFY(scopeLabel != nullptr);
+    QVERIFY(scopeLabel->property("text").toString().startsWith(QStringLiteral("Whole model")));
+
+    // A part selected: auto-explode takes apart the sub-assembly it is in.
+    controller.selectNode(QStringLiteral("left"), false);
+    QCOMPARE(panel->property("scopeId").toString(), QStringLiteral("sub"));
+    QVERIFY(scopeLabel->property("text").toString().startsWith(QStringLiteral("Sub-assembly")));
+    QSignalSpy autoExplode(panel.get(), SIGNAL(autoExplodeRequested(QString,double)));
+    auto* stateSwitch = panel->findChild<QObject*>(QStringLiteral("explodeStateSwitch"));
+    QVERIFY(stateSwitch != nullptr);
+    QCOMPARE(stateSwitch->property("currentIndex").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(stateSwitch, "activated", Q_ARG(int, 1)));
+    QCOMPARE(autoExplode.count(), 1);
+    QCOMPARE(autoExplode.at(0).at(0).toString(), QStringLiteral("sub"));
+    QVERIFY(autoExplode.at(0).at(1).toDouble() >= 1.0);
+
+    // Typing a position moves the part there, and the field shows where it is.
+    // Repeater delegates are children in the item tree, not of the panel object.
+    const std::function<QQuickItem*(QQuickItem*, const QString&)> findItem = [&](QQuickItem* item, const QString& name) -> QQuickItem* {
+        if (item->objectName() == name) return item;
+        for (auto* child : item->childItems()) {
+            if (auto* found = findItem(child, name)) return found;
+        }
+        return nullptr;
+    };
+    auto* panelItem = qobject_cast<QQuickItem*>(panel.get());
+    auto* offsetX = findItem(panelItem, QStringLiteral("explodeOffsetField0"));
+    QVERIFY(offsetX != nullptr);
+    offsetX->setProperty("text", QStringLiteral("15"));
+    QVERIFY(QMetaObject::invokeMethod(offsetX, "editingFinished"));
+    QVERIFY(std::abs(explode.offsetOf(QStringLiteral("left")).x() - 15.0F) < 1e-3F);
+    auto* angleZ = findItem(panelItem, QStringLiteral("explodeAngleField2"));
+    QVERIFY(angleZ != nullptr);
+    angleZ->setProperty("text", QStringLiteral("45"));
+    QVERIFY(QMetaObject::invokeMethod(angleZ, "editingFinished"));
+    QVERIFY(std::abs(explode.anglesOf(QStringLiteral("left")).z() - 45.0F) < 1e-2F);
+    QVERIFY(std::abs(explode.offsetOf(QStringLiteral("left")).x() - 15.0F) < 1e-3F);
+    QCOMPARE(angleZ->property("text").toString(), QStringLiteral("45"));
+    QVERIFY(panel->findChild<QObject*>(QStringLiteral("explodeResetAllButton"))->property("enabled").toBool());
+
+    // "Move by" adds an exact distance to where the selection is; an empty field is 0.
+    const auto before = explode.offsetOf(QStringLiteral("left"));
+    findItem(panelItem, QStringLiteral("explodeMoveByField0"))->setProperty("text", QStringLiteral("2.5"));
+    findItem(panelItem, QStringLiteral("explodeMoveByField2"))->setProperty("text", QStringLiteral("-10"));
+    QVERIFY(QMetaObject::invokeMethod(findItem(panelItem, QStringLiteral("explodeMoveByButton")), "clicked"));
+    const auto moved = explode.offsetOf(QStringLiteral("left")) - before;
+    QVERIFY2((moved - QVector3D(2.5F, 0, -10)).length() < 1e-3F,
+             qPrintable(QStringLiteral("%1 %2 %3").arg(moved.x()).arg(moved.y()).arg(moved.z())));
+    QVERIFY(explode.canUndo());
+
+    // Export… asks for a file; the format follows its suffix.
+    QSignalSpy exportRequested(panel.get(), SIGNAL(exportRequested()));
+    QVERIFY(QMetaObject::invokeMethod(panel->findChild<QObject*>(QStringLiteral("explodeExportButton")), "clicked"));
+    QCOMPARE(exportRequested.count(), 1);
+    using loupe::app::ApplicationController;
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.STP"))), QStringLiteral("step"));
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.stl"))), QStringLiteral("stl"));
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.pdf"))), QStringLiteral("pdf"));
+    QCOMPARE(ApplicationController::explodedExportFormat(QUrl::fromLocalFile(QStringLiteral("/x/a.obj"))), QString{});
+    // Nothing to export from an empty document.
+    QVERIFY(!controller.exportExplodedAssembly(QUrl::fromLocalFile(QStringLiteral("/x/a.step")), {0, 0, 1}, {0, 1, 0}));
+}
+
+void QmlSmokeTest::floatingToolWindowDragsMinimisesAndStaysInside()
+{
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(R"(
+import QtQuick
+Item {
+    width: 800; height: 600
+    property alias window: tool
+    FloatingToolWindow {
+        id: tool
+        objectName: "tool"
+        title: "Section"
+        shown: true
+        defaultRightMargin: 40
+        defaultBottomMargin: 40
+        Rectangle { implicitWidth: 300; implicitHeight: 400 }
+    }
+}
+)"), QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/harness.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* harness = qobject_cast<QQuickItem*>(object.get());
+    auto* tool = harness->property("window").value<QQuickItem*>();
+    tool->setProperty("theme", QVariant::fromValue(theme.get()));
+    QQuickWindow window;
+    window.resize(800, 600);
+    harness->setParentItem(window.contentItem());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // Opens at its corner, sized to the panel under a title bar.
+    const auto titleHeight = tool->property("titleHeight").toDouble();
+    QCOMPARE(tool->width(), 300.0);
+    QCOMPARE(tool->height(), 400.0 + titleHeight);
+    QCOMPARE(tool->x(), 800.0 - 40 - 300);
+    QCOMPARE(tool->y(), 600.0 - 40 - tool->height());
+
+    // Dragged by its title bar.
+    const QPoint grab(qRound(tool->x() + 150), qRound(tool->y() + titleHeight / 2));
+    QTest::mousePress(&window, Qt::LeftButton, {}, grab);
+    for (int step = 1; step <= 6; ++step) QTest::mouseMove(&window, grab + QPoint(-200, -60) * step / 6, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, grab + QPoint(-200, -60));
+    QCOMPARE(tool->x(), 800.0 - 40 - 300 - 200);
+    QCOMPARE(tool->y(), 600.0 - 40 - (400.0 + titleHeight) - 60);
+
+    // Never off the workspace, however far it is dragged.
+    const QPoint again(qRound(tool->x() + 150), qRound(tool->y() + titleHeight / 2));
+    QTest::mousePress(&window, Qt::LeftButton, {}, again);
+    for (int step = 1; step <= 6; ++step) QTest::mouseMove(&window, again + QPoint(-2000, -2000) * step / 6, 10);
+    QTest::mouseRelease(&window, Qt::LeftButton, {}, again + QPoint(-2000, -2000));
+    QCOMPARE(tool->x(), 8.0);
+    QCOMPARE(tool->y(), 8.0);
+
+    // Minimised to its title bar, which stays where it is; a double-click restores it.
+    QVERIFY(QMetaObject::invokeMethod(tool, "toggleMinimized"));
+    QCOMPARE(tool->height(), titleHeight);
+    QCOMPARE(tool->y(), 8.0);
+    QTest::mouseDClick(&window, Qt::LeftButton, {}, QPoint(qRound(tool->x() + 150), qRound(tool->y() + titleHeight / 2)));
+    QTRY_COMPARE(tool->height(), 400.0 + titleHeight);
+
+    // A workspace too short for the panel scrolls it instead of pushing it off screen.
+    harness->setHeight(300);
+    QTRY_VERIFY(tool->height() <= 300.0 - 16);
+}
+
+void QmlSmokeTest::updateIndicatorShowsTheDownloadAsARing()
+{
+    auto theme = std::make_unique<QQmlPropertyMap>();
+    for (const auto* key : {"foreground", "muted", "accent", "error", "border", "control", "surfaceRaised", "surface3", "accentTint", "selection"})
+        theme->insert(QString::fromLatin1(key), QColor(QStringLiteral("#808080")));
+    for (const auto* key : {"spacing1", "spacing2", "spacing4", "radius1", "radius2", "radius3", "fontCaption"})
+        theme->insert(QString::fromLatin1(key), 4);
+    theme->insert(QStringLiteral("durIndeterminateTravel"), 1200);
+
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(
+        "import QtQuick\n"
+        "import Loupe.App\n"
+        "Item {\n"
+        "  property QtObject theme\n"
+        "  property alias indicator: indicator\n"
+        "  property QtObject updates: QtObject {\n"
+        "    property int state: Updates.Idle\n"
+        "    property string availableVersion: \"0.2.0\"\n"
+        "    property string currentVersion: \"0.1.5\"\n"
+        "    property double progress: 0\n"
+        "    property real bytesReceived: 0\n"
+        "    property real bytesTotal: 0\n"
+        "    property string message: \"\"\n"
+        "    property string releaseUrl: \"\"\n"
+        "    property bool dismissed: false\n"
+        "    property bool userInitiated: false\n"
+        "    signal changed()\n"
+        "    signal quitRequested()\n"
+        "  }\n"
+        "  UpdateIndicator { id: indicator; theme: parent.theme; updates: parent.updates }\n"
+        "}\n"), QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/UpdateIndicatorHost.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> host(component.createWithInitialProperties(
+        {{QStringLiteral("theme"), QVariant::fromValue(static_cast<QObject*>(theme.get()))}}));
+    QVERIFY2(host != nullptr, qPrintable(component.errorString()));
+    auto* indicator = host->property("indicator").value<QObject*>();
+    QVERIFY(indicator != nullptr);
+    auto* updates = host->property("updates").value<QObject*>();
+
+    // Nothing to say: not in the toolbar at all. An automatic check stays quiet too.
+    QVERIFY(!indicator->property("visible").toBool());
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Checking));
+    QVERIFY(!indicator->property("visible").toBool());
+    // A newer version: the icon, with its dot.
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Available));
+    QVERIFY(indicator->property("visible").toBool());
+    // Downloading: the ring fills with the download, its percentage beside it.
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Downloading));
+    updates->setProperty("progress", 0.42);
+    QCOMPARE(indicator->property("percent").toInt(), 42);
+    auto* ring = indicator->findChild<QObject*>(QStringLiteral("updateProgressRing"));
+    QVERIFY(ring != nullptr);
+    QVERIFY(ring->property("visible").toBool());
+    QCOMPARE(ring->property("sweep").toDouble(), 360.0 * 42 / 100);
+    auto* percent = indicator->findChild<QObject*>(QStringLiteral("updatePercent"));
+    QVERIFY(percent != nullptr);
+    QCOMPARE(percent->property("text").toString(), QStringLiteral("42%"));
+    // Ready: a full ring. Later hides it until the next launch.
+    updates->setProperty("state", static_cast<int>(loupe::app::platform::UpdateController::State::Ready));
+    QCOMPARE(ring->property("sweep").toDouble(), 360.0);
+    updates->setProperty("dismissed", true);
+    QVERIFY(!indicator->property("visible").toBool());
+}
+
+void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(
+        "import QtQuick\n"
+        "import Loupe.App\n"
+        "import \"..\"\n"
+        "Window {\n"
+        "  id: host\n"
+        "  width: 800; height: 700; visible: true\n"
+        "  property alias dialog: dialog\n"
+        "  property int seen: 0\n"
+        "  Theme { id: theme }\n"
+        "  property QtObject updates: QtObject {\n"
+        "    property var whatsNewItems: [{icon: \"tabs\", title: \"Tabs and windows\", body: \"Several files.\"},\n"
+        "                                 {icon: \"explode\", title: \"Exploded view\", body: \"Pull it apart.\"}]\n"
+        "    property string whatsNewVersion: \"0.1.5\"\n"
+        "    function markWhatsNewSeen() { seen += 1 }\n"
+        "  }\n"
+        "  WhatsNewDialog { id: dialog; theme: theme; updates: host.updates }\n"
+        "}\n"), QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/WhatsNewHost.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> host(component.create());
+    QVERIFY2(host != nullptr, qPrintable(component.errorString()));
+    auto* window = qobject_cast<QQuickWindow*>(host.get());
+    QVERIFY(window != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(window->isExposed(), 3000);
+    auto* dialog = host->property("dialog").value<QObject*>();
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 3000);
+    QCOMPARE(dialog->property("items").toList().size(), 2);
+    auto* title = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewTitle"));
+    QVERIFY(title == nullptr || title->property("text").toString().contains(QStringLiteral("What's New")));
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+    QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 3000);
+    QCOMPARE(host->property("seen").toInt(), 1);
+}
+
+void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
+{
+    // The panels are as wide as their dividers say, down to the same minimums in every
+    // workspace: Export's and Drawing's settings column used to fill half the spare width as
+    // well, standing at 525 px when its divider said 260.
+    const QList<std::tuple<const char*, const char*, double>> expected{
+        {"/inspect/InspectWorkspace.qml", "inspectTreeSplitter", 180.0},
+        {"/inspect/InspectWorkspace.qml", "inspectPropertiesSplitter", 260.0},
+        {"/export/ExportWorkspace.qml", "pickerSplitter", 180.0},
+        {"/export/ExportWorkspace.qml", "settingsSplitter", 260.0},
+        {"/drawing/DrawingWorkspace.qml", "pickerSplitter", 180.0},
+        {"/drawing/DrawingWorkspace.qml", "settingsSplitter", 260.0},
+    };
+    loupe::app::models::ThemePreference preferences;
+    const QStringList keys{QStringLiteral("outputPicker"), QStringLiteral("outputSettings"),
+                           QStringLiteral("inspectTree"), QStringLiteral("inspectProperties")};
+    for (const auto& key : keys) preferences.setPanelWidth(key, 120); // under every minimum
+    const auto restore = qScopeGuard([&] { for (const auto& key : keys) preferences.clearPanelWidth(key); });
+    for (const auto& [file, splitterName, minimum] : expected) {
+        loupe::app::ApplicationController controller;
+        QQmlEngine engine;
+        QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+        std::unique_ptr<QObject> theme(themeComponent.create());
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QString::fromLatin1(file)));
+        std::unique_ptr<QObject> object(component.createWithInitialProperties({
+            {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+            {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+            {QStringLiteral("preferences"), QVariant::fromValue(static_cast<QObject*>(&preferences))}}));
+        QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+        auto* workspace = qobject_cast<QQuickItem*>(object.get());
+        QQuickWindow window;
+        window.resize(1600, 900);
+        workspace->setParentItem(window.contentItem());
+        workspace->setSize({1600, 900});
+        window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+        auto* splitter = workspace->findChild<QQuickItem*>(QString::fromLatin1(splitterName));
+        QVERIFY2(splitter != nullptr, splitterName);
+        auto* panel = splitter->property("panel").value<QQuickItem*>();
+        QCOMPARE(splitter->property("effectiveWidth").toDouble(), minimum);
+        QTRY_VERIFY2_WITH_TIMEOUT(std::abs(panel->width() - minimum) < 0.5,
+                                  qPrintable(QStringLiteral("%1 %2: %3").arg(QString::fromLatin1(file), QString::fromLatin1(splitterName))
+                                                 .arg(panel->width())), 3000);
     }
 }
 
@@ -533,6 +1538,8 @@ void QmlSmokeTest::inspectionTaskPanelsLoad()
         QStringLiteral("MeasurementPanel.qml"),
         QStringLiteral("SectionPanel.qml"),
         QStringLiteral("CapturePanel.qml"),
+        QStringLiteral("ViewsPanel.qml"),
+        QStringLiteral("OpenHistoryDialog.qml"),
     };
 
     for (const auto& panelFile : panelFiles) {
@@ -663,6 +1670,70 @@ void capturingMessageHandler(QtMsgType type, const QMessageLogContext& context, 
 
 } // namespace
 
+void QmlSmokeTest::inspectTreeTakesModifierClicksAndShiftRanges()
+{
+    loupe::app::ApplicationController controller;
+    auto* treeModel = qobject_cast<loupe::app::models::AssemblyTreeModel*>(
+        controller.property("assemblyTree").value<QObject*>());
+    QVERIFY(treeModel != nullptr);
+    treeModel->replaceSnapshot({
+        {QStringLiteral("root"), {}, QStringLiteral("assembly"), QStringLiteral("Housing"), 1},
+        {QStringLiteral("p1"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("One"), 1},
+        {QStringLiteral("p2"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("Two"), 1},
+        {QStringLiteral("p3"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("Three"), 1},
+        {QStringLiteral("p4"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("Four"), 1},
+    });
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY(theme != nullptr);
+    QQmlComponent workspaceComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/InspectWorkspace.qml")));
+    QVERIFY2(workspaceComponent.isReady(), qPrintable(workspaceComponent.errorString()));
+    std::unique_ptr<QObject> workspaceObject(workspaceComponent.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("width"), 900},
+        {QStringLiteral("height"), 600},
+    }));
+    QVERIFY2(workspaceObject != nullptr, qPrintable(workspaceComponent.errorString()));
+    auto* workspace = qobject_cast<QQuickItem*>(workspaceObject.get());
+    QQuickWindow window;
+    window.resize(900, 600);
+    workspace->setParentItem(window.contentItem());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    const auto rowCentre = [&](const char* id) {
+        auto* row = findItemByObjectName(window.contentItem(), QStringLiteral("treeRow-") + QLatin1String(id));
+        return row ? row->mapToScene(QPointF(row->width() * 0.3, row->height() / 2)).toPoint() : QPoint(-1, -1);
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(rowCentre("p4").x() >= 0, 3000);
+    const auto click = [&](const char* id, Qt::KeyboardModifiers modifiers) {
+        QTest::mouseClick(&window, Qt::LeftButton, modifiers, rowCentre(id));
+        QTest::qWait(50);
+    };
+    const auto selected = [&] { auto ids = controller.selectedNodeIds(); ids.sort(); return ids.join(QLatin1Char(',')); };
+
+    click("p1", Qt::NoModifier);
+    QCOMPARE(selected(), QStringLiteral("p1"));
+    // ⌘ (Qt's Control on a Mac) or Ctrl: add a row, and again to take it out.
+    click("p3", Qt::ControlModifier);
+    QCOMPARE(selected(), QStringLiteral("p1,p3"));
+    click("p3", Qt::ControlModifier);
+    QCOMPARE(selected(), QStringLiteral("p1"));
+    // Shift: every row from the anchor to the one clicked, either way.
+    click("p2", Qt::NoModifier);
+    click("p4", Qt::ShiftModifier);
+    QCOMPARE(selected(), QStringLiteral("p2,p3,p4"));
+    click("p1", Qt::ShiftModifier);
+    QCOMPARE(selected(), QStringLiteral("p1,p2"));
+    // Shift with ⌘: the range is added to what is selected.
+    click("p4", Qt::NoModifier);
+    click("p1", Qt::ControlModifier);
+    click("p3", Qt::ShiftModifier | Qt::ControlModifier);
+    QCOMPARE(selected(), QStringLiteral("p1,p2,p3,p4"));
+}
+
 void QmlSmokeTest::inspectTreeRevealCallsIntoTheModelWithoutAQmlError()
 {
     // Exercises the real reveal path: InspectWorkspace.revealActiveNode() calls
@@ -726,6 +1797,18 @@ void QmlSmokeTest::inspectTreeRevealCallsIntoTheModelWithoutAQmlError()
 
     // And the reveal genuinely resolved the node rather than bailing out at the valid check.
     QVERIFY(treeModel->indexForStableId(QStringLiteral("occ-cover")).isValid());
+
+    // Tree search selects the first match, and stepping walks the rest in tree order.
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "runTreeSearch", Q_ARG(QVariant, QStringLiteral("r"))));
+    QCOMPARE(workspaceObject->property("treeMatches").toStringList(),
+             (QStringList{QStringLiteral("occ-carrier"), QStringLiteral("occ-cover")}));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("occ-carrier")});
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "stepTreeMatch", Q_ARG(QVariant, 1)));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("occ-cover")});
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "stepTreeMatch", Q_ARG(QVariant, 1)));
+    QCOMPARE(controller.selectedNodeIds(), QStringList{QStringLiteral("occ-carrier")});
+    QVERIFY(QMetaObject::invokeMethod(workspaceObject.get(), "runTreeSearch", Q_ARG(QVariant, QStringLiteral("gasket"))));
+    QVERIFY(workspaceObject->property("treeMatches").toStringList().isEmpty());
 }
 
 void QmlSmokeTest::drawingPreviewBuildsDrawablePathsFromProjectedGeometry()
@@ -1072,6 +2155,9 @@ void QmlSmokeTest::drawingQueueThumbnailFlattensTheCapturedPreview()
 int main(int argc, char* argv[])
 {
     QGuiApplication application(argc, argv);
+    // Settings of their own, never the app's, and somewhere every platform reads back from.
+    QCoreApplication::setOrganizationName(QStringLiteral("Loupe"));
+    QCoreApplication::setApplicationName(QStringLiteral("LoupeQmlSmokeTests"));
     QmlSmokeTest test;
     return QTest::qExec(&test, argc, argv);
 }

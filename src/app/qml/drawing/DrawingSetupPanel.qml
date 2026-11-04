@@ -35,11 +35,9 @@ ColumnLayout {
 
     spacing: root.theme.spacing2
 
-    Label {
+    Inspect.PanelTitle {
+        theme: root.theme
         text: qsTr("Drawing setup")
-        color: root.foreground
-        font.bold: true
-        font.pixelSize: root.theme.fontTitle
     }
 
     Label {

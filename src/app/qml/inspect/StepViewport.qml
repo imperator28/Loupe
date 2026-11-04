@@ -6,6 +6,7 @@ import Loupe.App
 
 Item {
     id: root
+    objectName: presentationOnly ? "previewViewport" : "inspectViewport"
     focus: true
 
     property QtObject controller
@@ -40,6 +41,18 @@ Item {
     property var sectionOverlayGeometryByNode: ({})
     property var xrayModelBySegment: ({})
     property var boundsByNode: ({})
+    // The exploded view (#17). Each part's models live under one node per part, which is
+    // what the exploded layout moves. Only the Inspect viewport shows that layout; Export
+    // and Drawing keep showing the assembly as the file has it.
+    property bool explodedLayoutEnabled: false
+    // The explode tool is open: its handles show on the selection.
+    property bool explodeToolActive: false
+    readonly property QtObject explode: controller && controller.explode ? controller.explode : null
+    readonly property bool explodedLayout: explodedLayoutEnabled && explode !== null && explode.exploded
+    property var partNodeByNode: ({})
+    property var xrayPartNodeByNode: ({})
+    // Parts are moving: section caps, built for where the parts were, wait until they stop.
+    property bool explodeSettling: false
     // The controller revision each segment (or node's edges) was last built from. A replay
     // hands every viewport everything again; one that already holds a revision skips it
     // rather than decoding the same payload a second time.
@@ -66,7 +79,12 @@ Item {
     property var sectionApplyRequest: null
     property int sectionBusyCount: 0
     property int sectionFinalizeTotal: 0
-    readonly property int maximumConcurrentSectionBuilds: 1
+    // Section builds run on worker threads: several at once, so a large assembly is not
+    // finalized one part after another.
+    readonly property int maximumConcurrentSectionBuilds: 6
+    // Parts handed to their geometry per pass of the event loop. Parts the plane misses
+    // finish on the spot, so a pass gets through many of them; the cap keeps the UI live.
+    readonly property int sectionItemsPerPass: 150
     property var hoverTopology: null
     property var acceptedTopologies: []
     readonly property bool hasAcceptedFaceHighlight: {
@@ -84,9 +102,73 @@ Item {
             ? controller.section.effectiveNormal : Qt.vector3d(0, 0, 1)
     readonly property vector3d removedSectionNormal: sceneSectionManipulator.removedSideNormal(
             effectiveSectionNormal, controller && controller.section.flipped)
+    // The screen's up direction in the scene: an exploded drawing is oriented by it.
+    readonly property vector3d viewUpDirection: navigation.revision >= 0
+        ? navigation.orientation.times(Qt.vector3d(0, 1, 0)) : Qt.vector3d(0, 1, 0)
+    // The direction from the scene toward the camera.
+    readonly property vector3d viewDirection: navigation.revision >= 0
+        ? navigation.orientation.times(Qt.vector3d(0, 0, 1)) : Qt.vector3d(0, 0, 1)
     readonly property vector3d sceneCenter: Qt.vector3d((sceneMinimum.x + sceneMaximum.x) * 0.5,
                                                         (sceneMinimum.y + sceneMaximum.y) * 0.5,
                                                         (sceneMinimum.z + sceneMaximum.z) * 0.5)
+    // The perspective camera's depth range, fitted around what is drawn. A fixed 0.01 to
+    // 1,000,000 left the depth buffer far too coarse at any real distance, so faces a
+    // fraction of a millimetre apart (a tape on a panel, two coincident shells) fought and
+    // the model came out in stripes and shades. Orthographic depth is linear and was fine.
+    readonly property var depthBounds: {
+        const revision = explode ? explode.revision : -1
+        const exploded = revision >= 0 ? explodedBounds([]) : null
+        const low = exploded ? Qt.vector3d(Math.min(sceneMinimum.x, exploded.minimum.x), Math.min(sceneMinimum.y, exploded.minimum.y),
+                                           Math.min(sceneMinimum.z, exploded.minimum.z)) : sceneMinimum
+        const high = exploded ? Qt.vector3d(Math.max(sceneMaximum.x, exploded.maximum.x), Math.max(sceneMaximum.y, exploded.maximum.y),
+                                            Math.max(sceneMaximum.z, exploded.maximum.z)) : sceneMaximum
+        const centre = Qt.vector3d((low.x + high.x) * 0.5, (low.y + high.y) * 0.5, (low.z + high.z) * 0.5)
+        const radius = Math.max(0.5, high.minus(low).length() * 0.5)
+        return { centre: centre, radius: radius }
+    }
+    // How far in front of the camera the scene's centre is, along the view: a panned camera
+    // is further from the centre than that, and fitting to the straight-line distance would
+    // clip the near side.
+    readonly property real perspectiveDepthDistance: {
+        const revision = navigation.revision
+        if (revision < 0) return 0
+        const forward = navigation.orientation.times(Qt.vector3d(0, 0, -1))
+        return depthBounds.centre.minus(navigation.cameraPosition).dotProduct(forward)
+    }
+    // Planes that are not finite (bounds or camera not settled yet) fall back to the old
+    // fixed range rather than clip everything away.
+    readonly property bool clipPlanesValid: hasSceneBounds && isFinite(perspectiveDepthDistance)
+                                            && isFinite(depthBounds.radius) && depthBounds.radius > 0
+    readonly property real perspectiveClipNear: clipPlanesValid
+        ? Math.max(depthBounds.radius * 0.0005, perspectiveDepthDistance - depthBounds.radius * 1.25) : 0.01
+    readonly property real perspectiveClipFar: clipPlanesValid
+        ? Math.max(perspectiveClipNear * 4, perspectiveDepthDistance + depthBounds.radius * 1.5) : 1000000
+    // Orthographic depth is linear, but 2,000,000 mm of it still left ~0.1 mm steps. An
+    // orthographic picture does not depend on how far back the camera is, so its cameras
+    // sit back far enough that the near plane is always in front of the model: a camera
+    // inside the model meant a near plane behind it, which not every graphics backend
+    // draws the same way.
+    readonly property real orthographicBackoff: clipPlanesValid
+        ? Math.max(0, depthBounds.radius * 2.5 - perspectiveDepthDistance) : 0
+    readonly property real orthographicClipNear: clipPlanesValid
+        ? perspectiveDepthDistance + orthographicBackoff - depthBounds.radius * 1.5 : -1000000
+    readonly property real orthographicClipFar: clipPlanesValid
+        ? perspectiveDepthDistance + orthographicBackoff + depthBounds.radius * 1.5 : 1000000
+    // Edges are drawn a little in front of the faces they outline. The shader takes that
+    // as a share of the depth range, so it is worked out here from the planes to come to
+    // the same distance in the model whatever the range: as a fixed share it shrank to
+    // thousandths of a millimetre once the planes fitted the model, and edges broke into
+    // dashes where they met the tessellated faces.
+    readonly property real edgeDepthBiasDistance: Math.min(5, Math.max(0.02, depthBounds.radius * 0.0004))
+    readonly property real edgeDepthBias: {
+        if (!clipPlanesValid) return 0.0000002
+        if (navigation.projectionMode === "orthographic")
+            return 2 * edgeDepthBiasDistance / Math.max(0.001, orthographicClipFar - orthographicClipNear)
+        const n = perspectiveClipNear
+        const f = perspectiveClipFar
+        const d = Math.max(n, perspectiveDepthDistance)
+        return edgeDepthBiasDistance * 2 * f * n / Math.max(0.000001, (f - n) * d * d)
+    }
     readonly property real sceneDiagonal: {
         const x = sceneMaximum.x - sceneMinimum.x
         const y = sceneMaximum.y - sceneMinimum.y
@@ -151,6 +233,462 @@ Item {
     // Empty-map results are not emitted, so a listener never sees a default frame.
     signal faceFrameSelected(var frame)
     signal openFileRequested()
+    // The empty-space menu's Save picture…: the workspace owns the file dialog.
+    signal savePictureRequested()
+
+    // ---- Exploded-view handles (#17) ----
+    // The selection the handles move, where it is drawn, and how big the handles are: a
+    // constant size on screen, wherever the selection is and however far the camera is.
+    readonly property var handleNodeIds: controller && controller.selectedNodeIds ? controller.selectedNodeIds : []
+    readonly property var handleBounds: {
+        const revision = explode ? explode.revision : -1
+        if (!explode || handleNodeIds.length === 0 || revision < 0) return null
+        const bounds = explode.displayedBounds(handleNodeIds)
+        return bounds.valid ? bounds : null
+    }
+    // Where the handle sits and turns about: the selection's centre, or a point the user
+    // picked on a part (#17), which goes along with that part as it moves.
+    property var handlePivot: null
+    // Every pivot picked this session, by the parts it was picked for: selecting those
+    // parts again brings their pivot back, until Use centre clears it.
+    property var savedPivots: ({})
+    function pivotKey() {
+        return controller ? controller.selectedNodeIds.slice().sort().join("|") : ""
+    }
+    // Turn the handle to the face the pivot was picked on, so its arrows run along and off
+    // that face rather than along the world's axes.
+    property bool handleAlignToFace: false
+    // The next click on a part picks the pivot.
+    property bool pickingPivot: false
+    readonly property vector3d handlePivotPoint: {
+        const revision = explode ? explode.revision : -1
+        const node = handlePivot && revision >= 0 ? partNodeByNode[handlePivot.nodeId] : null
+        return node ? node.mapPositionToScene(handlePivot.local) : Qt.vector3d(0, 0, 0)
+    }
+    readonly property vector3d handleCentre: handlePivot && partNodeByNode[handlePivot.nodeId]
+            ? handlePivotPoint
+            : handleBounds
+            ? Qt.vector3d((handleBounds.minimum.x + handleBounds.maximum.x) * 0.5,
+                          (handleBounds.minimum.y + handleBounds.maximum.y) * 0.5,
+                          (handleBounds.minimum.z + handleBounds.maximum.z) * 0.5)
+            : Qt.vector3d(0, 0, 0)
+    // The handle's orientation: the world's, or the picked face's.
+    readonly property quaternion handleFrame: {
+        const revision = explode ? explode.revision : -1
+        const node = handlePivot && handleAlignToFace && handlePivot.normal && revision >= 0
+                     ? partNodeByNode[handlePivot.nodeId] : null
+        if (!node || !explode) return Qt.quaternion(1, 0, 0, 0)
+        return explode.frameForNormal(node.mapDirectionToScene(handlePivot.normal))
+    }
+    readonly property real handlePixels: 96
+    readonly property real handleLength: worldPerPixelAt(handleCentre) * handlePixels
+    // Hidden while the view eases to (or shows) the assembly: a move is made to the layout.
+    readonly property bool handlesShown: explodedLayoutEnabled && explodeToolActive && explode !== null
+            && !presentationOnly && !captureUiHidden && handleBounds !== null && explode.blend > 0.999
+            && !pickingPivot
+    // The handle under the pointer, and the drag in progress: {kind, axis, ...}.
+    property var handleHover: null
+    property var handleDrag: null
+    // What the drag has moved so far, for the readout by the pointer.
+    property string handleReadout: ""
+    property point handleReadoutPosition: Qt.point(0, 0)
+    // Auto-explode and reset run as short animations over the controller's state.
+    property real autoExplodeAnimationFactor: 0
+
+    ExplodeHandleMath { id: handleMath }
+
+    function worldPerPixelAt(point) {
+        if (navigation.projectionMode === "orthographic")
+            return 1 / Math.max(0.000001, navigation.orthographicMagnification)
+        const x = navigation.cameraPosition.x - point.x
+        const y = navigation.cameraPosition.y - point.y
+        const z = navigation.cameraPosition.z - point.z
+        const distance = Math.max(0.001, Math.sqrt(x * x + y * y + z * z))
+        return 2 * distance * Math.tan(navigation.perspectiveFieldOfView * Math.PI / 360)
+                / Math.max(1, view.height)
+    }
+
+    function handleAxis(axis) {
+        const local = axis === 0 ? Qt.vector3d(1, 0, 0) : axis === 1 ? Qt.vector3d(0, 1, 0) : Qt.vector3d(0, 0, 1)
+        return handleFrame.times(local)
+    }
+
+    // The two directions spanning the plane a ring lies in.
+    function handleRingBasis(axis) {
+        return [handleAxis((axis + 1) % 3), handleAxis((axis + 2) % 3)]
+    }
+
+    // Start picking the pivot: the next click on a part puts the handle there.
+    function beginPivotPick() {
+        if (!explodedLayoutEnabled) return
+        pickingPivot = true
+    }
+
+    function cancelPivotPick() {
+        pickingPivot = false
+    }
+
+    function clearPivot() {
+        const saved = savedPivots
+        delete saved[pivotKey()]
+        savedPivots = saved
+        handlePivot = null
+        pickingPivot = false
+    }
+
+    // The point (and face) under (x, y) as the pivot, in the part's own frame so it stays on
+    // the part wherever the part is moved. False when the click missed every part.
+    function pickPivotAt(x, y) {
+        const hit = view.pick(x, y)
+        if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return false
+        const model = hit.objectHit
+        const normal = hit.sceneNormal ? model.mapDirectionFromScene(hit.sceneNormal) : null
+        handlePivot = { nodeId: model.nodeId, local: model.mapPositionFromScene(hit.scenePosition),
+                        normal: normal && normal.length() > 0 ? normal.normalized() : null }
+        const saved = savedPivots
+        saved[pivotKey()] = handlePivot
+        savedPivots = saved
+        pickingPivot = false
+        return true
+    }
+
+    // Saved views (Views tool window). The one last gone to stays marked as current until
+    // the camera, or what is shown, changes.
+    property string currentCameraViewId: ""
+    property int currentCameraRevision: -1
+    property string currentDisplayStateId: ""
+    property int currentDisplayRevision: -1
+    readonly property string activeCameraViewId: currentCameraViewId.length > 0
+        && (navigation.tween.running || navigation.revision === currentCameraRevision) ? currentCameraViewId : ""
+    readonly property string activeDisplayStateId: currentDisplayStateId.length > 0 && controller
+        && controller.visibilityRevision === currentDisplayRevision ? currentDisplayStateId : ""
+    Connections {
+        target: navigation.tween
+        function onStopped() { root.currentCameraRevision = navigation.revision }
+    }
+
+    // What a camera view looks along, in a word: a standard view when it is one.
+    function cameraViewSummary() {
+        const projection = navigation.projectionMode === "perspective" ? qsTr("Perspective") : qsTr("Orthographic")
+        const d = viewDirection
+        const named = [[Qt.vector3d(0, 0, 1), qsTr("Front")], [Qt.vector3d(0, 0, -1), qsTr("Back")],
+                       [Qt.vector3d(0, 1, 0), qsTr("Top")], [Qt.vector3d(0, -1, 0), qsTr("Bottom")],
+                       [Qt.vector3d(1, 0, 0), qsTr("Right")], [Qt.vector3d(-1, 0, 0), qsTr("Left")]]
+        for (const entry of named) {
+            if (d.dotProduct(entry[0]) > 0.996) return projection + " · " + entry[1]
+        }
+        return projection
+    }
+
+    // A small picture of the view as it is now, saved as an entry's thumbnail.
+    function saveViewThumbnail(id) {
+        if (!controller || id.length === 0 || view.width <= 0 || view.height <= 0) return
+        const scale = Math.min(1, 240 / view.width)
+        view.grabToImage(function(result) {
+            if (root.controller && result.saveToFile(root.controller.savedViews.thumbnailPath(id)))
+                root.controller.savedViews.thumbnailSaved(id)
+        }, Qt.size(Math.round(view.width * scale), Math.round(view.height * scale)))
+    }
+
+    function saveCameraView(name) {
+        if (!controller) return ""
+        const id = controller.saveCameraView(name, navigation.cameraState(), cameraViewSummary())
+        if (id.length > 0) {
+            currentCameraViewId = id
+            currentCameraRevision = navigation.revision
+            saveViewThumbnail(id)
+        }
+        return id
+    }
+
+    function goToCameraView(id) {
+        if (!controller) return false
+        const state = controller.cameraView(id)
+        const duration = root.theme && root.theme.durSpatial !== undefined ? Math.round(root.theme.durSpatial * 1.5) : 0
+        if (!navigation.restoreCameraState(state, duration)) return false
+        currentCameraViewId = id
+        if (duration <= 0) currentCameraRevision = navigation.revision
+        return true
+    }
+
+    function saveDisplayState(name) {
+        if (!controller) return ""
+        const id = controller.saveDisplayState(name)
+        if (id.length > 0) {
+            currentDisplayStateId = id
+            currentDisplayRevision = controller.visibilityRevision
+            saveViewThumbnail(id)
+        }
+        return id
+    }
+
+    function goToDisplayState(id) {
+        if (!controller || !controller.applyDisplayState(id)) return false
+        currentDisplayStateId = id
+        currentDisplayRevision = controller.visibilityRevision
+        return true
+    }
+
+    // The Assembled / Exploded switch: ease the view to the assembly, or back to the layout,
+    // keeping the layout either way.
+    function showAssembled() {
+        if (!explode || !explode.exploded) return
+        explodeResetAnimation.stop()
+        layoutViewAnimation.to = 0
+        layoutViewAnimation.restart()
+    }
+
+    function showExploded() {
+        if (!explode) return
+        explodeResetAnimation.stop()
+        layoutViewAnimation.to = 1
+        layoutViewAnimation.restart()
+    }
+
+    NumberAnimation {
+        id: layoutViewAnimation
+        target: root.explode
+        property: "blend"
+        duration: root.theme ? root.theme.durSpatial * 2 : 0
+        easing.type: Easing.InOutCubic
+    }
+
+    Connections {
+        target: root.controller
+        // The pivot belongs to the parts it was picked for: theirs, or the centre.
+        function onSelectionChanged() {
+            const saved = root.savedPivots[root.pivotKey()]
+            root.handlePivot = saved !== undefined ? saved : null
+        }
+        // A new document starts without pivots.
+        function onDocumentNameChanged() { root.savedPivots = ({}); root.handlePivot = null }
+    }
+
+    function screenPoint(scenePoint) {
+        const point = view.mapFrom3DScene(scenePoint)
+        return { x: point.x, y: point.y }
+    }
+
+    // The handles as drawn on screen, for hit-testing and dragging.
+    function handleLayout() {
+        if (!handlesShown) return null
+        const centre = handleCentre
+        const length = handleLength
+        const radius = length * 0.72
+        const layout = { centre: screenPoint(centre), tips: [], rings: [], ringPoints: [] }
+        for (let axis = 0; axis < 3; ++axis) {
+            layout.tips.push(screenPoint(centre.plus(handleAxis(axis).times(length * 0.98))))
+            const basis = handleRingBasis(axis)
+            const points = []
+            const scenePoints = []
+            for (let step = 0; step < 48; ++step) {
+                const angle = step / 48 * 2 * Math.PI
+                const scenePoint = centre.plus(basis[0].times(radius * Math.cos(angle)))
+                                         .plus(basis[1].times(radius * Math.sin(angle)))
+                scenePoints.push(scenePoint)
+                points.push(screenPoint(scenePoint))
+            }
+            layout.rings.push(points)
+            layout.ringPoints.push(scenePoints)
+        }
+        return layout
+    }
+
+    function handleAt(x, y) {
+        return handleMath.handleAt(x, y, handleLayout())
+    }
+
+    function updateHandleHover(x, y) {
+        const hit = handlesShown ? handleAt(x, y) : null
+        const same = hit && handleHover && hit.kind === handleHover.kind && hit.axis === handleHover.axis
+        if (!same && (hit || handleHover)) handleHover = hit
+        return hit !== null
+    }
+
+    function beginHandleDrag(hit, x, y) {
+        const layout = handleLayout()
+        if (!layout || !explode) return false
+        const axis = handleAxis(hit.axis)
+        const drag = { kind: hit.kind, axis: hit.axis, startX: x, startY: y, centre: handleCentre,
+                       centreScreen: layout.centre, value: 0 }
+        if (hit.kind === "free") {
+            // In the plane of the screen through the handle, at the scale it is drawn at.
+            drag.right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
+            drag.up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
+            drag.worldPerPixel = worldPerPixelAt(handleCentre)
+        } else if (hit.kind === "move") {
+            drag.axisX = layout.tips[hit.axis].x - layout.centre.x
+            drag.axisY = layout.tips[hit.axis].y - layout.centre.y
+            drag.millimetres = handleLength * 0.98
+        } else {
+            // A ring seen face-on turns with the pointer's angle about the centre. Seen
+            // edge-on that angle means nothing, so the drag follows the ring's tangent where
+            // it was grabbed.
+            const facing = axis.dotProduct(viewDirection)
+            if (Math.abs(facing) > 0.25) {
+                drag.mode = "angle"
+                drag.sign = facing > 0 ? -1 : 1
+                drag.lastAngle = handleMath.screenAngle(x, y, layout.centre)
+                drag.turned = 0
+            } else {
+                drag.mode = "tangent"
+                const points = layout.rings[hit.axis]
+                let nearest = 0
+                let best = Number.POSITIVE_INFINITY
+                for (let index = 0; index < points.length; ++index) {
+                    const dx = points[index].x - x
+                    const dy = points[index].y - y
+                    if (dx * dx + dy * dy < best) { best = dx * dx + dy * dy; nearest = index }
+                }
+                const grabbed = layout.ringPoints[hit.axis][nearest]
+                const radius = handleLength * 0.72
+                const tangent = axis.crossProduct(grabbed.minus(handleCentre)).normalized()
+                const ahead = screenPoint(grabbed.plus(tangent.times(radius * 0.2)))
+                const here = screenPoint(grabbed)
+                drag.tangentX = ahead.x - here.x
+                drag.tangentY = ahead.y - here.y
+            }
+        }
+        explode.beginInteraction(handleNodeIds)
+        if (!explode.interacting) return false
+        handleDrag = drag
+        handleReadoutPosition = Qt.point(x, y)
+        handleReadout = ""
+        return true
+    }
+
+    function updateHandleDrag(x, y, free) {
+        const drag = handleDrag
+        if (!drag || !explode) return
+        if (drag.kind === "free") {
+            const travel = handleMath.screenPlaneTravel(x - drag.startX, y - drag.startY, drag.right, drag.up, drag.worldPerPixel)
+            // Snapping steps each axis on its own, so a free move still lands on round numbers.
+            const snapped = Qt.vector3d(explode.snapTranslation(travel.x, free), explode.snapTranslation(travel.y, free),
+                                        explode.snapTranslation(travel.z, free))
+            explode.previewTranslation(snapped)
+            const digits = function(value) { return value.toFixed(Math.abs(value) < 10 ? 2 : 1) }
+            handleReadout = qsTr("X %1  Y %2  Z %3 mm").arg(digits(snapped.x)).arg(digits(snapped.y)).arg(digits(snapped.z))
+            handleReadoutPosition = Qt.point(x, y)
+            return
+        }
+        const axis = handleAxis(drag.axis)
+        if (drag.kind === "move") {
+            const travel = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.axisX, drag.axisY, drag.millimetres)
+            const snapped = explode.snapTranslation(travel, free)
+            explode.previewTranslation(axis.times(snapped))
+            drag.value = snapped
+            handleReadout = qsTr("%1 mm").arg(snapped.toFixed(Math.abs(snapped) < 10 ? 2 : 1))
+        } else {
+            let degrees = 0
+            if (drag.mode === "angle") {
+                const angle = handleMath.screenAngle(x, y, drag.centreScreen)
+                drag.turned += handleMath.angleStep(drag.lastAngle, angle)
+                drag.lastAngle = angle
+                degrees = drag.sign * drag.turned
+            } else {
+                degrees = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.tangentX, drag.tangentY, 0.2) * 180 / Math.PI
+            }
+            const snapped = explode.snapRotation(degrees, free)
+            explode.previewRotation(axis, snapped, drag.centre)
+            drag.value = snapped
+            handleReadout = qsTr("%1°").arg(snapped.toFixed(1))
+        }
+        handleReadoutPosition = Qt.point(x, y)
+    }
+
+    function endHandleDrag(commit) {
+        if (!handleDrag) return
+        if (explode) {
+            if (commit) explode.commitInteraction()
+            else explode.cancelInteraction()
+        }
+        handleDrag = null
+        handleReadout = ""
+    }
+
+    // Bring every part home with a short glide, then forget where they were moved.
+    function animateExplodeReset() {
+        if (!explode || !explode.exploded) return
+        autoExplodeAnimation.stop()
+        layoutViewAnimation.stop()
+        explodeResetAnimation.restart()
+    }
+
+    // Auto-explode the scope ("" for the whole model) to `factor`, flying the parts apart.
+    function animateAutoExplode(scopeId, factor) {
+        if (!explode) return
+        explodeResetAnimation.stop()
+        layoutViewAnimation.stop()
+        autoExplodeAnimation.stop()
+        explode.beginAutoExplode(scopeId)
+        if (!explode.interacting) return
+        autoExplodeAnimationFactor = explode.autoFactor(scopeId)
+        autoExplodeAnimation.to = Math.max(0, factor)
+        autoExplodeAnimation.restart()
+    }
+
+    onAutoExplodeAnimationFactorChanged: if (autoExplodeAnimation.running && explode) explode.previewAutoExplode(autoExplodeAnimationFactor)
+
+    NumberAnimation {
+        id: autoExplodeAnimation
+        target: root
+        property: "autoExplodeAnimationFactor"
+        duration: root.theme ? root.theme.durSpatial * 2 : 0
+        easing.type: Easing.OutCubic
+        onFinished: {
+            if (root.explode) {
+                root.explode.previewAutoExplode(autoExplodeAnimation.to)
+                root.explode.commitInteraction()
+            }
+        }
+    }
+
+    NumberAnimation {
+        id: explodeResetAnimation
+        target: root.explode
+        property: "blend"
+        to: 0
+        duration: root.theme ? root.theme.durSpatial * 2 : 0
+        easing.type: Easing.InOutCubic
+        onFinished: if (root.explode) root.explode.resetAll()
+    }
+
+    // Parts that move re-cut their section caps once they come to rest, not every frame.
+    function explodeMoved() {
+        if (presentationOnly || !controller || !controller.section.enabled) return
+        if (!explodeSettling) {
+            explodeSettling = true
+            applyRenderMode()
+        }
+        explodeSettleTimer.restart()
+    }
+
+    Timer {
+        id: explodeSettleTimer
+        interval: 160
+        onTriggered: {
+            if (root.explode && root.explode.interacting) {
+                restart()
+                return
+            }
+            root.explodeSettling = false
+            root.applySection()
+        }
+    }
+
+    Connections {
+        target: root.explode
+        function onInteractionChanged() {
+            if (root.explode.interacting) layoutViewAnimation.stop()
+        }
+        function onPartsMoved(partIds) {
+            if (!root.explodedLayoutEnabled) return
+            root.placeParts(partIds)
+            root.explodeMoved()
+        }
+    }
+    onExplodedLayoutEnabledChanged: placeAllParts()
+    onHandlesShownChanged: if (!handlesShown) handleHover = null
 
     ViewportVisualTheme {
         id: viewportVisualTheme
@@ -182,7 +720,9 @@ Item {
             navigation.reset()
             return
         }
-        navigation.fitBounds(sceneMinimum, sceneMaximum)
+        const exploded = explodedBounds([])
+        if (exploded) navigation.fitBounds(exploded.minimum, exploded.maximum)
+        else navigation.fitBounds(sceneMinimum, sceneMaximum)
         pendingFit = false
     }
 
@@ -207,6 +747,62 @@ Item {
     function nodeVisibleInPreview(nodeId) {
         if (requireDisplayFilter && displayOnlyNodeId.length === 0) return false
         return displayOnlyNodeId.length === 0 || nodeMatchesSelection(nodeId, displayOnlyNodeId)
+    }
+
+    // The node a part's models hang from, made on first use and placed where the exploded
+    // layout has the part.
+    function partNode(nodeId) {
+        let node = partNodeByNode[nodeId]
+        if (!node) {
+            node = partNodeComponent.createObject(sceneRoot)
+            partNodeByNode[nodeId] = node
+            placePart(nodeId)
+        }
+        return node
+    }
+
+    function xrayPartNode(nodeId) {
+        let node = xrayPartNodeByNode[nodeId]
+        if (!node) {
+            node = partNodeComponent.createObject(componentXrayRoot)
+            xrayPartNodeByNode[nodeId] = node
+            placePart(nodeId)
+        }
+        return node
+    }
+
+    function placePart(nodeId) {
+        const moved = explodedLayoutEnabled && explode
+        const position = moved ? explode.displayedPosition(nodeId) : Qt.vector3d(0, 0, 0)
+        const rotation = moved ? explode.displayedRotation(nodeId) : Qt.quaternion(1, 0, 0, 0)
+        for (const node of [partNodeByNode[nodeId], xrayPartNodeByNode[nodeId]]) {
+            if (!node) continue
+            node.position = position
+            node.rotation = rotation
+        }
+    }
+
+    function placeParts(nodeIds) {
+        for (const nodeId of nodeIds) placePart(nodeId)
+    }
+
+    function placeAllParts() {
+        for (let nodeId in partNodeByNode) placePart(nodeId)
+    }
+
+    // A world section plane in the part's own coordinates, as (normal, offset): the cap and
+    // edge clip of a moved part are built against it, so they land on the part as drawn.
+    function sectionPlaneFor(nodeId, normal, offset) {
+        if (explodedLayoutEnabled && explode && explode.isMoved(nodeId)) return explode.localPlane(nodeId, normal, offset)
+        return Qt.vector4d(normal.x, normal.y, normal.z, offset)
+    }
+
+    // Where everything is drawn when the layout is exploded, or null to use the assembly's
+    // own bounds. `nodeIds` narrows it to those nodes' parts.
+    function explodedBounds(nodeIds) {
+        if (!explodedLayout) return null
+        const bounds = explode.displayedBounds(nodeIds)
+        return bounds.valid ? bounds : null
     }
 
     // A fit was asked for but the geometry it needs had not arrived yet. Fitting is
@@ -249,6 +845,11 @@ Item {
             fitCamera()
             return
         }
+        const exploded = explodedBounds(controller.selectedNodeIds)
+        if (exploded) {
+            navigation.fitBounds(exploded.minimum, exploded.maximum)
+            return
+        }
         let minimum = Qt.vector3d(0, 0, 0)
         let maximum = Qt.vector3d(0, 0, 0)
         let found = false
@@ -268,11 +869,14 @@ Item {
         else fitCamera()
     }
 
+    // Look straight at the cut: from the side the section removes, so the cut face is what
+    // faces the camera. Opposite: keep the other half instead and look at its cut. Looking
+    // from the kept side, as this used to, showed the part's untouched outside.
     function alignToSection(oppositeSide) {
         if (!controller) return
         if (oppositeSide) controller.section.flipped = !controller.section.flipped
-        const normal = effectiveSectionNormal
-        navigation.alignToNormal(oppositeSide ? Qt.vector3d(-normal.x, -normal.y, -normal.z) : normal)
+        const removed = sceneSectionManipulator.removedSideNormal(effectiveSectionNormal, controller.section.flipped)
+        navigation.alignToNormal(removed)
         Qt.callLater(fitVisibleGeometry)
     }
 
@@ -296,6 +900,8 @@ Item {
 
     // The bounds of everything currently drawn, or null when nothing is.
     function visibleGeometryBounds() {
+        const exploded = explodedBounds([])
+        if (exploded) return exploded
         let minimum = Qt.vector3d(0, 0, 0)
         let maximum = Qt.vector3d(0, 0, 0)
         let found = false
@@ -327,6 +933,11 @@ Item {
     }
 
     function fitVisibleGeometry() {
+        const exploded = explodedBounds([])
+        if (exploded) {
+            navigation.fitBounds(exploded.minimum, exploded.maximum)
+            return
+        }
         let minimum = Qt.vector3d(0, 0, 0)
         let maximum = Qt.vector3d(0, 0, 0)
         let hasVisibleGeometry = false
@@ -403,6 +1014,10 @@ Item {
         for (let id in sectionOverlayModelByNode) sectionOverlayModelByNode[id].destroy()
         for (let id in sectionOverlayGeometryByNode) sectionOverlayGeometryByNode[id].destroy()
         for (let id in xrayModelBySegment) xrayModelBySegment[id].destroy()
+        for (let id in partNodeByNode) partNodeByNode[id].destroy()
+        for (let id in xrayPartNodeByNode) xrayPartNodeByNode[id].destroy()
+        partNodeByNode = ({})
+        xrayPartNodeByNode = ({})
         modelByNode = ({})
         geometryByNode = ({})
         edgeModelByNode = ({})
@@ -455,6 +1070,7 @@ Item {
     function applySolidState(model, sliceOnlyFinal) {
         const shown = nodeShown(model.nodeId)
         model.transparent = nodeTransparent(model.nodeId)
+        if (model.transparent) model.transparentOpacity = controller.nodeOpacity(model.nodeId)
         model.visible = renderMode !== 2 && !sliceOnlyFinal && shown
         // Picking follows the user's own hide, not the display mode. A ray
         // pick still reports a model that is merely not drawn, so leaving
@@ -477,9 +1093,11 @@ Item {
         // shared controller selection too, which would otherwise always
         // trip this override and make its render-mode control a no-op.
         const selected = !root.presentationOnly && controller && controller.isNodeSelected(edgeModel.nodeId)
-        const sectionPreview = section && section.enabled && section.interacting
+        const sectionPreview = section && section.enabled && (section.interacting || root.explodeSettling)
         edgeModel.visible = !sliceOnlyFinal && !sectionPreview && (renderMode !== 0 || selected)
-                && nodeShown(edgeModel.nodeId) && !nodeTransparent(edgeModel.nodeId)
+                && nodeShown(edgeModel.nodeId)
+                // A transparent part keeps its edges unless they were turned off for it.
+                && (!nodeTransparent(edgeModel.nodeId) || controller.nodeShowsTransparentEdges(edgeModel.nodeId))
     }
 
     function applyRenderMode() {
@@ -489,7 +1107,7 @@ Item {
         for (let id in edgeModelByNode) applyEdgeState(edgeModelByNode[id], section, sliceOnlyFinal)
         for (let id in sectionOverlayModelByNode) {
             const overlay = sectionOverlayModelByNode[id]
-            const hasExactDisplay = section && section.enabled && !section.interacting
+            const hasExactDisplay = section && section.enabled && !section.interacting && !root.explodeSettling
                     && (section.sliceOnly || section.capEnabled)
             overlay.visible = hasExactDisplay && (section.sliceOnly || renderMode !== 2)
                     && (!controller || controller.isNodeVisible(overlay.nodeId))
@@ -551,15 +1169,15 @@ Item {
         }
         sectionApplyTimer.stop()
         for (let id in edgeGeometryByNode) {
-            edgeGeometryByNode[id].configureSection(section.enabled,
-                    section.effectiveNormal.x, section.effectiveNormal.y, section.effectiveNormal.z,
-                    section.effectiveOffset, section.flipped, section.sliceOnly, false)
+            const plane = sectionPlaneFor(id, section.effectiveNormal, section.effectiveOffset)
+            edgeGeometryByNode[id].configureSection(section.enabled, plane.x, plane.y, plane.z, plane.w,
+                    section.flipped, section.sliceOnly, false)
         }
         const queue = []
         if (section.enabled && (section.sliceOnly || section.capEnabled)) {
             for (let id in geometryByNode) {
                 const overlay = ensureSectionOverlay(id)
-                if (overlay) queue.push(overlay)
+                if (overlay) queue.push({ geometry: overlay, nodeId: modelByNode[id].nodeId })
             }
         }
         sectionApplyRequest = queue.length > 0 ? {
@@ -584,13 +1202,10 @@ Item {
         if (queue.length > 0) sectionApplyTimer.restart()
     }
 
-    function updateSectionBusyCount() {
-        let count = 0
-        for (let id in sectionOverlayGeometryByNode) {
-            if (sectionOverlayGeometryByNode[id].sectionBusy) count += 1
-        }
-        sectionBusyCount = count
-        applyRenderMode()
+    // One part's build started or finished. Counted as it changes: counting every part
+    // each time made finishing N parts cost N squared.
+    function sectionBuildBusyChanged(busy) {
+        sectionBusyCount = Math.max(0, sectionBusyCount + (busy ? 1 : -1))
         if (sectionApplyRequest && sectionApplyIndex < sectionApplyQueue.length
                 && sectionBusyCount < maximumConcurrentSectionBuilds
                 && !sectionApplyTimer.running) {
@@ -599,17 +1214,29 @@ Item {
     }
 
     function applyNextSectionItem() {
-        if (!sectionApplyRequest || sectionApplyIndex >= sectionApplyQueue.length) return
-        if (sectionBusyCount >= maximumConcurrentSectionBuilds) return
-        const geometry = sectionApplyQueue[sectionApplyIndex]
         const request = sectionApplyRequest
-        sectionApplyIndex += 1
-        geometry.configureSection(request.enabled, request.normal.x, request.normal.y, request.normal.z,
-                                  request.offset, request.flipped, request.capEnabled, request.sliceOnly,
-                                  request.sliceFill, request.sliceOutline, request.preview,
-                                  request.outlineWidth)
-        updateSectionBusyCount()
+        let handed = 0
+        while (request && sectionApplyIndex < sectionApplyQueue.length
+               && sectionBusyCount < maximumConcurrentSectionBuilds && handed < sectionItemsPerPass) {
+            const item = sectionApplyQueue[sectionApplyIndex]
+            sectionApplyIndex += 1
+            handed += 1
+            const plane = sectionPlaneFor(item.nodeId, request.normal, request.offset)
+            item.geometry.configureSection(request.enabled, plane.x, plane.y, plane.z,
+                                           plane.w, request.flipped, request.capEnabled, request.sliceOnly,
+                                           request.sliceFill, request.sliceOutline, request.preview,
+                                           request.outlineWidth)
+        }
+        // More to hand out and room for it: carry on next pass. Otherwise a finishing
+        // build restarts this.
+        if (request && sectionApplyIndex < sectionApplyQueue.length
+                && sectionBusyCount < maximumConcurrentSectionBuilds)
+            sectionApplyTimer.restart()
     }
+
+    // The render state depends on whether the section is still being finalized, not on
+    // each part's progress: set it when that changes.
+    onSectionFinalizingChanged: applyRenderMode()
 
     function ensureSectionOverlay(segmentKey) {
         if (root.presentationOnly) return null
@@ -624,8 +1251,8 @@ Item {
             overlayGeometry.destroy()
             return null
         }
-        overlayGeometry.sectionBusyChanged.connect(root.updateSectionBusyCount)
-        const overlayModel = sectionOverlayModelComponent.createObject(sceneRoot, {
+        overlayGeometry.sectionBusyChanged.connect(function() { root.sectionBuildBusyChanged(overlayGeometry.sectionBusy) })
+        const overlayModel = sectionOverlayModelComponent.createObject(partNode(sourceModel.nodeId), {
             "geometry": overlayGeometry,
             "nodeId": sourceModel.nodeId,
             "sourceColor": sourceModel.sourceColor
@@ -670,9 +1297,9 @@ Item {
             geometry.destroy()
             return
         }
-        const model = modelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId, "importColor": sourceColor,
+        const model = modelComponent.createObject(partNode(nodeId), { "geometry": geometry, "nodeId": nodeId, "importColor": sourceColor,
                                                     "sourceColor": root.displayColor(nodeId, sourceColor) })
-        const xrayModel = componentXrayModel.createObject(componentXrayRoot, {
+        const xrayModel = componentXrayModel.createObject(xrayPartNode(nodeId), {
             "geometry": geometry,
             "nodeId": nodeId,
             "visible": root.externalHighlightNodeId.length > 0
@@ -711,7 +1338,7 @@ Item {
             geometry.destroy()
             return
         }
-        const model = edgeModelComponent.createObject(sceneRoot, { "geometry": geometry, "nodeId": nodeId })
+        const model = edgeModelComponent.createObject(partNode(nodeId), { "geometry": geometry, "nodeId": nodeId })
         edgeGeometryByNode[nodeId] = geometry
         edgeModelByNode[nodeId] = model
         const section = !presentationOnly && controller ? controller.section : null
@@ -839,8 +1466,10 @@ Item {
         if (!hit.objectHit || !hit.scenePosition) return null
         const geometry = hit.objectHit.geometry
         if (!geometry) return null
-        const info = geometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y,
-                                              hit.scenePosition.z)
+        // The geometry is in the part's assembled coordinates; an exploded part is drawn
+        // elsewhere, so the hit is taken back into the part's own frame to find its face.
+        const local = hit.objectHit.mapPositionFromScene(hit.scenePosition)
+        const info = geometry.topologyAtPoint(local.x, local.y, local.z)
         if (!info || !info.topologyId || info.entityKind !== "face") return null
         return {
             nodeId: hit.objectHit.nodeId,
@@ -849,9 +1478,79 @@ Item {
             measureMm: info.measureMm,
             radiusMm: info.radiusMm,
             sourceGeometry: geometry,
+            sourceModel: hit.objectHit,
             point: hit.scenePosition,
             normal: hit.sceneNormal
         }
+    }
+
+    // The face a right-click landed on, for the menu's "View normal to face", and the last
+    // face clicked at all, for the shortcut when the pointer is not over a face.
+    property var contextFacePick: null
+    property var lastFacePick: null
+    property var lastNormalView: null
+
+    // Right-click: a part that is already selected keeps the selection, so the menu acts on
+    // every selected part, as the tree's right-click does. Only an unselected part replaces
+    // the selection, and empty space leaves it alone.
+    function contextPickAt(x, y) {
+        const hit = view.pick(x, y)
+        root.contextFacePick = null
+        if (!hit.objectHit || !hit.objectHit.nodeId) return false
+        root.contextFacePick = root.facePickFromHit(hit)
+        if (root.contextFacePick) root.lastFacePick = root.contextFacePick
+        if (root.controller.isNodeSelected(hit.objectHit.nodeId)) return true
+        return root.pickAt(x, y, false)
+    }
+
+    function rememberFaceAt(x, y) {
+        const pick = root.facePickFromHit(view.pick(x, y))
+        if (pick) root.lastFacePick = pick
+    }
+
+    // Menu text for an action on the selection: the plain wording for one part, and the
+    // count for several, so it is clear the action is not just for the part clicked.
+    function selectionActionText(single, several) {
+        const count = root.controller ? root.controller.selectedNodeIds.length : 0
+        return count > 1 ? several.arg(count) : single
+    }
+
+    // Turn the view to look straight at a picked face, keeping the zoom. A flat face is seen
+    // along its exact normal, a cylinder along its axis, anything else along the normal at
+    // the picked point. Asked again for the same face while looking at it, it shows the
+    // face's other side.
+    function viewNormalToFacePick(pick) {
+        if (!pick || !pick.sourceGeometry) return false
+        const face = pick.sourceGeometry.faceViewFor(pick.topologyId)
+        const resolved = face && face.direction !== undefined
+        // The face is described in its part's own frame; a moved or turned part is seen where
+        // it is drawn, so its direction and centre go back into the scene.
+        const model = pick.sourceModel
+        const toScene = function(vector, isDirection) {
+            if (!model || !vector) return vector
+            return isDirection ? model.mapDirectionToScene(vector) : model.mapPositionToScene(vector)
+        }
+        let direction = resolved ? toScene(face.direction, true) : pick.normal
+        const target = face && face.centroid !== undefined ? toScene(face.centroid, false) : pick.point
+        const back = navigation.orientation.times(Qt.vector3d(0, 0, 1))
+        // An axis has no outside; take the end that turns the view least.
+        if (resolved && face.kind === "axis" && direction.dotProduct(back) < 0) direction = direction.times(-1)
+        if (root.lastNormalView && root.lastNormalView.nodeId === pick.nodeId
+                && root.lastNormalView.topologyId === pick.topologyId && direction.dotProduct(back) > 0.9999)
+            direction = direction.times(-1)
+        navigation.viewAlong(direction, target, face && face.edgeDirection !== undefined ? toScene(face.edgeDirection, true) : null)
+        root.lastNormalView = { nodeId: pick.nodeId, topologyId: pick.topologyId }
+        return true
+    }
+
+    function viewNormalToFaceAt(x, y) {
+        return root.viewNormalToFacePick(root.facePickFromHit(view.pick(x, y)))
+    }
+
+    // The shortcut and menu command: the face under the pointer, else the last one clicked.
+    function viewNormalToFace() {
+        if (input.containsMouse && root.viewNormalToFaceAt(input.mouseX, input.mouseY)) return true
+        return root.viewNormalToFacePick(root.lastFacePick)
     }
 
     function reportFaceFrameAt(x, y) {
@@ -968,6 +1667,7 @@ Item {
     }
 
     Component { id: geometryComponent; MeshGeometry {} }
+    Component { id: partNodeComponent; Node {} }
     Component { id: edgeGeometryComponent; CadEdgeGeometry {} }
     // Coalesces the burst of arriving meshes into one fit, and -- because
     // fitCamera() only clears pendingFit once it actually fits -- is also what
@@ -989,6 +1689,8 @@ Item {
             property bool hovered: !selected && root.hoveredNodeId === nodeId
             property bool inspectionHovered: hovered && !root.measurementActive && root.componentHoverEnabled
             property bool transparent: false
+            // The part's own opacity while transparent (Properties > Opacity).
+            property real transparentOpacity: 0.45
             pickable: true
             materials: [sectionMaterial]
             SectionClipMaterial {
@@ -1004,7 +1706,7 @@ Item {
                 sectionNormal: root.effectiveSectionNormal
                 sectionOffset: root.controller ? root.controller.section.effectiveOffset : 0
                 retainedSign: root.controller && root.controller.section.flipped ? -1 : 1
-                ghostOpacity: modelItem.transparent ? 0.45 : 1.0
+                ghostOpacity: modelItem.transparent ? modelItem.transparentOpacity : 1.0
             }
         }
     }
@@ -1035,6 +1737,7 @@ Item {
             materials: [standardEdgeMaterial]
             CadEdgeMaterial {
                 id: standardEdgeMaterial
+                depthBiasAmount: root.edgeDepthBias
                 edgeColor: edgeModelItem.selected ? viewportVisualTheme.selectionEdgeColor
                                                    : viewportVisualTheme.edgeColor
                 lineWidth: edgeModelItem.selected ? 2.5 : 1.5
@@ -1073,6 +1776,7 @@ Item {
 
     ViewportNavigation {
         id: navigation
+        objectName: "viewportNavigation"
         cameraRig: cameraRig
         perspectiveCamera: perspectiveCamera
         orthographicCamera: orthographicCamera
@@ -1094,14 +1798,15 @@ Item {
             id: cameraRig
             PerspectiveCamera {
                 id: perspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: orthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1177,14 +1882,15 @@ Item {
             rotation: navigation.orientation
             PerspectiveCamera {
                 id: componentXrayPerspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: componentXrayOrthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1220,14 +1926,15 @@ Item {
 
             PerspectiveCamera {
                 id: xrayPerspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: xrayOrthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1256,6 +1963,93 @@ Item {
                     if (active) setTopology(modelData.sourceGeometry, modelData.topologyId)
                 }
             }
+        }
+    }
+
+    View3D {
+        id: handleView
+        objectName: "explodeHandleView"
+        anchors.fill: parent
+        renderMode: View3D.Offscreen
+        visible: root.handlesShown
+        environment: SceneEnvironment {
+            backgroundMode: SceneEnvironment.Transparent
+            antialiasingMode: SceneEnvironment.MSAA
+            antialiasingQuality: SceneEnvironment.High
+        }
+        camera: navigation.projectionMode === "orthographic" ? handleOrthographicCamera : handlePerspectiveCamera
+        Node {
+            position: navigation.cameraPosition
+            rotation: navigation.orientation
+            PerspectiveCamera {
+                id: handlePerspectiveCamera
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
+                fieldOfView: navigation.perspectiveFieldOfView
+            }
+            OrthographicCamera {
+                id: handleOrthographicCamera
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
+                horizontalMagnification: navigation.orthographicMagnification
+                verticalMagnification: navigation.orthographicMagnification
+            }
+        }
+        ExplodeHandle {
+            id: explodeHandle
+            objectName: "explodeHandle"
+            position: root.handleCentre
+            rotation: root.handleFrame
+            length: root.handleLength
+            xColor: root.theme && root.theme.axisX !== undefined ? root.theme.axisX : "transparent"
+            yColor: root.theme && root.theme.axisY !== undefined ? root.theme.axisY : "transparent"
+            zColor: root.theme && root.theme.axisZ !== undefined ? root.theme.axisZ : "transparent"
+            activeColor: root.theme && root.theme.handleActive !== undefined ? root.theme.handleActive : "transparent"
+            centreColor: root.theme && root.theme.foreground !== undefined ? root.theme.foreground : "transparent"
+            activeKind: root.handleDrag ? root.handleDrag.kind : root.handleHover ? root.handleHover.kind : ""
+            activeAxis: root.handleDrag ? root.handleDrag.axis : root.handleHover ? root.handleHover.axis : -1
+        }
+    }
+
+    Rectangle {
+        id: pivotPickHint
+        objectName: "pivotPickHint"
+        visible: root.pickingPivot && !root.captureUiHidden
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 16
+        z: 6
+        width: pivotPickLabel.implicitWidth + 24
+        height: pivotPickLabel.implicitHeight + 14
+        radius: root.theme && root.theme.radius2 !== undefined ? root.theme.radius2 : 6
+        color: root.theme ? root.theme.surfaceRaised : "transparent"
+        border.color: root.theme ? root.theme.accent : "transparent"
+        Label {
+            id: pivotPickLabel
+            anchors.centerIn: parent
+            text: qsTr("Click a point on a part to move the handle there  ·  Esc to cancel")
+            color: root.theme ? root.theme.foreground : "transparent"
+        }
+    }
+
+    Rectangle {
+        id: handleReadoutTag
+        visible: root.handleDrag !== null && root.handleReadout.length > 0
+        x: root.handleReadoutPosition.x + 16
+        y: root.handleReadoutPosition.y + 12
+        z: 6
+        width: handleReadoutLabel.implicitWidth + 12
+        height: handleReadoutLabel.implicitHeight + 6
+        radius: root.theme && root.theme.radius1 !== undefined ? root.theme.radius1 : 4
+        color: root.theme ? root.theme.surfaceRaised : "transparent"
+        border.color: root.theme ? root.theme.border : "transparent"
+        Label {
+            id: handleReadoutLabel
+            anchors.centerIn: parent
+            text: root.handleReadout
+            color: root.theme ? root.theme.foreground : "transparent"
+            font.pixelSize: 12
         }
     }
 
@@ -1320,19 +2114,38 @@ Item {
         property real rollApplied: 0
         hoverEnabled: true
 
+        cursorShape: root.pickingPivot ? Qt.CrossCursor
+                   : root.handleDrag || root.handleHover ? Qt.PointingHandCursor : Qt.ArrowCursor
+
         onPressed: function(mouse) {
             root.forceActiveFocus()
             pressX = mouse.x
             pressY = mouse.y
             pressButton = mouse.button
             dragging = false
+            // A press on a handle drags the selection instead of the view.
+            if (mouse.button === Qt.LeftButton && root.handlesShown) {
+                const handle = root.handleAt(mouse.x, mouse.y)
+                if (handle && root.beginHandleDrag(handle, mouse.x, mouse.y)) {
+                    navigation.clearPendingOrbitPivot()
+                    return
+                }
+            }
             if (mouse.button === Qt.LeftButton && !(mouse.modifiers & Qt.ShiftModifier))
                 root.prepareOrbitPivotAt(mouse.x, mouse.y)
             else
                 navigation.clearPendingOrbitPivot()
         }
         onPositionChanged: function(mouse) {
+            if (root.handleDrag) {
+                root.updateHandleDrag(mouse.x, mouse.y, (mouse.modifiers & Qt.ShiftModifier) !== 0)
+                return
+            }
             if (pressButton === Qt.NoButton) {
+                if (root.handlesShown && root.updateHandleHover(mouse.x, mouse.y)) {
+                    if (root.hoveredNodeId !== "") root.hoveredNodeId = ""
+                    return
+                }
                 root.updateHover(mouse.x, mouse.y)
                 return
             }
@@ -1387,6 +2200,18 @@ Item {
             pressY = mouse.y
         }
         onReleased: function(mouse) {
+            if (root.handleDrag) {
+                root.endHandleDrag(true)
+                pressButton = Qt.NoButton
+                return
+            }
+            // Picking the pivot: a click puts the handle on the part there, selecting nothing.
+            if (root.pickingPivot && !dragging && pressButton === Qt.LeftButton) {
+                root.pickPivotAt(mouse.x, mouse.y)
+                pressButton = Qt.NoButton
+                navigation.clearPendingOrbitPivot()
+                return
+            }
             if (!dragging && pressButton === Qt.LeftButton && root.faceFrameSelectionEnabled) {
                 root.reportFaceFrameAt(mouse.x, mouse.y)
             }
@@ -1395,9 +2220,10 @@ Item {
                         || (mouse.modifiers & Qt.ControlModifier)
                         || (mouse.modifiers & Qt.MetaModifier)
                 root.pickAt(mouse.x, mouse.y, additive)
+                root.rememberFaceAt(mouse.x, mouse.y)
             }
             if (!dragging && pressButton === Qt.RightButton && root.contextActionsEnabled) {
-                if (root.componentContextActionsEnabled && root.pickAt(mouse.x, mouse.y, false)) {
+                if (root.componentContextActionsEnabled && root.contextPickAt(mouse.x, mouse.y)) {
                     if (root.presentationOnly) exportComponentContextMenu.popup(mouse.x, mouse.y)
                     else componentContextMenu.popup(mouse.x, mouse.y)
                 }
@@ -1407,8 +2233,13 @@ Item {
             rolling = false
             navigation.clearPendingOrbitPivot()
         }
+        onCanceled: {
+            root.endHandleDrag(false)
+            pressButton = Qt.NoButton
+        }
         onExited: {
             root.hoveredNodeId = ""
+            root.handleHover = null
             root.showHoverTopology(null)
         }
         onWheel: function(wheel) {
@@ -1425,6 +2256,13 @@ Item {
                                                        wheel.angleDelta.y,
                                                        zoomModifier)
             if (mode === "pan") {
+                // macOS can report the fingers' drift as scrolling while it also reports
+                // them pinching; panning from that during a pinch is a view shift the user
+                // never asked for.
+                if (touchGestures.active) {
+                    wheel.accepted = true
+                    return
+                }
                 // Never pixelDelta directly: it is always (0,0) on Windows, so
                 // panning with it would move nothing at all there.
                 const delta = pointerInputRouter.wheelPanDelta(wheel.pixelDelta.x,
@@ -1434,7 +2272,8 @@ Item {
                 navigation.pan(delta.x, delta.y)
             } else {
                 navigation.zoom(pointerInputRouter.wheelZoomDelta(wheel.pixelDelta.y,
-                                                                  wheel.angleDelta.y))
+                                                                  wheel.angleDelta.y),
+                                wheel.x, wheel.y)
             }
             wheel.accepted = true
         }
@@ -1526,7 +2365,8 @@ Item {
         }
         onActiveScaleChanged: {
             if (!active || lastScale <= 0) return
-            navigation.zoomByFactor(activeScale / lastScale)
+            // Anchored where the pinch is: on a trackpad that is the pointer.
+            navigation.zoomByFactor(activeScale / lastScale, centroid.position.x, centroid.position.y)
             lastScale = activeScale
         }
         // A trackpad has no translation gesture of its own to report here. macOS
@@ -1651,19 +2491,34 @@ Item {
         id: componentContextMenu
         theme: root.theme
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Fit selection"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.fitSelection() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("View normal to face"); enabled: root.contextFacePick !== null; onTriggered: root.viewNormalToFacePick(root.contextFacePick) }
         ThemedMenuSeparator { theme: componentContextMenu.theme }
         ThemedMenuItem {
             theme: componentContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Exit isolate")
+                  : root.selectionActionText(qsTr("Isolate"), qsTr("Isolate %1 selected"))
             enabled: root.controller && root.controller.activeNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Hide others"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.transparencyActionText(); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
-        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Restore"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuSeparator { theme: componentContextMenu.theme; visible: root.explodedLayout }
+        ThemedMenuItem {
+            theme: componentContextMenu.theme
+            visible: root.explodedLayout
+            text: root.selectionActionText(qsTr("Reset position"), qsTr("Reset %1 positions"))
+            enabled: root.selectionMoved()
+            onTriggered: root.resetSelectedPositions()
+        }
+        ThemedMenuItem {
+            theme: componentContextMenu.theme
+            visible: root.explodedLayout
+            text: qsTr("Reset exploded view")
+            onTriggered: root.animateExplodeReset()
+        }
         ThemedMenuSeparator { theme: componentContextMenu.theme }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Properties"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.toolRequested("properties") }
     }
@@ -1672,26 +2527,63 @@ Item {
         id: exportComponentContextMenu
         theme: root.theme
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Fit selection"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.fitSelection() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("View normal to face"); enabled: root.contextFacePick !== null; onTriggered: root.viewNormalToFacePick(root.contextFacePick) }
         ThemedMenuSeparator { theme: exportComponentContextMenu.theme }
         ThemedMenuItem {
             theme: exportComponentContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Exit isolate")
+                  : root.selectionActionText(qsTr("Isolate"), qsTr("Isolate %1 selected"))
             enabled: root.controller && root.controller.activeNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
-        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Hide"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
+        ThemedMenuItem { theme: exportComponentContextMenu.theme; text: root.transparencyActionText(); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: exportComponentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
     }
 
+    function selectionMoved() {
+        if (!explodedLayout || !controller || explode.revision < 0) return false
+        for (const nodeId of controller.selectedNodeIds) {
+            if (explode.canReset(nodeId)) return true
+        }
+        return false
+    }
+
+    // Make transparent, or Make opaque once the whole selection is.
+    function transparencyActionText() {
+        const opaqueAgain = controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                            && controller.isSelectionTransparent()
+        return opaqueAgain ? selectionActionText(qsTr("Make opaque"), qsTr("Make %1 selected opaque"))
+                           : selectionActionText(qsTr("Make transparent"), qsTr("Make %1 selected transparent"))
+    }
+
+    function resetSelectedPositions() {
+        if (!explode || !controller) return
+        for (const nodeId of controller.selectedNodeIds) explode.resetNode(nodeId)
+    }
+
     ThemedMenu {
         id: viewportContextMenu
+        objectName: "viewportContextMenu"
         theme: root.theme
         ThemedMenuItem { theme: viewportContextMenu.theme; text: root.requireDisplayFilter ? qsTr("Fit part") : qsTr("Fit assembly")
                                      onTriggered: root.fitCamera() }
         ThemedMenuItem { theme: viewportContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
+        ThemedMenuItem {
+            theme: viewportContextMenu.theme
+            visible: root.explodedLayout
+            text: qsTr("Reset exploded view")
+            onTriggered: root.animateExplodeReset()
+        }
         ThemedMenuSeparator { theme: viewportContextMenu.theme }
+        ThemedMenuItem {
+            theme: viewportContextMenu.theme
+            objectName: "viewportSavePictureItem"
+            text: qsTr("Save picture…")
+            enabled: root.controller && !root.controller.capture.inProgress
+            onTriggered: root.savePictureRequested()
+        }
         ThemedMenuItem {
             theme: viewportContextMenu.theme
             text: qsTr("Copy as transparent picture")
@@ -1752,17 +2644,18 @@ Item {
         onPlanarRotateRequested: function(degrees) { navigation.roll(degrees) }
     }
 
-    Shortcut { sequence: "F"; enabled: !root.presentationOnly; onActivated: root.fitCamera() }
-    Shortcut { sequence: "Shift+F"; enabled: !root.presentationOnly; onActivated: root.fitSelection() }
-    Shortcut { sequence: "I"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.toggleIsolateActiveNode() }
-    Shortcut { sequence: "H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.hideActiveNode() }
-    Shortcut { sequence: "Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.hideOtherNodes() }
-    Shortcut { sequence: "T"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.toggleTransparentSelection() }
-    Shortcut { sequence: "Shift+T"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.makeOthersTransparent() }
-    Shortcut { sequence: "Ctrl+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
-    Shortcut { sequence: "Meta+Shift+H"; enabled: !root.presentationOnly; onActivated: if (root.controller) root.controller.showAllNodes() }
-    Shortcut { sequence: "M"; enabled: !root.presentationOnly; onActivated: root.toolRequested("measure") }
-    Shortcut { sequence: "S"; enabled: !root.presentationOnly; onActivated: root.toolRequested("section") }
+    Shortcut { sequence: "F"; enabled: root.visible && (!root.presentationOnly); onActivated: root.fitCamera() }
+    Shortcut { sequence: "Shift+F"; enabled: root.visible && (!root.presentationOnly); onActivated: root.fitSelection() }
+    Shortcut { sequence: "I"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.toggleIsolateActiveNode() }
+    Shortcut { sequence: "H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.hideActiveNode() }
+    Shortcut { sequence: "T"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.toggleTransparentSelection() }
+    Shortcut { sequence: "Shift+T"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.makeOthersTransparent() }
+    Shortcut { sequence: "Ctrl+Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.showAllNodes() }
+    Shortcut { sequence: "Meta+Shift+H"; enabled: root.visible && (!root.presentationOnly); onActivated: if (root.controller) root.controller.showAllNodes() }
+    Shortcut { sequence: "M"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("measure") }
+    Shortcut { sequence: "S"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("section") }
+    Shortcut { sequence: "E"; enabled: root.visible && (!root.presentationOnly) && root.explodedLayoutEnabled; onActivated: root.toolRequested("explode") }
+    Shortcut { sequence: "V"; enabled: root.visible && (!root.presentationOnly) && root.explodedLayoutEnabled; onActivated: root.toolRequested("views") }
     // root.visible matters as much as presentationOnly: every workspace in the stack is
     // instantiated, so Inspect's viewport kept these enabled while Export was on screen. Two
     // enabled "1" shortcuts is an ambiguous sequence, and Qt fires neither -- which is why
@@ -1775,7 +2668,7 @@ Item {
                onActivated: root.renderMode = 2 }
     Shortcut {
         sequences: [StandardKey.Copy]
-        enabled: !root.presentationOnly && root.controller && !root.controller.capture.inProgress
+        enabled: root.visible && (!root.presentationOnly && root.controller && !root.controller.capture.inProgress)
                  && !root.isTextEditFocused()
         onActivated: root.copyAsTransparentPicture()
     }
@@ -1783,12 +2676,35 @@ Item {
     // there is exactly one shortcut registration for it at window scope.
     Shortcut {
         sequence: "Esc"
-        enabled: !root.presentationOnly && sectionArrowInput.dragging
+        enabled: root.visible && (!root.presentationOnly && sectionArrowInput.dragging)
         onActivated: sectionArrowInput.cancelDrag()
     }
     Shortcut {
         sequence: "Esc"
-        enabled: !root.presentationOnly && !sectionArrowInput.dragging
+        enabled: root.visible && !root.presentationOnly && root.handleDrag !== null
+        onActivated: root.endHandleDrag(false)
+    }
+    Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && !root.presentationOnly && root.pickingPivot && root.handleDrag === null
+        onActivated: root.cancelPivotPick()
+    }
+    Shortcut {
+        sequences: [StandardKey.Undo]
+        enabled: root.visible && root.explodeToolActive && root.explode !== null && root.explode.canUndo
+                 && !root.isTextEditFocused()
+        onActivated: root.explode.undo()
+    }
+    Shortcut {
+        sequences: [StandardKey.Redo]
+        enabled: root.visible && root.explodeToolActive && root.explode !== null && root.explode.canRedo
+                 && !root.isTextEditFocused()
+        onActivated: root.explode.redo()
+    }
+    Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null
+                                  && !root.pickingPivot)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")
@@ -1801,6 +2717,9 @@ Item {
         function onMeshReady(nodeId, segmentKey, sourceColor, meshJson) { root.appendMesh(nodeId, segmentKey, sourceColor, meshJson) }
         function onEdgeReady(nodeId, edgeJson) { root.appendEdges(nodeId, edgeJson) }
         function onFitRequested() { root.fitSelection() }
+        function onViewNormalToFaceRequested() {
+            if (root.visible && root.contextActionsEnabled && root.componentContextActionsEnabled) root.viewNormalToFace()
+        }
         function onVisibilityChanged() { root.applyPresentation() }
         function onComponentPropertiesChanged() { root.applyAppearance() }
         function onActiveNodeIdChanged() { root.applyRenderMode() }

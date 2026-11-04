@@ -1,6 +1,7 @@
 #include "protocol/ProtocolTypes.h"
 
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonParseError>
 
@@ -117,6 +118,26 @@ QByteArray encode(const Command& command)
                               {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
                               {QStringLiteral("nodeId"), value.nodeId}, {QStringLiteral("x"), value.x},
                               {QStringLiteral("y"), value.y}, {QStringLiteral("z"), value.z}, {QStringLiteral("mode"), value.mode}});
+        } else if constexpr (std::is_same_v<Value, ExportAssembly>) {
+            QJsonArray placements;
+            for (const auto& placement : value.placements) {
+                placements.append(QJsonObject{
+                    {QStringLiteral("nodeId"), placement.nodeId},
+                    {QStringLiteral("rotation"), QJsonArray{placement.rotation[0], placement.rotation[1],
+                                                            placement.rotation[2], placement.rotation[3]}},
+                    {QStringLiteral("translation"), QJsonArray{placement.translation[0], placement.translation[1],
+                                                               placement.translation[2]}}});
+            }
+            const auto vector = [](const std::array<double, 3>& values) { return QJsonArray{values[0], values[1], values[2]}; };
+            return serialize({{QStringLiteral("type"), QStringLiteral("exportAssembly")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(value.requestId)},
+                              {QStringLiteral("destination"), value.destination},
+                              {QStringLiteral("excludedNodeIds"), QJsonArray::fromStringList(value.excludedNodeIds)},
+                              {QStringLiteral("outputUnit"), value.outputUnit},
+                              {QStringLiteral("format"), value.format},
+                              {QStringLiteral("placements"), placements},
+                              {QStringLiteral("viewDirection"), vector(value.viewDirection)},
+                              {QStringLiteral("upDirection"), vector(value.upDirection)}});
         } else {
             return serialize({{QStringLiteral("type"), QStringLiteral("setVisible")},
                               {QStringLiteral("nodeId"), value.nodeId},
@@ -177,6 +198,59 @@ Command decodeCommand(const QByteArray& bytes)
         const auto x = object.value(QStringLiteral("x")); const auto y = object.value(QStringLiteral("y")); const auto z = object.value(QStringLiteral("z"));
         if (!x.isDouble() || !y.isDouble() || !z.isDouble() || !std::isfinite(x.toDouble()) || !std::isfinite(y.toDouble()) || !std::isfinite(z.toDouble())) fail("Protocol measurement point invalid");
         return MeasureAtPoint{requestId(object), stringField(object, QStringLiteral("nodeId")), x.toDouble(), y.toDouble(), z.toDouble(), stringField(object, QStringLiteral("mode"))};
+    }
+    if (type == QStringLiteral("exportAssembly")) {
+        const auto destination = stringField(object, QStringLiteral("destination"));
+        if (destination.isEmpty()) fail("Protocol assembly export destination invalid");
+        const auto excluded = object.value(QStringLiteral("excludedNodeIds"));
+        if (!excluded.isArray()) fail("Protocol assembly export exclusions invalid");
+        QStringList excludedNodeIds;
+        for (const auto& value : excluded.toArray()) {
+            if (!value.isString()) fail("Protocol assembly export exclusions invalid");
+            excludedNodeIds.append(value.toString());
+        }
+        const auto outputUnit = stringField(object, QStringLiteral("outputUnit"));
+        if (outputUnit != QStringLiteral("mm") && outputUnit != QStringLiteral("in")) fail("Protocol assembly export unit invalid");
+        ExportAssembly command{requestId(object), destination, excludedNodeIds, outputUnit};
+        // The exploded-view fields are optional: an older app sends none of them.
+        if (object.contains(QStringLiteral("format"))) {
+            command.format = stringField(object, QStringLiteral("format"));
+            static const QStringList formats{QStringLiteral("step"), QStringLiteral("stl"), QStringLiteral("dxf"),
+                                             QStringLiteral("svg"), QStringLiteral("pdf")};
+            if (!formats.contains(command.format)) fail("Protocol assembly export format invalid");
+        }
+        const auto numbers = [](const QJsonValue& value, const qsizetype count, const char* what) {
+            if (!value.isArray() || value.toArray().size() != count) fail(what);
+            QVector<double> result;
+            for (const auto& entry : value.toArray()) {
+                if (!entry.isDouble() || !std::isfinite(entry.toDouble())) fail(what);
+                result.append(entry.toDouble());
+            }
+            return result;
+        };
+        if (object.contains(QStringLiteral("placements"))) {
+            const auto placements = object.value(QStringLiteral("placements"));
+            if (!placements.isArray()) fail("Protocol assembly export placements invalid");
+            for (const auto& entry : placements.toArray()) {
+                const auto placement = entry.toObject();
+                const auto nodeId = stringField(placement, QStringLiteral("nodeId"));
+                if (nodeId.isEmpty()) fail("Protocol assembly export placement invalid");
+                const auto rotation = numbers(placement.value(QStringLiteral("rotation")), 4, "Protocol assembly export placement invalid");
+                const auto translation = numbers(placement.value(QStringLiteral("translation")), 3, "Protocol assembly export placement invalid");
+                if (std::hypot(std::hypot(rotation[0], rotation[1]), std::hypot(rotation[2], rotation[3])) < 1e-9)
+                    fail("Protocol assembly export placement invalid");
+                command.placements.append({nodeId, {rotation[0], rotation[1], rotation[2], rotation[3]},
+                                           {translation[0], translation[1], translation[2]}});
+            }
+        }
+        for (const auto& [key, target] : {std::pair{QStringLiteral("viewDirection"), &command.viewDirection},
+                                          std::pair{QStringLiteral("upDirection"), &command.upDirection}}) {
+            if (!object.contains(key)) continue;
+            const auto values = numbers(object.value(key), 3, "Protocol assembly export direction invalid");
+            if (std::hypot(values[0], values[1], values[2]) < 1e-9) fail("Protocol assembly export direction invalid");
+            *target = {values[0], values[1], values[2]};
+        }
+        return command;
     }
     if (type == QStringLiteral("setVisible")) {
         const auto visible = object.value(QStringLiteral("visible"));
@@ -317,6 +391,13 @@ Event decodeEvent(const QByteArray& bytes)
         return DrawingPreviewReady{requestId(object), revision.toInt(),
                                    QByteArray::fromBase64(stringField(object, QStringLiteral("previewBase64")).toLatin1()),
                                    approximate.toBool()};
+    }
+    if (type == QStringLiteral("assemblyExported")) {
+        const auto parts = object.value(QStringLiteral("partCount"));
+        const auto removed = object.value(QStringLiteral("removedCount"));
+        if (!parts.isDouble() || !removed.isDouble() || parts.toInt(-1) < 0 || removed.toInt(-1) < 0)
+            fail("Protocol assembly export result invalid");
+        return AssemblyExported{requestId(object), stringField(object, QStringLiteral("path")), parts.toInt(), removed.toInt()};
     }
     if (type == QStringLiteral("failed")) {
         const auto recoverable = object.value(QStringLiteral("recoverable"));

@@ -31,6 +31,14 @@ ColumnLayout {
             onClicked: destinationDialog.open()
         }
     }
+    Label {
+        Layout.fillWidth: true
+        visible: root.draft && root.draft.destinationIsDefault
+        text: qsTr("Beside the STEP file. The folder is created on the first export.")
+        color: root.theme.muted
+        font.pixelSize: root.theme.fontCaption !== undefined ? root.theme.fontCaption : 11
+        wrapMode: Text.Wrap
+    }
 
     RowLayout {
         Layout.fillWidth: true

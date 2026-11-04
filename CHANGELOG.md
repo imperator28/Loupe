@@ -1,5 +1,111 @@
 # Changelog
 
+## v0.1.5
+
+Tabs and multiple windows, an exploded view, in-app updates, and a broad interface
+polish. Built from eleven betas and five release candidates; each one's notes are on
+its GitHub pre-release.
+Opening native NX, Creo and SOLIDWORKS files (#5) waits on a decision about a
+commercial import SDK and is not in this release.
+
+### New
+
+- **Tabs and windows**: each STEP file opens in its own tab, keeping its view, selection,
+  section and export queue. Drag a tab along the strip to reorder it, off the strip into a
+  new window, or onto another Loupe window, which marks where it will land.
+- **Open STEP files from the OS**: double-click or Open With on Windows and macOS, and
+  files sent to a running Loupe open as tabs in it. On Windows, File → Register Loupe for
+  STEP Files… adds it to Default Apps.
+- **Exploded view** (`E`): pull an assembly apart to see how it fits together.
+  - Drag a part or sub-assembly by its arrows (along X, Y, Z), its ball (freely, in the
+    screen plane) or its rings (to turn it). Moves snap to a step; Shift moves freely.
+    Several parts move together.
+  - **Assembled / Exploded** compares the two states in one click, and **Spread** sets
+    how far apart auto-explode takes the parts, stacked layers included.
+  - Under **Advanced**: exact offsets and angles, move by a distance, snapping steps,
+    and a picked pivot (optionally aligned to its face), which stays with that part.
+  - Undo and redo each move. Section and view normal to face work on the layout.
+  - **Export…** saves the layout as a STEP assembly, one STL, or a DXF/SVG/PDF drawing of
+    the current view at true scale. The source file is never changed.
+- **Saved views** (`V`): a Views window keeps snapshots of the model to come back to.
+  - **Display** states hold what is hidden or transparent, with each part's opacity and
+    edges.
+  - **Camera** views hold the angle, zoom and projection, and the camera glides back to
+    them.
+  - Each has a thumbnail and a name you can edit. **Reset** returns to the file as it
+    opened.
+  - They are kept per file on this computer, and the file is never changed.
+- **Opening time**: Document properties shows how long the file took to be ready to
+  view, to show every part, and to be fully detailed.
+  - **Opening History…** lists every open with its size and part count, marks opens
+    from the cache, and copies as CSV to compare with other CAD programs.
+- **Export the assembly without hidden parts**: File → Export Assembly Without Hidden
+  Parts… writes one STEP file with the tree, names, placements, colours and unit kept.
+  A card at the bottom right shows each stage and the progress.
+- **Find a part** (`Ctrl/Cmd+F`) in the assembly tree, which is now resizable, with
+  Expand all and Collapse all. It shows hidden and transparent parts.
+- **View normal to face** (`Ctrl/Cmd+8` or right-click): look straight at a face, or a
+  hole's axis; ask again for its other side.
+- **Transparency you control**: once a part is transparent, the menus offer Make opaque.
+  Properties has an **Opacity** slider (45% by default) and **Show edges when
+  transparent**.
+- **In-app updates**: a download icon in the toolbar, with a ring that fills as the
+  update downloads. **Restart to Update** replaces Loupe in place, keeps your settings,
+  and avoids macOS's open prompt. A new version that fails its self-check is never
+  installed. Help → Include Beta Versions offers pre-releases.
+- **What's New**: the first launch of a new version lists its highlights. Help → What's
+  New in Loupe… shows them again.
+- **About Loupe**: shows the release channel for a beta or release candidate, and links
+  to this version's release notes, What's New, Check for Updates, all releases, the
+  source and licences. Copy Version Info is there for bug reports.
+- **Workspace layout**: every side panel is resizable and remembered. Measure, Section,
+  Capture, Views and Exploded view open in small windows that can be dragged or
+  collapsed to their title bar.
+- **Output folder beside the STEP file** by default, for both Export and Drawing.
+
+### Improved
+
+- **Part colours**: cool and warm palettes now spread in hue and chroma, not just
+  lightness, so neighbouring parts stay distinct under shading. A high-contrast style
+  is also available.
+- **Section**: much faster to finalize on large assemblies. View normal to section now
+  looks at the cut face.
+- **Perspective**: clip planes fit the model, which removes shading artefacts on large
+  parts. Edges stay solid at any zoom.
+- **Interface**:
+  - A System / Light / Dark switch with icons.
+  - The Inspect toolbar sets the buttons that act on the model apart from those that
+    open a tool window, lights a tool while its window is open, and drops to icons when
+    the viewport is narrow, so it never runs over the side panels.
+  - Drawn icons and check marks everywhere instead of text characters.
+  - Menus sized to their entries.
+  - One style for every panel title.
+  - Highlights inset per the design guide.
+- **Export bucket**: renaming edits the name only, keeping the `.step` or `.stl` suffix.
+- **Interaction guide** (View → Interaction): keys drawn as key caps, with mouse and
+  trackpad pictures, and a section for the exploded view.
+- **Import time estimate** follows measured time and counts down instead of growing.
+
+### Fixed
+
+- Leftovers of a Loupe that crashed or was force-quit (importer copies, connections, a
+  stale update download) are cleared on the next launch.
+- Right-clicking a part kept in a multi-selection no longer drops the selection.
+- Assembly tree selection works as in file lists: ⌘-click (Ctrl-click on Windows) adds
+  or removes a row, and Shift-click selects every row between, or adds them with ⌘. The
+  tree had read no modifiers at all, so every click was a plain one.
+- Trackpad pinch and wheel zoom keep the point under the pointer fixed (macOS).
+- The appearance swatch shows the colour covering most of a multicoloured part.
+- macOS: no crash on launch on newer macOS. Builds run on macOS 15 and support 14.
+- Windows: the colour picker no longer draws a grey block over the view. Export and
+  Drawing previews keep the camera in front of the model.
+
+### Known limitations
+
+- **2D drawings**: projection is not yet production-reliable. Check output before
+  cutting (see the README).
+- Builds are not code-signed or notarized; see the README for first-run steps.
+
 ## v0.1.4
 
 Fixes and additions from review of 0.1.3, tested through three pre-releases.

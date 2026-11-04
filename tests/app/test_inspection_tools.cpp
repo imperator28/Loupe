@@ -10,6 +10,7 @@
 #include "app/tools/MeasurementController.h"
 #include "app/tools/CaptureController.h"
 #include "app/tools/SectionController.h"
+#include "app/tools/ExplodeController.h"
 
 class InspectionToolsTest final : public QObject
 {
@@ -31,6 +32,17 @@ private slots:
     void captureSettingsBoundCustomScaleAndInclusionOptions();
     void captureReportsProgressUntilThePngIsSaved();
     void captureWritesAndVerifiesPngAtomically();
+    void explodeMovesASubAssemblyWithEverythingInIt();
+    void explodeHandlesWorkInWorldAxesInsideATurnedSubAssembly();
+    void explodeRotationTurnsAboutTheGivenPivot();
+    void explodeAutoComesApartLevelByLevel();
+    void explodeAutoOnlyMovesTheChosenSubAssembly();
+    void explodeAutoTakesStackedLayersApartInOrder();
+    void explodeResetUndoAndRedo();
+    void explodeCancelRestoresWhereTheDragBegan();
+    void explodeBlendEasesPartsHome();
+    void explodeLocalPlaneFollowsTheMovedPart();
+    void explodeTypedOffsetsAndAnglesAndSnapping();
 };
 
 void InspectionToolsTest::pointDistanceUsesEffectiveUnit()
@@ -283,6 +295,320 @@ void InspectionToolsTest::captureWritesAndVerifiesPngAtomically()
     const QImage decoded(path);
     QVERIFY(!decoded.isNull());
     QCOMPARE(decoded.pixelColor(0, 0).alpha(), 0x60);
+}
+
+namespace {
+
+// root
+// +-- sub (a sub-assembly)
+// |   +-- left   centre (-10, 0, 0)
+// |   +-- right  centre (10, 0, 0)
+// +-- far        centre (100, 0, 0)
+void buildExplodeFixture(loupe::app::tools::ExplodeController& explode)
+{
+    explode.setHierarchy({
+        {QStringLiteral("root"), QString{}},
+        {QStringLiteral("sub"), QStringLiteral("root")},
+        {QStringLiteral("left"), QStringLiteral("sub")},
+        {QStringLiteral("right"), QStringLiteral("sub")},
+        {QStringLiteral("far"), QStringLiteral("root")},
+    });
+    explode.includePartBounds(QStringLiteral("left"), {-11, -1, -1}, {-9, 1, 1});
+    explode.includePartBounds(QStringLiteral("right"), {9, -1, -1}, {11, 1, 1});
+    explode.includePartBounds(QStringLiteral("far"), {99, -1, -1}, {101, 1, 1});
+}
+
+bool closeTo(const QVector3D& actual, const QVector3D& expected)
+{
+    return (actual - expected).length() < 1e-3F;
+}
+
+QVector3D displayedCentre(const loupe::app::tools::ExplodeController& explode, const QString& part)
+{
+    const auto centre = explode.assembledCentre(part);
+    return explode.displayedRotation(part).rotatedVector(centre) + explode.displayedPosition(part);
+}
+
+QString describe(const QVector3D& value)
+{
+    return QStringLiteral("(%1, %2, %3)").arg(value.x()).arg(value.y()).arg(value.z());
+}
+
+} // namespace
+
+void InspectionToolsTest::explodeMovesASubAssemblyWithEverythingInIt()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    QVERIFY(!explode.exploded());
+    QSignalSpy moved(&explode, &loupe::app::tools::ExplodeController::partsMoved);
+
+    explode.beginInteraction({QStringLiteral("sub")});
+    QVERIFY(explode.interacting());
+    explode.previewTranslation({0, 0, 25});
+    explode.previewTranslation({0, 0, 30}); // each preview is from where the drag began
+    explode.commitInteraction();
+
+    QVERIFY(explode.exploded());
+    QVERIFY(explode.canUndo());
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("left")), {-10, 0, 30}));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("right")), {10, 0, 30}));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 0}));
+    QVERIFY(explode.isMoved(QStringLiteral("left")));
+    QVERIFY(!explode.isMoved(QStringLiteral("far")));
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("sub")), {0, 0, 30}));
+    QVERIFY(moved.count() >= 1);
+    QVERIFY(moved.last().at(0).toStringList().contains(QStringLiteral("left")));
+    QVERIFY(!moved.last().at(0).toStringList().contains(QStringLiteral("far")));
+}
+
+void InspectionToolsTest::explodeHandlesWorkInWorldAxesInsideATurnedSubAssembly()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.beginInteraction({QStringLiteral("sub")});
+    explode.previewRotation({0, 0, 1}, 90, explode.assembledCentre(QStringLiteral("sub")));
+    explode.commitInteraction();
+    // A quarter turn about Z through the sub-assembly's centre (the origin): left goes to -Y.
+    QVERIFY2(closeTo(displayedCentre(explode, QStringLiteral("left")), {0, -10, 0}),
+             qPrintable(describe(displayedCentre(explode, QStringLiteral("left")))));
+
+    // Dragging the part along world X moves it along world X, whatever its parent's turn.
+    explode.beginInteraction({QStringLiteral("left")});
+    explode.previewTranslation({7, 0, 0});
+    explode.commitInteraction();
+    QVERIFY2(closeTo(displayedCentre(explode, QStringLiteral("left")), {7, -10, 0}),
+             qPrintable(describe(displayedCentre(explode, QStringLiteral("left")))));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("right")), {0, 10, 0}));
+
+    // Turning the sub-assembly back carries the moved part with it.
+    explode.beginInteraction({QStringLiteral("sub")});
+    explode.previewRotation({0, 0, 1}, -90, {0, 0, 0});
+    explode.commitInteraction();
+    QVERIFY2(closeTo(displayedCentre(explode, QStringLiteral("left")), {-10, -7, 0}),
+             qPrintable(describe(displayedCentre(explode, QStringLiteral("left")))));
+}
+
+void InspectionToolsTest::explodeRotationTurnsAboutTheGivenPivot()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    const auto centre = explode.assembledCentre(QStringLiteral("far"));
+    explode.beginInteraction({QStringLiteral("far")});
+    explode.previewRotation({0, 1, 0}, 45, centre);
+    explode.commitInteraction();
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), centre));
+    QVERIFY(explode.isMoved(QStringLiteral("far")));
+    QVERIFY(qAbs(explode.anglesOf(QStringLiteral("far")).y() - 45.0F) < 0.01F);
+}
+
+void InspectionToolsTest::explodeAutoComesApartLevelByLevel()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    // The whole model: centre of everything is (45, 0, 0). sub's centre is the origin, so it
+    // moves 45 to -X; far moves 55 to +X; inside sub, left and right move 10 apart again.
+    explode.autoExplode({}, 1.0);
+    QVERIFY(explode.exploded());
+    QCOMPARE(explode.autoFactor({}), 1.0);
+    QVERIFY2(closeTo(displayedCentre(explode, QStringLiteral("far")), {155, 0, 0}),
+             qPrintable(describe(displayedCentre(explode, QStringLiteral("far")))));
+    QVERIFY2(closeTo(displayedCentre(explode, QStringLiteral("left")), {-65, 0, 0}),
+             qPrintable(describe(displayedCentre(explode, QStringLiteral("left")))));
+    QVERIFY2(closeTo(displayedCentre(explode, QStringLiteral("right")), {-25, 0, 0}),
+             qPrintable(describe(displayedCentre(explode, QStringLiteral("right")))));
+
+    // The slider back to zero brings everything home.
+    explode.beginAutoExplode({});
+    explode.previewAutoExplode(0.5);
+    explode.previewAutoExplode(0.0);
+    explode.commitInteraction();
+    QVERIFY(!explode.exploded());
+    QCOMPARE(explode.autoFactor({}), 0.0);
+}
+
+void InspectionToolsTest::explodeAutoOnlyMovesTheChosenSubAssembly()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.autoExplode(QStringLiteral("sub"), 2.0);
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("left")), {-30, 0, 0}));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("right")), {30, 0, 0}));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 0}));
+    QVERIFY(!explode.isMoved(QStringLiteral("sub")));
+    QCOMPARE(explode.autoFactor(QStringLiteral("sub")), 2.0);
+    QCOMPARE(explode.autoFactor({}), 0.0);
+
+    // What the panel's auto-explode takes apart for a selection.
+    QCOMPARE(explode.autoExplodeScope({QStringLiteral("sub")}), QStringLiteral("sub"));
+    QCOMPARE(explode.autoExplodeScope({QStringLiteral("left")}), QStringLiteral("sub"));
+    QCOMPARE(explode.autoExplodeScope({}), QString{});
+    QCOMPARE(explode.autoExplodeScope({QStringLiteral("left"), QStringLiteral("far")}), QString{});
+}
+
+void InspectionToolsTest::explodeAutoTakesStackedLayersApartInOrder()
+{
+    // Three 100 x 100 plates stacked 2 mm thick, and two identical liners: their centres
+    // all but coincide, so moving away from the centre alone left them where they were.
+    loupe::app::tools::ExplodeController explode;
+    explode.setHierarchy({
+        {QStringLiteral("stack"), QString{}},
+        {QStringLiteral("bottom"), QStringLiteral("stack")},
+        {QStringLiteral("middle"), QStringLiteral("stack")},
+        {QStringLiteral("top"), QStringLiteral("stack")},
+        {QStringLiteral("linerA"), QStringLiteral("stack")},
+        {QStringLiteral("linerB"), QStringLiteral("stack")},
+    });
+    explode.includePartBounds(QStringLiteral("bottom"), {-50, -50, 0}, {50, 50, 2});
+    explode.includePartBounds(QStringLiteral("middle"), {-50, -50, 2}, {50, 50, 4});
+    explode.includePartBounds(QStringLiteral("top"), {-50, -50, 4}, {50, 50, 6});
+    explode.includePartBounds(QStringLiteral("linerA"), {200, -10, 0}, {240, 10, 1});
+    explode.includePartBounds(QStringLiteral("linerB"), {200, -10, 0}, {240, 10, 1});
+    explode.autoExplode(QStringLiteral("stack"), 1.0);
+
+    const auto z = [&](const char* part) { return displayedCentre(explode, QString::fromLatin1(part)).z(); };
+    // Apart along the stacking direction, in the order they were stacked, by more than their
+    // own thickness.
+    QVERIFY2(z("bottom") < z("middle") && z("middle") < z("top"),
+             qPrintable(QStringLiteral("%1 %2 %3").arg(z("bottom")).arg(z("middle")).arg(z("top"))));
+    QVERIFY(z("middle") - z("bottom") > 4.0F);
+    QVERIFY(z("top") - z("middle") > 4.0F);
+    // Still level across the plate: a stack comes apart along its thin axis only.
+    QVERIFY(std::abs(displayedCentre(explode, QStringLiteral("top")).x()
+                     - displayedCentre(explode, QStringLiteral("bottom")).x()) < 1e-3F);
+    // The two identical liners separate too.
+    QVERIFY(std::abs(z("linerA") - z("linerB")) > 4.0F);
+}
+
+void InspectionToolsTest::explodeResetUndoAndRedo()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.setOffset(QStringLiteral("far"), {0, 20, 0});
+    explode.setOffset(QStringLiteral("left"), {0, 0, -5});
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("left")), {-10, 0, -5}));
+
+    QVERIFY(explode.canReset(QStringLiteral("left")));
+    QVERIFY(explode.canReset(QStringLiteral("sub"))); // something in it was moved
+    QVERIFY(!explode.canReset(QStringLiteral("right")));
+    explode.resetNode(QStringLiteral("left"));
+    QVERIFY(!explode.isMoved(QStringLiteral("left")));
+    QVERIFY(explode.isMoved(QStringLiteral("far")));
+
+    explode.undo();
+    QVERIFY(explode.isMoved(QStringLiteral("left")));
+    explode.redo();
+    QVERIFY(!explode.isMoved(QStringLiteral("left")));
+
+    explode.resetAll();
+    QVERIFY(!explode.exploded());
+    QVERIFY(explode.canUndo());
+    explode.undo(); // an accidental reset can be taken back
+    QVERIFY(explode.isMoved(QStringLiteral("far")));
+    QVERIFY(explode.canRedo());
+
+    // A new document starts with nothing moved and no history.
+    explode.clear();
+    QVERIFY(!explode.exploded());
+    QVERIFY(!explode.canUndo());
+    QVERIFY(!explode.canRedo());
+}
+
+void InspectionToolsTest::explodeCancelRestoresWhereTheDragBegan()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.beginInteraction({QStringLiteral("far")});
+    explode.previewTranslation({0, 50, 0});
+    QVERIFY(explode.isMoved(QStringLiteral("far")));
+    explode.cancelInteraction();
+    QVERIFY(!explode.interacting());
+    QVERIFY(!explode.exploded());
+    QVERIFY(!explode.canUndo());
+
+    // A drag that ends where it began leaves nothing to undo.
+    explode.beginInteraction({QStringLiteral("far")});
+    explode.previewTranslation({0, 0, 0});
+    explode.commitInteraction();
+    QVERIFY(!explode.canUndo());
+}
+
+void InspectionToolsTest::explodeBlendEasesPartsHome()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.setOffset(QStringLiteral("far"), {0, 40, 0});
+    explode.setBlend(0.5);
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 20, 0}));
+    explode.setBlend(0.0);
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 0}));
+    // The placement itself is kept until reset: this is the assembled view of a layout.
+    QVERIFY(explode.exploded());
+    // An edit is made to the layout, so it comes back into view.
+    explode.translateBy({QStringLiteral("far")}, {0, 0, 1});
+    QCOMPARE(explode.blend(), 1.0);
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 40, 1}));
+    explode.resetAll();
+    QCOMPARE(explode.blend(), 1.0);
+}
+
+void InspectionToolsTest::explodeLocalPlaneFollowsTheMovedPart()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.setOffset(QStringLiteral("far"), {10, 0, 0});
+    // The world plane x = 105 cuts the moved part where x = 95 cuts it assembled.
+    const auto plane = explode.localPlane(QStringLiteral("far"), {1, 0, 0}, 105);
+    QVERIFY(closeTo(plane.toVector3D(), {1, 0, 0}));
+    QVERIFY(qAbs(plane.w() - 95.0F) < 1e-3F);
+
+    // Turned a quarter about Z: the world X plane is the part's own -Y plane.
+    explode.resetAll();
+    explode.setAngles(QStringLiteral("far"), {0, 0, 90});
+    const auto turned = explode.localPlane(QStringLiteral("far"), {1, 0, 0}, 100);
+    QVERIFY2(closeTo(turned.toVector3D(), {0, -1, 0}), qPrintable(describe(turned.toVector3D())));
+    // The plane runs through the part's centre (100, 0, 0), so it does in the part's own frame too.
+    QVERIFY2(qAbs(turned.w()) < 1e-3F, qPrintable(QString::number(turned.w())));
+}
+
+void InspectionToolsTest::explodeTypedOffsetsAndAnglesAndSnapping()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.setAngles(QStringLiteral("right"), {0, 0, 30});
+    explode.setOffset(QStringLiteral("right"), {3, 4, 5});
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 4, 5}));
+    QVERIFY(qAbs(explode.anglesOf(QStringLiteral("right")).z() - 30.0F) < 0.01F);
+    // The angle keeps the part where it is, and the offset keeps its turn.
+    explode.setAngles(QStringLiteral("right"), {0, 0, 60});
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 4, 5}));
+
+    // Moving by an exact distance adds to where the nodes are, for several at once.
+    explode.translateBy({QStringLiteral("right"), QStringLiteral("far")}, {0, -2.5F, 10});
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 1.5F, 15}));
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("far")), {0, -2.5F, 10}));
+    explode.undo();
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("right")), {3, 4, 5}));
+    QVERIFY(!explode.isMoved(QStringLiteral("far")));
+
+    // A handle on a picked face: its Z is the face's normal, X and Y square to it.
+    for (const auto& normal : {QVector3D(0, 0, 1), QVector3D(1, 1, 0).normalized(), QVector3D(0, 0.2F, -1).normalized()}) {
+        const auto frame = loupe::app::tools::ExplodeController::frameForNormal(normal);
+        const auto x = frame.rotatedVector({1, 0, 0});
+        const auto y = frame.rotatedVector({0, 1, 0});
+        QVERIFY(closeTo(frame.rotatedVector({0, 0, 1}), normal));
+        QVERIFY(std::abs(QVector3D::dotProduct(x, normal)) < 1e-5F);
+        QVERIFY(closeTo(QVector3D::crossProduct(x, y), normal));
+    }
+
+    QVERIFY(explode.snapEnabled());
+    explode.setTranslationStep(10);
+    explode.setRotationStep(15);
+    QCOMPARE(explode.snapTranslation(23.0, false), 20.0);
+    QCOMPARE(explode.snapTranslation(23.0, true), 23.0);
+    QCOMPARE(explode.snapRotation(52.0, false), 45.0);
+    explode.setSnapEnabled(false);
+    QCOMPARE(explode.snapRotation(52.0, false), 52.0);
 }
 
 QTEST_MAIN(InspectionToolsTest)

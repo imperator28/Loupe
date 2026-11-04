@@ -1,17 +1,33 @@
 #include <QtTest/QTest>
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QDir>
 #include <QSignalSpy>
+#include <QStandardPaths>
+#include <QSettings>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QColor>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QPointer>
+#include <QSet>
 #include <QUrl>
 
+#include <cstdio>
+
 #include "app/ApplicationController.h"
+#include "app/DocumentTabs.h"
 #include "app/models/AssemblyTreeModel.h"
 #include "core/domain/AssemblyTypes.h"
 #include "fixtures/FixtureFactory.h"
+
+namespace {
+// QtTest's report is buffered when stdout is a pipe, so a process that dies before
+// exit loses all of it. Unbuffered, each line reaches the CI log as it is written.
+[[maybe_unused]] const int unbufferedStdout = std::setvbuf(stdout, nullptr, _IONBF, 0);
+} // namespace
 
 class ApplicationControllerTest final : public QObject
 {
@@ -19,6 +35,11 @@ class ApplicationControllerTest final : public QObject
 
 private slots:
     void inspectIsDefaultWorkspace();
+    void tabsOpenAFileIntoAnEmptyTabOrANewOne();
+    void exportsTheAssemblyWithoutItsHiddenParts();
+    void treeRowsReportHiddenAndPartlyHidden();
+    void closingTabsAlwaysLeavesOneAndKeepsANeighbourActive();
+    void tabsReorderAndMoveBetweenWindowsWithoutReloading();
     void resolvesStandardViewsAgainstDocumentUpAxis();
     void rejectsUnknownUpAxisAndViewName();
     void emptyDocumentShowsDocumentInspector();
@@ -34,6 +55,8 @@ private slots:
     void fitViewNotifiesViewport();
     void renderModeIsSharedAndClamped();
     void transparencyTogglesTheSelectionAndOthers();
+    void displayStatesSaveAndRestoreWhatIsHiddenOrTransparent();
+    void eachOpenRecordsHowLongItTook();
     void isolatesHidesAndRestoresTheActiveComponentForViewerPresentation();
     void openingDocumentResetsTransientInspectionState();
     void reopensUnchangedStepFromLocalSnapshotCache();
@@ -45,9 +68,104 @@ private slots:
     void appearanceOverridesMaterialAndSourceColor();
     void reopensSourceWithPersistedAppearanceOverrides();
     void uncolouredPartsCarryNoColourAndContainersShowTheirGeometry();
+    void aMulticolouredPartsSwatchShowsTheColourOfMostOfItsSurface();
     void autoPartColoursGiveEachDefinitionItsOwnColour();
     void autoPartColoursTreatOneSharedFileColourAsNone();
 };
+
+void ApplicationControllerTest::tabsOpenAFileIntoAnEmptyTabOrANewOne()
+{
+    loupe::app::DocumentTabs tabs(QStringLiteral(LOUPE_WORKER_PATH));
+    QCOMPARE(tabs.count(), 1);
+    auto* first = tabs.active();
+    QVERIFY(first != nullptr);
+    // Nothing open: the file goes into the current tab.
+    QCOMPARE(tabs.documentForOpening(), first);
+    QCOMPARE(tabs.count(), 1);
+
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("tab-one.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    first->openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(first->documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QCOMPARE(tabs.data(tabs.index(0), loupe::app::DocumentTabs::NameRole).toString(), QStringLiteral("tab-one.step"));
+
+    // Something open: a second file gets its own tab, made active, leaving the first as it was.
+    QSignalSpy added(&tabs, &loupe::app::DocumentTabs::documentAdded);
+    auto* second = tabs.documentForOpening();
+    QVERIFY(second != first);
+    QCOMPARE(tabs.count(), 2);
+    QCOMPARE(tabs.activeIndex(), 1);
+    QCOMPARE(tabs.active(), second);
+    QCOMPARE(added.count(), 1);
+    QCOMPARE(first->documentState(), loupe::app::DocumentState::TreeReady);
+    QVERIFY(!tabs.isBusy(0));
+}
+
+void ApplicationControllerTest::tabsReorderAndMoveBetweenWindowsWithoutReloading()
+{
+    loupe::app::DocumentTabs tabs(QStringLiteral(LOUPE_WORKER_PATH));
+    auto* first = tabs.active();
+    auto* second = tabs.add();
+    auto* third = tabs.add();
+    tabs.setActiveIndex(0);
+
+    // Reorder: dragging the active first tab to the end keeps it active.
+    tabs.move(0, 2);
+    QCOMPARE(tabs.documentAt(0), second);
+    QCOMPARE(tabs.documentAt(2), first);
+    QCOMPARE(tabs.active(), first);
+    QCOMPARE(tabs.activeIndex(), 2);
+    tabs.move(2, 0);
+    QCOMPARE(tabs.documentAt(0), first);
+
+    // Drag out: the document leaves this window's tabs, alive and unchanged, and another
+    // window adopts it.
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("tab-move.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    third->openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(third->documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QPointer<loupe::app::ApplicationController> moving(third);
+    auto* taken = tabs.take(2);
+    QCOMPARE(taken, third);
+    QCOMPARE(tabs.count(), 2);
+    loupe::app::DocumentTabs otherWindow(QStringLiteral(LOUPE_WORKER_PATH));
+    otherWindow.adopt(taken);
+    otherWindow.close(0); // the new window's own empty tab
+    QCoreApplication::processEvents();
+    QVERIFY(moving);
+    QCOMPARE(otherWindow.count(), 1);
+    QCOMPARE(otherWindow.active(), third);
+    QCOMPARE(third->parent(), &otherWindow);
+    QCOMPARE(third->documentState(), loupe::app::DocumentState::TreeReady);
+
+    // The last tab cannot be dragged out of its window.
+    QVERIFY(otherWindow.take(0) == nullptr);
+}
+
+void ApplicationControllerTest::closingTabsAlwaysLeavesOneAndKeepsANeighbourActive()
+{
+    loupe::app::DocumentTabs tabs(QStringLiteral(LOUPE_WORKER_PATH));
+    auto* first = tabs.active();
+    auto* second = tabs.add();
+    auto* third = tabs.add();
+    QCOMPARE(tabs.count(), 3);
+    QCOMPARE(tabs.active(), third);
+
+    // Closing a tab before the active one keeps the same document active.
+    tabs.setActiveIndex(2);
+    tabs.close(0);
+    QCOMPARE(tabs.count(), 2);
+    QCOMPARE(tabs.active(), third);
+    QCOMPARE(tabs.documentAt(0), second);
+    // Closing the active tab moves to its neighbour.
+    tabs.close(1);
+    QCOMPARE(tabs.active(), second);
+    // Closing the last tab leaves a fresh empty one.
+    tabs.close(0);
+    QCOMPARE(tabs.count(), 1);
+    QVERIFY(tabs.active() != nullptr);
+    QVERIFY(tabs.active() != second);
+    QCOMPARE(tabs.active()->documentState(), loupe::app::DocumentState::Empty);
+    Q_UNUSED(first);
+}
 
 void ApplicationControllerTest::inspectIsDefaultWorkspace()
 {
@@ -121,6 +239,12 @@ void ApplicationControllerTest::opensStepThroughWorkerAndRetainsSnapshot()
     QCOMPARE(controller.documentState(), loupe::app::DocumentState::TreeReady);
     QVERIFY(controller.assemblyTreeModel()->rowCount() > 0);
     QCOMPARE(controller.effectiveUnit(), QStringLiteral("mm"));
+    // Output defaults to folders beside the file, named after it (#3).
+    const QFileInfo source(QString::fromStdString(fixture.string()));
+    const auto* exportWorkspace = controller.property("exportWorkspace").value<QObject*>();
+    QCOMPARE(exportWorkspace->property("destination").toString(),
+             QDir(source.absolutePath()).filePath(QStringLiteral("controller-worker export")));
+    QVERIFY(exportWorkspace->property("destinationIsDefault").toBool());
     const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
     QVERIFY(!geometry.isEmpty());
     controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());
@@ -214,10 +338,11 @@ void ApplicationControllerTest::renderModeIsSharedAndClamped()
     // One mode for every viewport, so switching workspace keeps it.
     loupe::app::ApplicationController controller;
     QSignalSpy spy(&controller, &loupe::app::ApplicationController::renderModeChanged);
-    QCOMPARE(controller.renderMode(), 0);
-    controller.setRenderMode(1);
-    controller.setRenderMode(1);
+    // Solid + Edges by default (#13).
     QCOMPARE(controller.renderMode(), 1);
+    controller.setRenderMode(0);
+    controller.setRenderMode(0);
+    QCOMPARE(controller.renderMode(), 0);
     QCOMPARE(spy.count(), 1);
     controller.setRenderMode(7);
     QCOMPARE(controller.renderMode(), 2);
@@ -238,19 +363,224 @@ void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
     QSignalSpy visibility(&controller, &loupe::app::ApplicationController::visibilityChanged);
 
     controller.setActiveNodeId(parts.at(0));
+    QVERIFY(!controller.isSelectionTransparent());
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 1.0);
     controller.toggleTransparentSelection();
     QVERIFY(controller.isNodeTransparent(parts.at(0)));
     QVERIFY(!controller.isNodeTransparent(parts.at(1)));
     QVERIFY(controller.isNodeVisible(parts.at(0)));
     QVERIFY(visibility.count() > 0);
+    // The menus now offer Make opaque; the part draws at the default opacity.
+    QVERIFY(controller.isSelectionTransparent());
+    QCOMPARE(controller.nodeTransparencyState(parts.at(0)), 2);
+    QCOMPARE(controller.nodeTransparencyState(parts.at(1)), 0);
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), loupe::app::ApplicationController::kDefaultTransparentOpacity);
+    QCOMPARE(controller.selectionOpacity(), loupe::app::ApplicationController::kDefaultTransparentOpacity);
+    // Opacity is adjustable, and says so to the viewport even though the part stays transparent.
+    const auto before = visibility.count();
+    controller.setSelectionOpacity(0.2);
+    QVERIFY(visibility.count() > before);
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 0.2);
+    // It is kept across a toggle off and on.
+    controller.toggleTransparentSelection();
+    QVERIFY(!controller.isSelectionTransparent());
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 1.0);
+    controller.toggleTransparentSelection();
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 0.2);
+    // All the way up makes it opaque and forgets the setting.
+    controller.setSelectionOpacity(1.0);
+    QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+    // The slider on an opaque part makes it transparent at that opacity.
+    controller.setSelectionOpacity(0.6);
+    QVERIFY(controller.isNodeTransparent(parts.at(0)));
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), 0.6);
+    controller.setSelectionOpacity(1.0);
+    controller.toggleTransparentSelection();
+    QCOMPARE(controller.nodeOpacity(parts.at(0)), loupe::app::ApplicationController::kDefaultTransparentOpacity);
     controller.toggleTransparentSelection();
     QVERIFY(!controller.isNodeTransparent(parts.at(0)));
+    // Edges stay on a transparent part by default, and can be turned off for it.
+    controller.toggleTransparentSelection();
+    QVERIFY(controller.nodeShowsTransparentEdges(parts.at(0)));
+    QVERIFY(controller.selectionShowsTransparentEdges());
+    const auto beforeEdges = visibility.count();
+    controller.setSelectionTransparentEdges(false);
+    QVERIFY(visibility.count() > beforeEdges);
+    QVERIFY(!controller.nodeShowsTransparentEdges(parts.at(0)));
+    QVERIFY(controller.nodeShowsTransparentEdges(parts.at(1)));
+    controller.setSelectionTransparentEdges(true);
+    QVERIFY(controller.nodeShowsTransparentEdges(parts.at(0)));
+    controller.toggleTransparentSelection();
+    // The tree row's own toggle.
+    controller.setNodeTransparent(parts.at(1), true);
+    QVERIFY(controller.isNodeTransparent(parts.at(1)));
+    controller.setNodeTransparent(parts.at(1), false);
+    QVERIFY(!controller.isNodeTransparent(parts.at(1)));
 
     controller.makeOthersTransparent();
     QVERIFY(!controller.isNodeTransparent(parts.at(0)));
     QVERIFY(controller.isNodeTransparent(parts.at(1)));
     controller.showAllNodes();
     QVERIFY(!controller.isNodeTransparent(parts.at(1)));
+}
+
+void ApplicationControllerTest::eachOpenRecordsHowLongItTook()
+{
+    // Outlives the test: later opens still write the shared history to this path.
+    static QTemporaryDir storage;
+    auto& history = loupe::app::models::OpenHistory::shared();
+    history.setStoragePath(QDir(storage.path()).filePath(QStringLiteral("open-history.json")));
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-open-time.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QVERIFY(controller.openTiming().value(QStringLiteral("opening")).toBool());
+    QTRY_COMPARE_WITH_TIMEOUT(history.records().size(), 1, 15'000);
+
+    const auto record = history.records().constFirst().toMap();
+    QCOMPARE(record.value(QStringLiteral("file")).toString(), QStringLiteral("controller-open-time.step"));
+    QCOMPARE(record.value(QStringLiteral("parts")).toInt(), 2);
+    QVERIFY(record.value(QStringLiteral("sizeBytes")).toLongLong() > 0);
+    // In order: first geometry on screen, every part shown, fully detailed.
+    const auto view = record.value(QStringLiteral("viewMs")).toLongLong();
+    const auto preview = record.value(QStringLiteral("previewMs")).toLongLong();
+    const auto full = record.value(QStringLiteral("fullMs")).toLongLong();
+    QVERIFY2(view >= 0 && view <= full, qPrintable(QStringLiteral("%1 %2 %3").arg(view).arg(preview).arg(full)));
+    QVERIFY2(preview < 0 || (preview >= view && preview <= full), qPrintable(QStringLiteral("%1 %2 %3").arg(view).arg(preview).arg(full)));
+    QVERIFY(!controller.openTiming().value(QStringLiteral("opening")).toBool());
+    QCOMPARE(controller.openTiming().value(QStringLiteral("fullMs")).toLongLong(), full);
+
+    // As CSV, for setting against another program's times.
+    const auto csv = history.csv();
+    QVERIFY(csv.startsWith(QStringLiteral("opened_at,file,size_mb,parts,from_cache,ready_to_view_s")));
+    QVERIFY(csv.contains(QStringLiteral("controller-open-time.step")));
+    QCOMPARE(csv.count(QLatin1Char('\n')), 2);
+    history.clear();
+    QVERIFY(history.records().isEmpty());
+}
+
+void ApplicationControllerTest::displayStatesSaveAndRestoreWhatIsHiddenOrTransparent()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    // As the app does in main: without an organisation, QSettings on Windows (the
+    // registry) neither reads nor writes, so nothing would be kept with the file.
+    QCoreApplication::setOrganizationName(QStringLiteral("Loupe"));
+    QCoreApplication::setApplicationName(QStringLiteral("LoupeApplicationControllerTests"));
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-display-states.step").toStdString());
+    QSettings().remove(loupe::app::models::SavedViews::storageKeyFor(QFileInfo(QString::fromStdString(fixture.string())).absoluteFilePath()));
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    auto& views = controller.savedViews();
+    QVERIFY(views.displayStates().isEmpty());
+
+    // Part 0 hidden, part 1 transparent at 30% with its edges off: saved under a name.
+    controller.setActiveNodeId(parts.at(0));
+    controller.hideActiveNode();
+    controller.setActiveNodeId(parts.at(1));
+    controller.setSelectionOpacity(0.3);
+    controller.setSelectionTransparentEdges(false);
+    const auto id = controller.saveDisplayState(QStringLiteral("Cover off"));
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(views.displayStates().size(), 1);
+    const auto entry = views.displayStates().constFirst().toMap();
+    QCOMPARE(entry.value(QStringLiteral("name")).toString(), QStringLiteral("Cover off"));
+    QCOMPARE(entry.value(QStringLiteral("summary")).toString(), QStringLiteral("1 hidden · 1 transparent"));
+
+    // Reset to default: everything shown and opaque; then the saved state comes back whole.
+    controller.resetDisplayState();
+    QVERIFY(controller.isNodeVisible(parts.at(0)));
+    QVERIFY(!controller.isNodeTransparent(parts.at(1)));
+    QVERIFY(controller.applyDisplayState(id));
+    QVERIFY(!controller.isNodeVisible(parts.at(0)));
+    QVERIFY(controller.isNodeTransparent(parts.at(1)));
+    QCOMPARE(controller.nodeOpacity(parts.at(1)), 0.3);
+    QVERIFY(!controller.nodeShowsTransparentEdges(parts.at(1)));
+    // Undoable as one step.
+    QVERIFY(controller.canRestoreVisibility());
+
+    // Default names count up; rename and delete.
+    controller.resetDisplayState();
+    const auto second = controller.saveDisplayState({});
+    QCOMPARE(views.displayStates().constFirst().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Display 1"));
+    QCOMPARE(views.displayStates().constFirst().toMap().value(QStringLiteral("summary")).toString(), QStringLiteral("Everything shown"));
+    views.rename(second, QStringLiteral("All parts"));
+    QCOMPARE(views.displayStates().constFirst().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("All parts"));
+
+    // Kept with the file: another controller opening it sees both.
+    {
+        loupe::app::models::SavedViews reopened;
+        reopened.setDocument(QFileInfo(QString::fromStdString(fixture.string())).absoluteFilePath());
+        QCOMPARE(reopened.displayStates().size(), 2);
+        QCOMPARE(reopened.data(id).value(QStringLiteral("hidden")).toList().size(), 1);
+    }
+    views.remove(second);
+    views.remove(id);
+    QVERIFY(views.displayStates().isEmpty());
+
+    // Camera views are stored as given.
+    const auto camera = controller.saveCameraView(QStringLiteral("Front"), {{QStringLiteral("distance"), 42.0}}, QStringLiteral("Orthographic · Front"));
+    QCOMPARE(controller.cameraView(camera).value(QStringLiteral("distance")).toDouble(), 42.0);
+    QCOMPARE(views.cameraViews().size(), 1);
+    views.remove(camera);
+}
+
+void ApplicationControllerTest::exportsTheAssemblyWithoutItsHiddenParts()
+{
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-strip.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    QCOMPARE(controller.hiddenPartCount(), 0);
+    controller.setActiveNodeId(parts.at(0));
+    controller.hideActiveNode();
+    QCOMPARE(controller.hiddenPartCount(), 1);
+
+    QTemporaryDir output;
+    QVERIFY(output.isValid());
+    const auto destination = QDir(output.path()).filePath(QStringLiteral("stripped.step"));
+    QVERIFY(controller.exportAssemblyWithoutHiddenParts(QUrl::fromLocalFile(destination)));
+    QVERIFY(controller.assemblyExportInProgress());
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.assemblyExportInProgress(), 10'000);
+    QVERIFY2(controller.assemblyExportSucceeded(), qPrintable(controller.assemblyExportMessage()));
+    QVERIFY(QFileInfo::exists(destination));
+
+    // Read back: one of the two parts is left.
+    loupe::app::ApplicationController reread(QStringLiteral(LOUPE_WORKER_PATH));
+    reread.openFile(QUrl::fromLocalFile(destination));
+    QTRY_VERIFY_WITH_TIMEOUT(!reread.importInProgress() && reread.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QCOMPARE(geometryNodeIds(reread).size(), 1);
+}
+
+void ApplicationControllerTest::treeRowsReportHiddenAndPartlyHidden()
+{
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-tree-visibility.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    const auto root = controller.assemblyTreeModel()->data(controller.assemblyTreeModel()->index(0, 0),
+                                                           loupe::app::models::AssemblyTreeModel::StableIdRole).toString();
+    QCOMPARE(controller.nodeVisibilityState(root), 0);
+
+    const auto revision = controller.visibilityRevision();
+    controller.setNodeHidden(parts.at(0), true);
+    QVERIFY(controller.visibilityRevision() > revision);
+    QCOMPARE(controller.nodeVisibilityState(parts.at(0)), 2);
+    QCOMPARE(controller.nodeVisibilityState(parts.at(1)), 0);
+    QCOMPARE(controller.nodeVisibilityState(root), 1);
+
+    controller.setNodeHidden(root, true);
+    QCOMPARE(controller.nodeVisibilityState(root), 2);
+    controller.setNodeHidden(root, false);
+    QCOMPARE(controller.nodeVisibilityState(root), 0);
+    // Showing the assembly is one undoable step.
+    controller.restoreVisibility();
+    QCOMPARE(controller.nodeVisibilityState(root), 2);
 }
 
 void ApplicationControllerTest::fitViewNotifiesViewport()
@@ -444,6 +774,32 @@ void ApplicationControllerTest::uncolouredPartsCarryNoColourAndContainersShowThe
     QVERIFY(controller.setActiveAppearanceColor(QStringLiteral("#FF0055"), QStringLiteral("occurrence")));
     controller.setActiveNodeId(rootId);
     QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#FF0055"));
+}
+
+void ApplicationControllerTest::aMulticolouredPartsSwatchShowsTheColourOfMostOfItsSurface()
+{
+    // A part arrives as one segment per face colour. The swatch took whichever segment came
+    // last, so an orange part with one green face showed a green swatch.
+    const auto fixture = loupe::tests::writeMostlyOrangeBoxWithAGreenFace(QStringLiteral("controller-two-colour.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    QSet<QString> colours;
+    for (const auto& arguments : meshSpy) colours.insert(arguments.at(2).toString());
+    QCOMPARE(colours, (QSet<QString>{QStringLiteral("#D95900"), QStringLiteral("#00FF00")}));
+
+    const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
+    QCOMPARE(geometry.size(), 1);
+    controller.setActiveNodeId(geometry.first().toObject().value(QStringLiteral("nodeId")).toString());
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#D95900"));
+
+    // The same after the geometry is replayed from the session's cache, as a workspace
+    // switch or a reopened tab does.
+    const auto beforeReplay = meshSpy.count();
+    controller.replayGeometry();
+    QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() >= beforeReplay + 2, 5'000);
+    QCOMPARE(controller.activeResolvedAppearanceColor(), QStringLiteral("#D95900"));
 }
 
 namespace {

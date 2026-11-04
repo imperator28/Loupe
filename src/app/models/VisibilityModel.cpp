@@ -52,6 +52,22 @@ void VisibilityModel::show(const QString& nodeId)
     }
 }
 
+void VisibilityModel::show(const QStringList& nodeIds)
+{
+    bool changed = false;
+    const auto before = current_;
+    for (const auto& nodeId : nodeIds) {
+        if (current_.contains(nodeId) && !current_[nodeId].visible) {
+            current_[nodeId].visible = true;
+            changed = true;
+        }
+    }
+    if (changed) {
+        previous_ = before;
+        emit presentationChanged();
+    }
+}
+
 void VisibilityModel::isolate(const QString& nodeId)
 {
     isolate(QStringList{nodeId});
@@ -127,6 +143,24 @@ void VisibilityModel::showAll()
             it->ghosted = false;
             changed = true;
         }
+    }
+    if (changed) {
+        previous_ = before;
+        emit presentationChanged();
+    }
+}
+
+void VisibilityModel::applyState(const QSet<QString>& hidden, const QSet<QString>& ghosted)
+{
+    const auto before = current_;
+    bool changed = false;
+    for (auto it = current_.begin(); it != current_.end(); ++it) {
+        const bool visible = !hidden.contains(it.key());
+        const bool ghost = visible && ghosted.contains(it.key());
+        if (it->visible == visible && it->ghosted == ghost) continue;
+        it->visible = visible;
+        it->ghosted = ghost;
+        changed = true;
     }
     if (changed) {
         previous_ = before;

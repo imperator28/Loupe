@@ -64,12 +64,17 @@ ExportResult StlExporter::write(const import::ImportResult& imported, const Outp
     if (output.format() != Format::Stl) throw std::invalid_argument("STL exporter requires an STL output row");
     if (!imported.native || imported.native->document.IsNull()) throw std::runtime_error("import has no native XCAF document");
     const TopoDS_Shape shape = selectedShape(imported, detail::selectedNode(imported, output.nodeId()), output);
+    detail::writeStlShape(shape, std::filesystem::path(output.finalPath()));
+    return {true, 1, true, units::LengthUnit::Millimeter};
+}
+
+void detail::writeStlShape(const TopoDS_Shape& shape, const std::filesystem::path& destination)
+{
     BRepMesh_IncrementalMesh mesher(shape, 0.1);
     if (!mesher.IsDone()) throw std::runtime_error("STL triangulation failed");
 
-    const std::filesystem::path final(output.finalPath());
-    std::filesystem::create_directories(final.parent_path());
-    detail::AtomicExportFile partial(final);
+    std::filesystem::create_directories(destination.parent_path());
+    detail::AtomicExportFile partial(destination);
     StlAPI_Writer writer;
     writer.ASCIIMode() = false;
     const auto raw = partial.partial().string() + ".raw";
@@ -78,7 +83,6 @@ ExportResult StlExporter::write(const import::ImportResult& imported, const Outp
     }
     try { filterBinaryStl(raw, partial.partial()); std::filesystem::remove(raw); } catch (...) { std::error_code ignored; std::filesystem::remove(raw, ignored); throw; }
     partial.finalize();
-    return {true, 1, true, units::LengthUnit::Millimeter};
 }
 
 } // namespace loupe::exporting

@@ -117,6 +117,94 @@ Item {
             verify(fuzzyVector(navigation.cameraOffset(), beforeOffset, 0.0001))
         }
 
+        // Where a world point lands on screen, in viewport pixels, for either projection.
+        function screenOf(navigation, point) {
+            const right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
+            const up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
+            const back = navigation.orientation.times(Qt.vector3d(0, 0, 1))
+            const relative = navigation.subtract(point, navigation.cameraPosition)
+            const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z
+            const worldPerPixel = navigation.projectionMode === "orthographic"
+                ? 1.0 / navigation.orthographicMagnification
+                : -dot(relative, back) * 2.0 * Math.tan(navigation.perspectiveFieldOfView * Math.PI / 360.0) / root.height
+            return Qt.point(root.width / 2 + dot(relative, right) / worldPerPixel,
+                            root.height / 2 - dot(relative, up) / worldPerPixel)
+        }
+
+        // The point under the pinch stays under it, so zooming never slides the view.
+        function test_zoomKeepsThePointUnderThePointerInPlace() {
+            for (const mode of ["orthographic", "perspective"]) {
+                const navigation = createTemporaryObject(navigationComponent, root)
+                navigation.reset()
+                navigation.setProjection(mode)
+                // A world point on the pivot plane under pixel (620, 140).
+                const right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
+                const up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
+                const startScale = mode === "orthographic"
+                    ? 1.0 / navigation.orthographicMagnification
+                    : navigation.distance * 2.0 * Math.tan(navigation.perspectiveFieldOfView * Math.PI / 360.0) / root.height
+                const point = navigation.add(navigation.activePivot,
+                                             navigation.add(navigation.scaled(right, (620 - 400) * startScale),
+                                                            navigation.scaled(up, -(140 - 300) * startScale)))
+                const before = screenOf(navigation, point)
+                verify(Math.abs(before.x - 620) < 0.01 && Math.abs(before.y - 140) < 0.01, mode)
+
+                navigation.zoomByFactor(1.6, 620, 140)
+                navigation.zoom(-240, 620, 140)
+
+                const after = screenOf(navigation, point)
+                verify(Math.abs(after.x - 620) < 0.01 && Math.abs(after.y - 140) < 0.01,
+                       mode + ": " + after.x + ", " + after.y)
+            }
+        }
+
+        // Orbiting about a picked point leaves the pivot off the view axis. Perspective zoom
+        // used to move the camera toward that pivot, sliding the whole view sideways.
+        function test_perspectiveZoomWithAnOffAxisPivotDoesNotSlideTheView() {
+            const navigation = createTemporaryObject(navigationComponent, root)
+            navigation.reset()
+            navigation.setProjection("perspective")
+            navigation.setPendingOrbitPivot(Qt.vector3d(30, -20, 10))
+            navigation.orbit(15, 6)
+            const back = navigation.orientation.times(Qt.vector3d(0, 0, 1))
+            const centrePoint = navigation.subtract(navigation.cameraPosition, navigation.scaled(back, 500))
+            const before = screenOf(navigation, centrePoint)
+
+            navigation.zoomByFactor(1.5)
+
+            const after = screenOf(navigation, centrePoint)
+            verify(Math.abs(after.x - before.x) < 0.01 && Math.abs(after.y - before.y) < 0.01,
+                   after.x + ", " + after.y)
+        }
+
+        // "Normal to face": straight down the face normal, centred on it, zoom kept, and up
+        // squared to the face's edge rather than left at an arbitrary roll.
+        function test_viewAlongLooksStraightAtTheFaceAndSquaresItUp() {
+            const navigation = createTemporaryObject(navigationComponent, root)
+            navigation.reset()
+            navigation.zoomByFactor(2.5)
+            const magnification = navigation.orthographicMagnification
+            const angle = Math.PI / 6
+            const normal = Qt.vector3d(0, -Math.sin(angle), Math.cos(angle))
+            const target = Qt.vector3d(40, -12, 7)
+            // An edge 10 degrees off the x axis within the face.
+            const edge = Qt.vector3d(Math.cos(Math.PI / 18), Math.sin(Math.PI / 18) * Math.cos(angle),
+                                     Math.sin(Math.PI / 18) * Math.sin(angle))
+
+            navigation.viewAlong(normal, target, edge)
+
+            verify(fuzzyVector(navigation.orientation.times(Qt.vector3d(0, 0, 1)), normal, 0.00001))
+            verify(fuzzyVector(navigation.activePivot, target, 0.00001))
+            compare(navigation.orthographicMagnification, magnification)
+            const right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
+            const up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
+            const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z
+            // The edge lies along one screen axis.
+            verify(Math.abs(Math.abs(dot(right, edge)) - 1) < 0.00001 || Math.abs(Math.abs(dot(up, edge)) - 1) < 0.00001)
+            // And up stays the upright choice, not upside down.
+            verify(up.y > 0)
+        }
+
         function test_alignToNormalAimsCameraAtPivot() {
             const navigation = createTemporaryObject(navigationComponent, root)
             navigation.reset()

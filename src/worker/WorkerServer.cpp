@@ -4,6 +4,7 @@
 #include "core/drawing/DrawingExporter.h"
 #include "core/drawing/DrawingPlan.h"
 #include "core/drawing/DrawingPreview.h"
+#include "core/export/AssemblyExporter.h"
 #include "core/drawing/DrawingProjector.h"
 #include "core/export/ExportPlan.h"
 #include "core/export/ShapeSelection.h"
@@ -52,7 +53,11 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 
+#include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Quaternion.hxx>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 #include <Quantity_ColorRGBA.hxx>
 
 #include <exception>
@@ -409,6 +414,8 @@ void WorkerServer::readCommands()
                     executeDrawingPlan(value.requestId, value.planJson, value.fingerprint);
                 } else if constexpr (std::is_same_v<Value, protocol::RequestDrawingPreview>) {
                     requestDrawingPreview(value.requestId, value.requestJson, value.revision);
+                } else if constexpr (std::is_same_v<Value, protocol::ExportAssembly>) {
+                    exportAssembly(value);
                 }
             }, command);
         } catch (const protocol::ProtocolError&) {
@@ -516,18 +523,24 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                       {QStringLiteral("stage"), stage}, {QStringLiteral("fraction"), fraction}});
             };
             try {
+                // Each stage's share of the bar is its typical share of the time, measured on
+                // a 200-part 21 MB assembly and a 12-part 1.5 MB one (within a few percent of
+                // each other): parse ~10%, translate ~21%, preview ~17%, refine ~50%. The bar
+                // once gave translation 45% and refinement 19%, so the remaining-time estimate
+                // started at half the truth and then crept up the whole way.
                 progress(QStringLiteral("Reading STEP file"), 0.01);
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Translating XCAF assembly"), 0.10);
-                auto imported = import::StepImporter{}.read(path.toStdString());
+                auto imported = import::StepImporter{}.read(path.toStdString(), [&progress](const double fraction) {
+                    progress(QStringLiteral("Translating XCAF assembly"), 0.10 + 0.21 * fraction);
+                });
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Building assembly tree and colors"), 0.55);
+                progress(QStringLiteral("Building assembly tree and colors"), 0.31);
                 const auto unitDecision = loupe::units::decide(imported.unitEvidence, toUnitOverride(unit, factor, reason));
                 auto documentSession = std::make_shared<DocumentSession>(DocumentSession{std::move(imported), unitDecision});
                 const auto& sessionImport = documentSession->imported;
                 const auto snapshot = encodeSnapshot(sessionImport, unitDecision);
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Preparing viewport geometry"), 0.65);
+                progress(QStringLiteral("Preparing viewport geometry"), 0.32);
                 post({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                       {QStringLiteral("snapshotBase64"), QString::fromLatin1(snapshot.toBase64())}});
                 treeReadyMs = elapsed.elapsed();
@@ -540,10 +553,21 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 // OCCT's normalised native coordinates back to those numbers first.
                 const auto nativeToMillimeters = unitDecision.sourceToMillimeters
                     * loupe::exporting::detail::nativeUnitRebase(sessionImport);
+                // How long each body took in the preview pass. Refinement repeats the same work
+                // body by body at finer tolerance, so these weight its progress: a uniform step
+                // per body let one large part stall the bar while the estimate climbed.
+                std::vector<double> previewSeconds(shapeCount, 0.0);
                 const auto sendProfile = [&](const TessellationProfile& profile, const double start, const double end) {
+                    const bool preview = profile.refinement == kPreviewProfile.refinement;
+                    double totalWeight = 0.0;
+                    for (const auto seconds : previewSeconds) totalWeight += seconds;
+                    const bool weighted = !preview && totalWeight > 0.0;
+                    double doneWeight = 0.0;
                     QSet<QString> preparedDefinitions;
                     for (std::size_t index = 0; index < shapeCount; ++index) {
                         if (job->canceled.load()) return false;
+                        QElapsedTimer bodyTimer;
+                        bodyTimer.start();
                         const auto& shape = sessionImport.native->shapes[index];
                         const auto nodeId = QString::fromStdString(sessionImport.native->shapeNodeIds[index]);
                         const auto definitionId = QString::fromStdString(sessionImport.native->definitionIds[index]);
@@ -590,16 +614,18 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                                       {QStringLiteral("planarFaceCount"), topology.planarFaceCount}});
                             }
                         }
+                        if (preview) previewSeconds[index] = static_cast<double>(bodyTimer.nsecsElapsed()) * 1.0e-9;
+                        doneWeight += weighted ? previewSeconds[index] : 1.0;
                         const auto fraction = shapeCount == 0 ? end
-                            : start + (end - start) * static_cast<double>(index + 1) / static_cast<double>(shapeCount);
+                            : start + (end - start) * std::min(1.0, doneWeight / (weighted ? totalWeight : static_cast<double>(shapeCount)));
                         progress(profile.progressStage, fraction);
                     }
                     return true;
                 };
-                if (!sendProfile(kPreviewProfile, 0.65, 0.80)) { finish(); return; }
+                if (!sendProfile(kPreviewProfile, 0.32, 0.48)) { finish(); return; }
                 previewReadyMs = elapsed.elapsed();
-                progress(QStringLiteral("Preview ready - refining geometry"), 0.80);
-                if (!sendProfile(kRefinedProfile, 0.80, 0.99)) { finish(); return; }
+                progress(QStringLiteral("Preview ready - refining geometry"), 0.48);
+                if (!sendProfile(kRefinedProfile, 0.48, 0.99)) { finish(); return; }
                 if (!job->canceled.load()) {
                     retain(documentSession);
                     post({{QStringLiteral("type"), QStringLiteral("importMetrics")},
@@ -1071,6 +1097,77 @@ void WorkerServer::requestDrawingPreview(const std::uint64_t requestId, const QB
             post({{QStringLiteral("type"), QStringLiteral("failed")},
                   {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                   {QStringLiteral("code"), QStringLiteral("drawing_preview_failed")},
+                  {QStringLiteral("message"), QString::fromUtf8(error.what())},
+                  {QStringLiteral("recoverable"), true}});
+        }
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+void WorkerServer::exportAssembly(const protocol::ExportAssembly& command)
+{
+    const auto requestId = command.requestId;
+    const auto& destination = command.destination;
+    if (!documentSession_) {
+        fail(requestId, QStringLiteral("document_not_ready"),
+             QStringLiteral("Wait for geometry refinement to finish before exporting the assembly"));
+        return;
+    }
+    loupe::exporting::AssemblyExportRequest request;
+    request.destination = std::filesystem::path(destination.toStdWString());
+    for (const auto& nodeId : command.excludedNodeIds) request.excludedNodeIds.insert(nodeId.toStdString());
+    request.outputUnit = command.outputUnit == QStringLiteral("in") ? units::LengthUnit::Inch : units::LengthUnit::Millimeter;
+    using loupe::exporting::AssemblyOutput;
+    request.output = command.format == QStringLiteral("stl") ? AssemblyOutput::Stl
+                   : command.format == QStringLiteral("dxf") ? AssemblyOutput::Dxf
+                   : command.format == QStringLiteral("svg") ? AssemblyOutput::Svg
+                   : command.format == QStringLiteral("pdf") ? AssemblyOutput::Pdf
+                                                             : AssemblyOutput::Step;
+    for (const auto& placement : command.placements) {
+        gp_Quaternion rotation(placement.rotation[0], placement.rotation[1], placement.rotation[2], placement.rotation[3]);
+        rotation.Normalize();
+        gp_Trsf move;
+        move.SetRotation(rotation);
+        move.SetTranslationPart(gp_Vec(placement.translation[0], placement.translation[1], placement.translation[2]));
+        request.moved.emplace(placement.nodeId.toStdString(), move);
+    }
+    const gp_Vec view(command.viewDirection[0], command.viewDirection[1], command.viewDirection[2]);
+    const gp_Vec up(command.upDirection[0], command.upDirection[1], command.upDirection[2]);
+    if (view.Magnitude() > 1e-9 && up.Magnitude() > 1e-9 && !view.IsParallel(up, 1e-6)) {
+        request.viewDirection = gp_Dir(view);
+        request.upDirection = gp_Dir(up);
+    }
+    const auto session = documentSession_;
+    // The same native-to-millimetre factor as display, measurement and part export, so the
+    // re-exported assembly cannot come out at a different size from what was reviewed.
+    request.nativeToMillimeters = session->unitDecision.sourceToMillimeters
+        * loupe::exporting::detail::nativeUnitRebase(session->imported);
+
+    QPointer<WorkerServer> server(this);
+    auto post = [server](QJsonObject event) {
+        if (!server) return;
+        QMetaObject::invokeMethod(server, [server, event = std::move(event)] {
+            if (server) server->send(event);
+        }, Qt::QueuedConnection);
+    };
+    // How far along it is, for the app's progress notice.
+    request.progress = [post, requestId](const std::string& stage, const double fraction) {
+        post({{QStringLiteral("type"), QStringLiteral("progress")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+              {QStringLiteral("stage"), QString::fromStdString(stage)}, {QStringLiteral("fraction"), fraction}});
+    };
+    auto* thread = QThread::create([requestId, request, session, post, destination] {
+        try {
+            const auto result = loupe::exporting::AssemblyExporter{}.write(session->imported, request);
+            post({{QStringLiteral("type"), QStringLiteral("assemblyExported")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("path"), destination},
+                  {QStringLiteral("partCount"), result.partCount},
+                  {QStringLiteral("removedCount"), result.removedCount}});
+        } catch (const std::exception& error) {
+            post({{QStringLiteral("type"), QStringLiteral("failed")},
+                  {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                  {QStringLiteral("code"), QStringLiteral("assembly_export_failed")},
                   {QStringLiteral("message"), QString::fromUtf8(error.what())},
                   {QStringLiteral("recoverable"), true}});
         }

@@ -43,11 +43,12 @@ SpinBox {
         radius: control.cornerRadius - 2
         color: control.up.pressed ? (control.theme ? control.theme.surfaceSubtle : "transparent") : "transparent"
 
-        Text {
+        ToolIcon {
             anchors.centerIn: parent
-            text: "▴"
+            width: 12
+            height: 12
+            name: "chevronUp"
             color: control.enabled ? control.foreground : control.mutedForeground
-            font.pixelSize: 10
         }
     }
 
@@ -59,11 +60,12 @@ SpinBox {
         radius: control.cornerRadius - 2
         color: control.down.pressed ? (control.theme ? control.theme.surfaceSubtle : "transparent") : "transparent"
 
-        Text {
+        ToolIcon {
             anchors.centerIn: parent
-            text: "▾"
+            width: 12
+            height: 12
+            name: "chevronDown"
             color: control.enabled ? control.foreground : control.mutedForeground
-            font.pixelSize: 10
         }
     }
 

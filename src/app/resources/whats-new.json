@@ -1,0 +1,45 @@
+{
+  "_comment": "Shown once after each update, and from Help > What's New in Loupe. One entry per release version (X.Y.Z, betas share it): a few highlights, each a ToolIcon glyph, a short title and one line. A test fails if the project version has no entry.",
+  "versions": [
+    {
+      "version": "0.1.5",
+      "items": [
+        {
+          "icon": "tabs",
+          "title": "Tabs and windows",
+          "body": "Open several files at once. Drag a tab to reorder it, into a window of its own, or onto another Loupe window."
+        },
+        {
+          "icon": "explode",
+          "title": "Exploded view",
+          "body": "Pull an assembly apart with handles, switch between Assembled and Exploded, and export the layout."
+        },
+        {
+          "icon": "views",
+          "title": "Saved views",
+          "body": "Save what is hidden or transparent, or where the camera is, and come back to it in one click."
+        },
+        {
+          "icon": "download",
+          "title": "Updates in the app",
+          "body": "New versions appear in the toolbar and install in place, keeping your settings."
+        },
+        {
+          "icon": "transparent",
+          "title": "Transparency you control",
+          "body": "Set each part's opacity and outline, and see what is hidden or transparent in the assembly tree."
+        },
+        {
+          "icon": "section",
+          "title": "Faster, and measured",
+          "body": "Large assemblies section far sooner, and Document properties shows how long each file took to open."
+        },
+        {
+          "icon": "themeSystem",
+          "title": "A refined interface",
+          "body": "A light and dark switch, drawn icons, matching panels, and part colours that tell neighbours apart."
+        }
+      ]
+    }
+  ]
+}

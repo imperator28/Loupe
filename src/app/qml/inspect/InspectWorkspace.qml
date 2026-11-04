@@ -6,16 +6,93 @@ import Loupe.App
 
 Item {
     id: root
+    objectName: "inspectWorkspace"
     property QtObject controller
     property QtObject theme
+    // Remembers the tree panel's width; optional, so tests can load this without one.
+    property QtObject preferences: null
     readonly property color foreground: theme ? theme.foreground : "transparent"
     readonly property color subduedForeground: theme ? theme.muted : "transparent"
     property string activeTask: ""
     property bool taskPanelVisible: false
     property string treeHoveredNodeId: ""
+    // The row a Shift-click range runs from: the last row clicked without Shift. Kept as the
+    // node, not the row number, which changes as branches open and close.
+    property string treeSelectionAnchor: ""
+
+    // A click on a tree row, the way file lists take one: alone it selects the row;
+    // ⌘ (Ctrl on Windows and Linux) adds or removes it; Shift selects every row shown from
+    // the anchor to it, and with ⌘ adds those rows to the selection.
+    function treeClicked(row, stableId, modifiers) {
+        const toggle = (modifiers & Qt.ControlModifier) || (modifiers & Qt.MetaModifier)
+        const range = modifiers & Qt.ShiftModifier
+        const model = root.controller ? root.controller.assemblyTree : null
+        // No anchor clicked in the tree yet: the part selected in the view.
+        const anchor = treeSelectionAnchor.length > 0 ? treeSelectionAnchor
+                     : root.controller ? root.controller.activeNodeId : ""
+        const anchorRow = range && model && anchor.length > 0
+            ? assemblyTree.rowAtIndex(model.indexForStableId(anchor)) : -1
+        if (range && anchorRow >= 0) {
+            const ids = []
+            const step = row >= anchorRow ? 1 : -1
+            for (let r = anchorRow; ; r += step) {
+                const id = model.stableIdAt(assemblyTree.index(r, 0))
+                if (id.length > 0) ids.push(id)
+                if (r === row) break
+            }
+            root.controller.selectNodes(ids, stableId, toggle)
+            return
+        }
+        root.controller.selectNode(stableId, toggle || range)
+        treeSelectionAnchor = stableId
+    }
     signal openFileRequested()
 
+    // -1: not enough to go on yet; 0: the projected finish has passed and work continues.
+    function remainingText(seconds) {
+        if (seconds < 0) return qsTr("estimating remaining time")
+        if (seconds === 0) return qsTr("almost done")
+        return qsTr("about %1 s remaining").arg(seconds)
+    }
+
+    // Tree search: every node whose name matches, in tree order, and the one shown.
+    property var treeMatches: []
+    property int treeMatchIndex: -1
+
+    function runTreeSearch(text) {
+        root.treeMatches = root.controller && root.controller.assemblyTree
+            ? root.controller.assemblyTree.findNodes(text) : []
+        root.treeMatchIndex = root.treeMatches.length > 0 ? 0 : -1
+        root.showTreeMatch()
+    }
+
+    function stepTreeMatch(step) {
+        if (root.treeMatches.length === 0) return
+        root.treeMatchIndex = (root.treeMatchIndex + step + root.treeMatches.length) % root.treeMatches.length
+        root.showTreeMatch()
+    }
+
+    // Selecting the match also expands its branch, scrolls to it (revealActiveNode) and
+    // highlights it in the viewport, as clicking its row would.
+    function showTreeMatch() {
+        if (root.treeMatchIndex < 0 || !root.controller) return
+        root.controller.selectNode(root.treeMatches[root.treeMatchIndex], false)
+    }
+
+    // Parts are out of place in the exploded view (#17).
+    readonly property bool exploded: root.controller && root.controller.explode ? root.controller.explode.exploded : false
+    // ... and on screen. In the Assembled view they are where the file has them, so measuring
+    // is fine there.
+    // Every selected part is transparent: Make transparent reads Make opaque.
+    readonly property bool selectionTransparent: root.controller && root.controller.visibilityRevision >= 0
+                                                 && root.controller.selectedNodeCount >= 0
+                                                 && root.controller.isSelectionTransparent()
+    readonly property bool explodedShowing: exploded && root.controller.explode.blend > 0.001
+
     function showTask(tool) {
+        // Measuring works on the assembled model; the Measure button says so while parts
+        // are moved, and its shortcut does nothing.
+        if (tool === "measure" && root.explodedShowing) return
         if (root.activeTask === tool) {
             root.taskPanelVisible = !root.taskPanelVisible
             return
@@ -33,8 +110,18 @@ Item {
         assemblyTree.positionViewAtIndex(index, TableView.AlignVCenter)
     }
 
+    // Save the exploded layout (#17). The format follows the file's suffix; a drawing is seen
+    // from the way the view faces now, with the screen's up as its up.
+    function chooseExplodedExport() {
+        if (!root.controller || !root.exploded) return
+        if (root.controller.suggestedAssemblyExportFolderUrl.toString().length > 0)
+            explodedExportDialog.currentFolder = root.controller.suggestedAssemblyExportFolderUrl
+        explodedExportDialog.open()
+    }
+
     Connections {
         target: root.controller
+        function onExplodedExportRequested() { root.chooseExplodedExport() }
         function onSnapshotChanged() {
             root.activeTask = ""
             root.taskPanelVisible = false
@@ -43,7 +130,12 @@ Item {
         function onActiveNodeIdChanged() { Qt.callLater(root.revealActiveNode) }
     }
 
+    // Both side panels can be dragged wider or narrower; the viewport keeps at least this.
+    readonly property real viewportMinimumWidth: 360
+    readonly property real sidePanelRoom: width - 4 * theme.spacing3 - viewportMinimumWidth
+
     RowLayout {
+        id: workspaceRow
         anchors.fill: parent
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing3
@@ -51,18 +143,91 @@ Item {
         ElevatedPanel {
             id: treePanel
             theme: root.theme
-            Layout.preferredWidth: 248
+            // Draggable at its right edge, so a deep assembly's names get the room they need.
+            Layout.preferredWidth: treeSplitter.effectiveWidth
+            Layout.fillWidth: false
             Layout.fillHeight: true
 
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: root.theme.spacing3
-                spacing: root.theme.spacing2
-                Label {
+                spacing: root.theme.spacing2 + 2
+                PanelTitle {
+                    theme: root.theme
                     text: qsTr("Assembly tree")
-                    color: root.foreground
-                    font.bold: true
+                    IconButton {
+                        theme: root.theme
+                        glyph: "expandAll"
+                        Accessible.name: qsTr("Expand all")
+                        enabled: assemblyTree.rows > 0
+                        onClicked: assemblyTree.expandRecursively()
+                        ThemedToolTip { theme: root.theme; text: qsTr("Expand all"); visible: parent.hovered }
+                    }
+                    IconButton {
+                        theme: root.theme
+                        glyph: "collapseAll"
+                        Accessible.name: qsTr("Collapse all")
+                        enabled: assemblyTree.rows > 0
+                        // Keep the top level open: collapsing the root would leave one row.
+                        onClicked: { assemblyTree.collapseRecursively(); assemblyTree.expand(0) }
+                        ThemedToolTip { theme: root.theme; text: qsTr("Collapse all"); visible: parent.hovered }
+                    }
+                }
+                RowLayout {
                     Layout.fillWidth: true
+                    spacing: root.theme.spacing1
+                    ThemedTextField {
+                        id: treeSearch
+                        theme: root.theme
+                        Layout.fillWidth: true
+                        placeholderText: Qt.platform.os === "osx" ? qsTr("Find part (⌘F)") : qsTr("Find part (Ctrl+F)")
+                        Accessible.name: qsTr("Find part by name")
+                        enabled: root.controller && root.controller.documentState === AppState.TreeReady
+                        onTextChanged: treeSearchDelay.restart()
+                        // Enter steps to the next match, Shift+Enter back; a search still
+                        // waiting on its typing delay runs first.
+                        function step(event) {
+                            if (treeSearchDelay.running) {
+                                treeSearchDelay.stop()
+                                root.runTreeSearch(text)
+                            } else {
+                                root.stepTreeMatch((event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+                            }
+                        }
+                        Keys.onReturnPressed: function(event) { step(event) }
+                        Keys.onEnterPressed: function(event) { step(event) }
+                        Keys.onEscapePressed: text = ""
+                        Timer {
+                            id: treeSearchDelay
+                            interval: 150
+                            onTriggered: root.runTreeSearch(treeSearch.text)
+                        }
+                    }
+                    Label {
+                        visible: treeSearch.text.trim().length > 0
+                        text: root.treeMatches.length === 0 ? qsTr("None")
+                              : qsTr("%1/%2").arg(root.treeMatchIndex + 1).arg(root.treeMatches.length)
+                        color: root.treeMatches.length === 0 ? root.theme.error : root.subduedForeground
+                    }
+                    IconButton {
+                        theme: root.theme
+                        visible: root.treeMatches.length > 1
+                        glyph: "chevronUp"
+                        Accessible.name: qsTr("Previous match")
+                        onClicked: root.stepTreeMatch(-1)
+                    }
+                    IconButton {
+                        theme: root.theme
+                        visible: root.treeMatches.length > 1
+                        glyph: "chevronDown"
+                        Accessible.name: qsTr("Next match")
+                        onClicked: root.stepTreeMatch(1)
+                    }
+                }
+                Shortcut {
+                    sequences: [StandardKey.Find]
+                    enabled: root.visible && treeSearch.enabled
+                    onActivated: { treeSearch.forceActiveFocus(); treeSearch.selectAll() }
                 }
                 TreeView {
                     id: assemblyTree
@@ -76,9 +241,17 @@ Item {
                     Layout.fillHeight: true
                     delegate: TreeViewDelegate {
                         id: treeDelegate
+                        objectName: "treeRow-" + stableId
                         required property string name
                         required property string stableId
                         required property int definitionQuantity
+                        // 0 shown, 1 partly hidden, 2 hidden (#14). Reads the revision so it
+                        // updates whenever anything is hidden or shown.
+                        readonly property int visibilityState: root.controller && root.controller.visibilityRevision >= 0
+                            ? root.controller.nodeVisibilityState(stableId) : 0
+                        // The same for transparency: 0 opaque, 1 partly, 2 transparent.
+                        readonly property int transparencyState: root.controller && root.controller.visibilityRevision >= 0
+                            ? root.controller.nodeTransparencyState(stableId) : 0
                         highlighted: root.controller && root.controller.selectedNodeIds.indexOf(stableId) >= 0
                         implicitHeight: root.theme.rowCompact
                         // Keep the label centered against the complete selection
@@ -132,18 +305,25 @@ Item {
                             implicitHeight: root.theme.rowCompact
                             spacing: root.theme.spacing1
 
+                            // 12 px a level for the first four, 4 px beyond: a deep branch keeps
+                            // its names readable instead of being indented off the panel.
                             Item {
-                                Layout.preferredWidth: root.theme.spacing6 + treeDelegate.depth * 16
+                                Layout.preferredWidth: root.theme.spacing2 + Math.min(treeDelegate.depth, 4) * 12
+                                                       + Math.max(0, treeDelegate.depth - 4) * 4
                                 Layout.preferredHeight: 1
                             }
 
-                            ThemedToolButton {
+                            IconButton {
                                 id: disclosureButton
                                 theme: root.theme
+                                // A 20 px square with radius.1: 4 px clear of the 28 px row's
+                                // edges, concentric with its highlight.
                                 Layout.preferredWidth: 20
-                                Layout.preferredHeight: 24
+                                Layout.preferredHeight: 20
+                                Layout.alignment: Qt.AlignVCenter
+                                cornerRadius: root.theme.radius1
                                 visible: treeDelegate.hasChildren
-                                text: treeDelegate.expanded ? "▾" : "▸"
+                                glyph: treeDelegate.expanded ? "chevronDown" : "chevronRight"
                                 Accessible.name: treeDelegate.expanded
                                                  ? qsTr("Collapse %1").arg(treeDelegate.name)
                                                  : qsTr("Expand %1").arg(treeDelegate.name)
@@ -158,12 +338,75 @@ Item {
                             Label {
                                 id: treeLabel
                                 Layout.fillWidth: true
-                                rightPadding: root.theme.spacing6
+                                rightPadding: root.theme.spacing1
+                                // A hidden part reads as absent; a partly hidden assembly as dimmed.
+                                opacity: treeDelegate.visibilityState === 2 ? 0.42 : 1
+                                font.italic: treeDelegate.visibilityState === 2
                                 text: definitionQuantity > 0 ? qsTr("%1  %2x").arg(name).arg(definitionQuantity) : name
                                 color: root.foreground
                                 elide: Text.ElideRight
-                                horizontalAlignment: Text.AlignHCenter
+                                horizontalAlignment: Text.AlignLeft
                                 verticalAlignment: Text.AlignVCenter
+                                // The whole name when the panel cuts it short.
+                                ThemedToolTip {
+                                    theme: root.theme
+                                    text: treeLabel.text
+                                    visible: treeHover.hovered && treeLabel.truncated
+                                }
+                            }
+
+                            // Like the eye beside it: always shown for a transparent or partly
+                            // transparent row, on hover otherwise. Not for a hidden one, which
+                            // draws nothing to see through.
+                            IconButton {
+                                id: transparencyToggle
+                                objectName: "treeTransparencyToggle"
+                                theme: root.theme
+                                visible: treeDelegate.visibilityState !== 2
+                                // 22 px with radius.1: 3 px clear of the row's edges.
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
+                                Layout.alignment: Qt.AlignVCenter
+                                cornerRadius: root.theme.radius1
+                                glyph: "transparent"
+                                iconColor: treeDelegate.transparencyState === 2 ? root.theme.accent : root.foreground
+                                opacity: treeDelegate.transparencyState !== 0 || treeHover.hovered || hovered ? 1 : 0
+                                enabled: opacity > 0
+                                Accessible.name: treeDelegate.transparencyState === 2
+                                                 ? qsTr("Make %1 opaque").arg(treeDelegate.name)
+                                                 : qsTr("Make %1 transparent").arg(treeDelegate.name)
+                                onClicked: root.controller.setNodeTransparent(treeDelegate.stableId, treeDelegate.transparencyState !== 2)
+                                ThemedToolTip {
+                                    theme: root.theme
+                                    text: treeDelegate.transparencyState === 2 ? qsTr("Transparent — click to make opaque")
+                                          : treeDelegate.transparencyState === 1 ? qsTr("Partly transparent — click to make all transparent")
+                                                                                 : qsTr("Make transparent")
+                                    visible: transparencyToggle.hovered
+                                }
+                            }
+
+                            // Always shown for a hidden or partly hidden row; on hover otherwise.
+                            IconButton {
+                                id: visibilityToggle
+                                theme: root.theme
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.rightMargin: root.theme.spacing1
+                                cornerRadius: root.theme.radius1
+                                glyph: treeDelegate.visibilityState === 0 ? "eye" : "hide"
+                                opacity: treeDelegate.visibilityState !== 0 || treeHover.hovered || hovered ? 1 : 0
+                                enabled: opacity > 0
+                                Accessible.name: treeDelegate.visibilityState === 2
+                                                 ? qsTr("Show %1").arg(treeDelegate.name) : qsTr("Hide %1").arg(treeDelegate.name)
+                                onClicked: root.controller.setNodeHidden(treeDelegate.stableId, treeDelegate.visibilityState !== 2)
+                                ThemedToolTip {
+                                    theme: root.theme
+                                    text: treeDelegate.visibilityState === 2 ? qsTr("Hidden — click to show")
+                                          : treeDelegate.visibilityState === 1 ? qsTr("Partly hidden — click to hide all")
+                                                                               : qsTr("Hide")
+                                    visible: visibilityToggle.hovered
+                                }
                             }
                         }
                         HoverHandler {
@@ -175,30 +418,34 @@ Item {
                         }
                         onStableIdChanged: if (treeHover.hovered) root.treeHoveredNodeId = stableId
                         TapHandler {
+                            id: rowTap
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                             onTapped: function(eventPoint, button) {
                                 if (button === Qt.RightButton) {
                                     if (root.controller.selectedNodeIds.indexOf(stableId) < 0)
                                         root.controller.setActiveNodeId(stableId)
                                     treeContextMenu.targetNodeId = stableId
-                                    treeContextMenu.popup(eventPoint.position.x, eventPoint.position.y)
+                                    // At the cursor: the position here is the row's own, and the
+                                    // menu belongs to another item, so it opened offset upward.
+                                    treeContextMenu.popup()
                                     return
                                 }
-                                const modifiers = eventPoint.modifiers
-                                root.controller.selectNode(stableId, (modifiers & Qt.ShiftModifier)
-                                                           || (modifiers & Qt.ControlModifier)
-                                                           || (modifiers & Qt.MetaModifier))
+                                // The modifiers are the handler point's: the event point passed
+                                // in has none, which left every click a plain one.
+                                root.treeClicked(treeDelegate.row, stableId, rowTap.point.modifiers)
                             }
                         }
                     }
                 }
 
+                Component.onCompleted: Qt.callLater(function() { if (assemblyTree.rows > 0) assemblyTree.expandRecursively() })
                 Connections {
                     target: root.controller ? root.controller.assemblyTree : null
                     function onModelReset() { Qt.callLater(function() { assemblyTree.expandRecursively() }) }
                     function onLayoutChanged() { Qt.callLater(function() { assemblyTree.expandRecursively() }) }
                 }
             }
+
         }
 
         ElevatedPanel {
@@ -222,6 +469,10 @@ Item {
                     item.measurementActive = Qt.binding(function() {
                         return root.activeTask === "measure" && root.taskPanelVisible
                     })
+                    item.explodedLayoutEnabled = true
+                    item.explodeToolActive = Qt.binding(function() {
+                        return root.activeTask === "explode" && root.taskPanelVisible
+                    })
                     item.externalHighlightNodeId = Qt.binding(function() {
                         return root.treeHoveredNodeId
                     })
@@ -233,6 +484,13 @@ Item {
                         }
                     })
                     item.openFileRequested.connect(function() { root.openFileRequested() })
+                    item.savePictureRequested.connect(function() { captureDialog.open() })
+                    // A document that arrives already loaded -- a tab dragged into a new
+                    // window (#15) -- has no geometry streaming in, so ask for a replay.
+                    if (root.controller.documentState === AppState.TreeReady) {
+                        Qt.callLater(function() { if (root.controller) root.controller.replayGeometry() })
+                        item.requestFit()
+                    }
                 }
             }
             Column {
@@ -276,7 +534,7 @@ Item {
                     width: parent.width
                     visible: root.controller && root.controller.importInProgress
                     text: root.controller ? qsTr("%1%  •  %2 s  •  %3").arg(Math.round(root.controller.importProgress * 100)).arg(root.controller.importElapsedSeconds)
-                        .arg(root.controller.importEtaSeconds >= 0 ? qsTr("about %1 s remaining").arg(root.controller.importEtaSeconds) : qsTr("estimating remaining time")) : ""
+                        .arg(root.remainingText(root.controller.importEtaSeconds)) : ""
                     color: root.subduedForeground
                     horizontalAlignment: Text.AlignHCenter
                 }
@@ -327,8 +585,7 @@ Item {
                             Layout.fillWidth: true
                             text: root.controller ? qsTr("%1%  •  %2 s  •  %3")
                                 .arg(Math.round(root.controller.importProgress * 100)).arg(root.controller.importElapsedSeconds)
-                                .arg(root.controller.importEtaSeconds >= 0 ? qsTr("about %1 s remaining").arg(root.controller.importEtaSeconds)
-                                                                            : qsTr("estimating remaining time")) : ""
+                                .arg(root.remainingText(root.controller.importEtaSeconds)) : ""
                             color: root.subduedForeground
                         }
                         ThemedButton {
@@ -340,10 +597,16 @@ Item {
                 }
             }
             InspectionDock {
+                objectName: "inspectionDock"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 24
+                availableWidth: parent.width - 2 * root.theme.spacing3
+                openTool: root.taskPanelVisible ? root.activeTask : ""
                 viewerPresentation: root.controller ? root.controller.viewerPresentation : AppState.Full
+                exploded: root.exploded
+                measureBlocked: root.explodedShowing
+                selectionTransparent: root.selectionTransparent
                 theme: root.theme
                 onToolTriggered: function(tool) {
                     if (tool === "fit") root.controller.fitView()
@@ -351,17 +614,45 @@ Item {
                         root.controller.toggleIsolateActiveNode()
                     } else if (tool === "hide") root.controller.hideActiveNode()
                     else if (tool === "transparent") root.controller.toggleTransparentSelection()
-                    else if (tool === "section" || tool === "measure" || tool === "capture") root.showTask(tool)
+                    else if (tool === "section" || tool === "measure" || tool === "capture" || tool === "explode" || tool === "views") root.showTask(tool)
                 }
             }
         }
 
         ContextPanel {
-            Layout.preferredWidth: 300
+            id: contextPanel
+            Layout.preferredWidth: contextSplitter.effectiveWidth
+            Layout.fillWidth: false
             Layout.fillHeight: true
             controller: root.controller
             theme: root.theme
         }
+    }
+
+    PanelSplitter {
+        id: treeSplitter
+        objectName: "inspectTreeSplitter"
+        theme: root.theme
+        preferences: root.preferences
+        key: "inspectTree"
+        panel: treePanel
+        gap: workspaceRow.spacing
+        defaultWidth: 248
+        minimumWidth: 180
+        maximumWidth: Math.min(640, root.sidePanelRoom - contextSplitter.staticWidth)
+    }
+    PanelSplitter {
+        id: contextSplitter
+        objectName: "inspectPropertiesSplitter"
+        theme: root.theme
+        preferences: root.preferences
+        key: "inspectProperties"
+        panel: contextPanel
+        panelOnLeft: false
+        gap: workspaceRow.spacing
+        defaultWidth: 300
+        minimumWidth: 260
+        maximumWidth: Math.min(560, root.sidePanelRoom - treeSplitter.effectiveWidth)
     }
 
     ThemedMenu {
@@ -377,66 +668,104 @@ Item {
         ThemedMenuSeparator { theme: treeContextMenu.theme }
         ThemedMenuItem {
             theme: treeContextMenu.theme
-            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Restore") : qsTr("Isolate")
+            text: root.controller && root.controller.viewerPresentation === AppState.Isolate ? qsTr("Exit isolate") : qsTr("Isolate")
             enabled: treeContextMenu.targetNodeId.length > 0
             onTriggered: root.controller.toggleIsolateActiveNode()
         }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
-        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide others"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideOtherNodes() }
-        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: root.selectionTransparent ? qsTr("Make opaque") : qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make others transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
-        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Restore visibility"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
+        ThemedMenuSeparator { theme: treeContextMenu.theme; visible: root.exploded }
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
+            visible: root.exploded
+            text: qsTr("Reset position")
+            enabled: {
+                const revision = root.controller ? root.controller.explode.revision : -1
+                return revision >= 0 && treeContextMenu.targetNodeId.length > 0
+                        && root.controller.explode.canReset(treeContextMenu.targetNodeId)
+            }
+            onTriggered: root.controller.explode.resetNode(treeContextMenu.targetNodeId)
+        }
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
+            visible: root.exploded
+            text: qsTr("Reset exploded view")
+            onTriggered: if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
+        }
     }
 
-    Loader {
-        id: taskPanelLoader
-        anchors.right: parent.right
-        anchors.rightMargin: 314
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 96
-        active: root.activeTask !== "" && root.taskPanelVisible
-        // Subtle rise + fade as the tool panel appears, so it reads as
-        // surfacing from the toolbar rather than snapping into place.
-        opacity: active ? 1 : 0
-        transform: Translate {
-            y: taskPanelLoader.active ? 0 : 8
-            Behavior on y { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
-        }
-        Behavior on opacity { NumberAnimation { duration: root.theme.durStandard; easing.type: Easing.BezierSpline; easing.bezierCurve: root.theme.easeEnter } }
-        source: root.activeTask === "measure" ? "MeasurementPanel.qml"
-              : root.activeTask === "section" ? "SectionPanel.qml"
-              : "CapturePanel.qml"
-        onLoaded: {
-            item.theme = root.theme
-            if (root.activeTask === "measure") item.taskController = root.controller.measurement
-            else if (root.activeTask === "section") item.taskController = root.controller.section
-            else {
-                item.taskController = root.controller.capture
-                item.captureRequested.connect(function() { captureDialog.open() })
-                item.captureToClipboardRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.captureToClipboard()
-                })
-            }
-            item.closeRequested.connect(function() {
-                root.taskPanelVisible = false
-            })
-            if (root.activeTask === "section") {
-                item.disableRequested.connect(function() {
-                    root.controller.section.enabled = false
-                    root.activeTask = ""
+    // The open tool's panel, in a window the user can drag out of the way or minimise.
+    FloatingToolWindow {
+        id: taskWindow
+        objectName: "taskWindow"
+        theme: root.theme
+        shown: root.activeTask !== "" && root.taskPanelVisible
+        // Clear of the properties panel and above the toolbar, where the panel always opened.
+        defaultRightMargin: contextPanel.width + 2 * root.theme.spacing3 + 2
+        title: root.activeTask === "measure" ? qsTr("Measure")
+             : root.activeTask === "section" ? qsTr("Section")
+             : root.activeTask === "explode" ? qsTr("Exploded view")
+             : root.activeTask === "views" ? qsTr("Views")
+             : qsTr("Capture PNG")
+        onCloseRequested: root.taskPanelVisible = false
+
+        Loader {
+            id: taskPanelLoader
+            active: root.activeTask !== "" && root.taskPanelVisible
+            source: root.activeTask === "measure" ? "MeasurementPanel.qml"
+                  : root.activeTask === "section" ? "SectionPanel.qml"
+                  : root.activeTask === "explode" ? "ExplodePanel.qml"
+                  : root.activeTask === "views" ? "ViewsPanel.qml"
+                  : "CapturePanel.qml"
+            onLoaded: {
+                item.theme = root.theme
+                item.embedded = true
+                if (root.activeTask === "measure") item.taskController = root.controller.measurement
+                else if (root.activeTask === "section") item.taskController = root.controller.section
+                else if (root.activeTask === "explode") {
+                    item.taskController = root.controller.explode
+                    item.documentController = root.controller
+                    item.viewport = Qt.binding(function() { return viewportLoader.item })
+                    item.autoExplodeRequested.connect(function(scopeId, factor) {
+                        if (viewportLoader.item) viewportLoader.item.animateAutoExplode(scopeId, factor)
+                    })
+                    item.resetAllRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
+                    })
+                    item.exportRequested.connect(root.chooseExplodedExport)
+                } else if (root.activeTask === "views") {
+                    item.documentController = root.controller
+                    item.viewport = Qt.binding(function() { return viewportLoader.item })
+                } else {
+                    item.taskController = root.controller.capture
+                    item.captureRequested.connect(function() { captureDialog.open() })
+                    item.captureToClipboardRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.captureToClipboard()
+                    })
+                }
+                item.closeRequested.connect(function() {
                     root.taskPanelVisible = false
                 })
-                item.normalViewRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.alignToSection()
-                })
-                item.oppositeViewRequested.connect(function() {
-                    if (viewportLoader.item) viewportLoader.item.alignToSection(true)
-                })
-                item.borderColorRequested.connect(function(currentColor) {
-                    sectionBorderColorDialog.selectedColor = currentColor
-                    sectionBorderColorDialog.open()
-                })
+                if (root.activeTask === "section") {
+                    item.disableRequested.connect(function() {
+                        root.controller.section.enabled = false
+                        root.activeTask = ""
+                        root.taskPanelVisible = false
+                    })
+                    item.normalViewRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.alignToSection()
+                    })
+                    item.oppositeViewRequested.connect(function() {
+                        if (viewportLoader.item) viewportLoader.item.alignToSection(true)
+                    })
+                    item.borderColorRequested.connect(function(currentColor) {
+                        sectionBorderColorDialog.selectedColor = currentColor
+                        sectionBorderColorDialog.open()
+                    })
+                }
             }
         }
     }
@@ -448,6 +777,22 @@ Item {
         selectedColor: root.theme.edge
         onAccepted: if (root.controller)
             root.controller.section.sliceBorderColor = pickedColor.toString()
+    }
+
+    FileDialog {
+        id: explodedExportDialog
+        objectName: "explodedExportDialog"
+        title: qsTr("Export exploded assembly")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("STEP assembly (*.step *.stp)"), qsTr("STL mesh (*.stl)"), qsTr("DXF drawing of this view (*.dxf)"),
+                      qsTr("SVG drawing of this view (*.svg)"), qsTr("PDF drawing of this view (*.pdf)")]
+        defaultSuffix: ["step", "stl", "dxf", "svg", "pdf"][Math.max(0, selectedNameFilter.index)]
+        onAccepted: {
+            const viewport = viewportLoader.item
+            root.controller.exportExplodedAssembly(selectedFile,
+                    viewport ? viewport.viewDirection : Qt.vector3d(0, 0, 1),
+                    viewport ? viewport.viewUpDirection : Qt.vector3d(0, 1, 0))
+        }
     }
 
     FileDialog {

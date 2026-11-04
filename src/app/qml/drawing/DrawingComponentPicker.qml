@@ -101,19 +101,10 @@ Inspect.ElevatedPanel {
         anchors.margins: root.theme.spacing3
         spacing: root.theme.spacing2 + 2
 
-        RowLayout {
-            Layout.fillWidth: true
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Parts")
-                color: root.foreground
-                font.bold: true
-                font.pixelSize: root.theme.fontTitle
-            }
-            Label {
-                text: root.draft ? qsTr("%1 queued").arg(root.draft.queueCount) : qsTr("0 queued")
-                color: root.theme ? root.theme.muted : "transparent"
-            }
+        Inspect.PanelTitle {
+            theme: root.theme
+            text: qsTr("Parts")
+            detail: root.draft ? qsTr("%1 queued").arg(root.draft.queueCount) : qsTr("0 queued")
         }
 
         Inspect.ThemedTextField {
@@ -150,7 +141,12 @@ Inspect.ElevatedPanel {
                     anchors.top: parent.top
                     width: parent.width
                     height: 32
-                    color: componentRow.rowSelected ? root.theme.accentTint : "transparent"
+                    // Hover is the same tint as selection, lighter (design.md tree rows), as in
+                    // Inspect's tree and Export's picker.
+                    readonly property bool rowHovered: root.hoveredNodeId === componentRow.modelData.nodeId
+                    readonly property color hoverTint: Qt.rgba(root.theme.accentTint.r, root.theme.accentTint.g,
+                                                               root.theme.accentTint.b, root.theme.accentTint.a * 0.6)
+                    color: componentRow.rowSelected ? root.theme.accentTint : rowHovered ? hoverTint : "transparent"
                     radius: root.theme.radius1
 
                     Behavior on color {
@@ -180,14 +176,16 @@ Inspect.ElevatedPanel {
                         anchors.rightMargin: 6
                         spacing: root.theme.spacing1
 
-                        Inspect.ThemedToolButton {
+                        Inspect.IconButton {
                             id: disclosureButton
                             objectName: "drawingComponentDisclosure-" + componentRow.modelData.nodeId
                             theme: root.theme
                             Layout.preferredWidth: 20
-                            Layout.preferredHeight: 24
+                            Layout.preferredHeight: 20
+                            Layout.alignment: Qt.AlignVCenter
+                            cornerRadius: root.theme.radius1
                             visible: componentRow.modelData.hasChildren
-                            text: root.isCollapsed(componentRow.modelData.nodeId) ? "▸" : "▾"
+                            glyph: root.isCollapsed(componentRow.modelData.nodeId) ? "chevronRight" : "chevronDown"
                             Accessible.name: root.isCollapsed(componentRow.modelData.nodeId)
                                              ? qsTr("Expand %1").arg(componentRow.modelData.name)
                                              : qsTr("Collapse %1").arg(componentRow.modelData.name)

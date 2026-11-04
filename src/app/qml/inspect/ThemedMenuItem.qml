@@ -13,7 +13,10 @@ MenuItem {
     readonly property int cornerRadius: theme && theme.radius1 !== undefined ? theme.radius1 : 4
 
     implicitWidth: Math.max(180, implicitContentWidth + leftPadding + rightPadding)
-    implicitHeight: 28
+    // A hidden item takes no room: a Menu lays its items out in a list that otherwise keeps
+    // the row, which left gaps and a menu taller than its entries.
+    implicitHeight: visible ? 26 : 0
+    height: visible ? implicitHeight : 0
     leftPadding: checkable ? 34 : 12
     rightPadding: subMenu ? 28 : 12
 
@@ -37,22 +40,25 @@ MenuItem {
             border.width: control.checked ? 0 : 1
         }
 
-        Text {
+        ToolIcon {
             anchors.centerIn: parent
-            text: control.checked ? "✓" : ""
+            width: 12
+            height: 12
+            visible: control.checked
+            name: "check"
+            strokeWidth: 2
             color: control.highlighted ? control.accentForegroundColor
                                        : (control.theme && control.theme.accentForeground !== undefined ? control.theme.accentForeground : control.normalTextColor)
-            font.bold: true
-            font.pixelSize: 12
         }
     }
 
-    arrow: Text {
-        x: control.width - width - 10
+    arrow: ToolIcon {
+        x: control.width - width - 8
         y: (control.height - height) / 2
+        width: 14
+        height: 14
         visible: control.subMenu
-        text: "›"
-        font.pixelSize: 16
+        name: "chevronRight"
         color: control.highlighted ? control.highlightedTextColor : control.normalTextColor
     }
 

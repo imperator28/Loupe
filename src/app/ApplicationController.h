@@ -17,11 +17,15 @@
 #include "app/tools/CaptureController.h"
 #include "app/models/AssemblyTreeModel.h"
 #include "app/models/MaterialLibraryModel.h"
+#include "app/models/RemainingTimeEstimator.h"
 #include "app/models/VisibilityModel.h"
+#include "app/models/SavedViews.h"
+#include "app/models/OpenHistory.h"
 #include "app/cache/OverrideStore.h"
 #include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
 #include "app/tools/MeasurementController.h"
+#include "app/tools/ExplodeController.h"
 #include "app/tools/SectionController.h"
 #include "app/worker/WorkerClient.h"
 
@@ -66,6 +70,18 @@ class ApplicationController : public QObject {
     Q_PROPERTY(double modelExtentMm READ modelExtentMm NOTIFY modelExtentChanged)
     Q_PROPERTY(ViewerPresentation viewerPresentation READ viewerPresentation NOTIFY viewerPresentationChanged)
     Q_PROPERTY(bool canRestoreVisibility READ canRestoreVisibility NOTIFY visibilityChanged)
+    // Export the assembly without the parts that are hidden (#7).
+    Q_PROPERTY(int hiddenPartCount READ hiddenPartCount NOTIFY visibilityChanged)
+    // Bumped on every visibility change, so QML can re-read per-node states (#14).
+    Q_PROPERTY(int visibilityRevision READ visibilityRevision NOTIFY visibilityChanged)
+    Q_PROPERTY(bool assemblyExportInProgress READ assemblyExportInProgress NOTIFY assemblyExportChanged)
+    Q_PROPERTY(QString assemblyExportMessage READ assemblyExportMessage NOTIFY assemblyExportChanged)
+    Q_PROPERTY(bool assemblyExportSucceeded READ assemblyExportSucceeded NOTIFY assemblyExportChanged)
+    // While an assembly export runs: what it is doing, and how far along it is (0 to 1).
+    Q_PROPERTY(QString assemblyExportStage READ assemblyExportStage NOTIFY assemblyExportProgressChanged)
+    Q_PROPERTY(double assemblyExportProgress READ assemblyExportProgress NOTIFY assemblyExportProgressChanged)
+    Q_PROPERTY(QUrl suggestedAssemblyExportUrl READ suggestedAssemblyExportUrl NOTIFY documentNameChanged)
+    Q_PROPERTY(QUrl suggestedAssemblyExportFolderUrl READ suggestedAssemblyExportFolderUrl NOTIFY documentNameChanged)
     Q_PROPERTY(QString importStage READ importStage NOTIFY importProgressChanged)
     Q_PROPERTY(double importProgress READ importProgress NOTIFY importProgressChanged)
     Q_PROPERTY(qint64 importElapsedSeconds READ importElapsedSeconds NOTIFY importProgressChanged)
@@ -97,7 +113,17 @@ class ApplicationController : public QObject {
     Q_PROPERTY(int renderMode READ renderMode WRITE setRenderMode NOTIFY renderModeChanged)
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
+    Q_PROPERTY(QObject* explode READ explodeControllerObject CONSTANT)
+    // The Views tool window's saved display states and camera views for this file.
+    Q_PROPERTY(QObject* savedViews READ savedViewsObject CONSTANT)
+    // How long this file took to open (viewMs, previewMs, fullMs; -1 until reached;
+    // cached), and every open's record.
+    Q_PROPERTY(QVariantMap openTiming READ openTiming NOTIFY openTimingChanged)
+    Q_PROPERTY(QObject* openHistory READ openHistoryObject CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
+    // The open file's name, for its tab and the window title; empty before one is opened.
+    Q_PROPERTY(QString documentName READ documentName NOTIFY documentNameChanged)
+    Q_PROPERTY(QString documentPath READ documentPath NOTIFY documentNameChanged)
     Q_PROPERTY(QObject* exportWorkspace READ exportWorkspaceController CONSTANT)
     Q_PROPERTY(QObject* drawingWorkspace READ drawingWorkspaceController CONSTANT)
     // Taken from the project version at build time, so the About dialog cannot drift from
@@ -133,10 +159,37 @@ public:
     [[nodiscard]] double modelExtentMm() const noexcept { return modelExtentMm_; }
     [[nodiscard]] ViewerPresentation viewerPresentation() const noexcept { return viewerPresentation_; }
     [[nodiscard]] bool canRestoreVisibility() const noexcept { return visibilityModel_.canRestore(); }
+    [[nodiscard]] int hiddenPartCount() const;
+    [[nodiscard]] int visibilityRevision() const noexcept { return visibilityRevision_; }
+    // For the assembly tree: 0 shown, 1 partly hidden (an assembly with some parts hidden),
+    // 2 hidden.
+    Q_INVOKABLE [[nodiscard]] int nodeVisibilityState(const QString& nodeId) const;
+    // Hide or show a part or a whole assembly, undoable as one step.
+    Q_INVOKABLE void setNodeHidden(const QString& nodeId, bool hidden);
+    [[nodiscard]] bool assemblyExportInProgress() const noexcept { return activeAssemblyExportRequestId_ != 0; }
+    [[nodiscard]] const QString& assemblyExportMessage() const noexcept { return assemblyExportMessage_; }
+    [[nodiscard]] bool assemblyExportSucceeded() const noexcept { return assemblyExportSucceeded_; }
+    [[nodiscard]] QString assemblyExportStage() const;
+    [[nodiscard]] double assemblyExportProgress() const noexcept { return assemblyExportProgress_; }
+    [[nodiscard]] QString suggestedAssemblyExportPath() const;
+    [[nodiscard]] QUrl suggestedAssemblyExportUrl() const;
+    [[nodiscard]] QUrl suggestedAssemblyExportFolderUrl() const;
+    // Writes the whole assembly, tree, names and colours kept, leaving out every hidden
+    // part, in the source file's unit. False if it cannot start.
+    Q_INVOKABLE bool exportAssemblyWithoutHiddenParts(const QUrl& destination);
+    // The assembly as the exploded view has it (#17), without its hidden parts. The format
+    // follows the file's suffix: .step/.stp (the tree kept), .stl (one mesh), or .dxf/.svg/
+    // .pdf (one drawing, seen from `viewDirection` with `upDirection` up, as on screen).
+    Q_INVOKABLE bool exportExplodedAssembly(const QUrl& destination, const QVector3D& viewDirection,
+                                            const QVector3D& upDirection);
+    // The format exportExplodedAssembly would write for this file, or "" for none.
+    Q_INVOKABLE [[nodiscard]] static QString explodedExportFormat(const QUrl& destination);
     [[nodiscard]] const QString& importStage() const noexcept { return importStage_; }
     [[nodiscard]] double importProgress() const noexcept { return importProgress_; }
     [[nodiscard]] qint64 importElapsedSeconds() const noexcept { return importElapsedSeconds_; }
     [[nodiscard]] qint64 importEtaSeconds() const noexcept;
+    [[nodiscard]] QString documentName() const;
+    [[nodiscard]] const QString& documentPath() const noexcept { return documentPath_; }
     [[nodiscard]] bool importInProgress() const noexcept { return importInProgress_; }
     [[nodiscard]] bool previewReady() const noexcept { return previewGeometryReceived_; }
     [[nodiscard]] const QString& effectiveUnit() const noexcept { return effectiveUnit_; }
@@ -152,6 +205,22 @@ public:
     void setRenderMode(int mode);
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
+    [[nodiscard]] QObject* explodeControllerObject() noexcept { return &explodeController_; }
+    [[nodiscard]] QObject* savedViewsObject() noexcept { return &savedViews_; }
+    [[nodiscard]] QVariantMap openTiming() const;
+    [[nodiscard]] QObject* openHistoryObject() noexcept { return &models::OpenHistory::shared(); }
+    [[nodiscard]] models::SavedViews& savedViews() noexcept { return savedViews_; }
+
+    // Saved views (Views tool window). A display state is what is hidden or transparent,
+    // with each transparent part's opacity and edges, and isolate; a camera view is the
+    // viewport's own camera state, which it passes in and restores itself.
+    Q_INVOKABLE QString saveDisplayState(const QString& name);
+    Q_INVOKABLE bool applyDisplayState(const QString& id);
+    // Everything shown and opaque: the file as it opened.
+    Q_INVOKABLE void resetDisplayState();
+    Q_INVOKABLE QString saveCameraView(const QString& name, const QVariantMap& camera, const QString& summary);
+    Q_INVOKABLE [[nodiscard]] QVariantMap cameraView(const QString& id) const { return savedViews_.data(id); }
+    [[nodiscard]] tools::ExplodeController& explodeController() noexcept { return explodeController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
     [[nodiscard]] QObject* drawingWorkspaceController() noexcept { return &drawingWorkspaceController_; }
@@ -160,10 +229,18 @@ public:
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
     Q_INVOKABLE void selectNode(const QString& nodeId, bool additive);
+    // Several at once, the tree's Shift-click range: in place of the selection, or added to it.
+    Q_INVOKABLE void selectNodes(const QStringList& nodeIds, const QString& activeNodeId, bool additive);
     Q_INVOKABLE bool isNodeSelected(const QString& nodeId) const;
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();
     Q_INVOKABLE void fitView();
+    // View > Normal to Face. The visible viewport answers: the face under the pointer, else
+    // the face last clicked there.
+    Q_INVOKABLE void viewNormalToFace();
+    // File > Export Exploded Assembly. The Inspect workspace answers: it knows the view a
+    // drawing should be seen from.
+    Q_INVOKABLE void requestExplodedExport();
     Q_INVOKABLE void replayGeometry();
     // Which payload a viewport is being handed. Bumped only when a segment's geometry
     // genuinely changes (a refinement pass, a reimport), and left alone by a replay, so a
@@ -184,6 +261,26 @@ public:
     Q_INVOKABLE void toggleTransparentSelection();
     Q_INVOKABLE void makeOthersTransparent();
     Q_INVOKABLE bool isNodeTransparent(const QString& nodeId) const;
+    // Whether every part of the selection is transparent: the menus then offer
+    // "Make opaque" instead of making it transparent again.
+    Q_INVOKABLE [[nodiscard]] bool isSelectionTransparent() const;
+    // As nodeVisibilityState, for transparency: 0 opaque, 1 partly transparent, 2 transparent.
+    Q_INVOKABLE [[nodiscard]] int nodeTransparencyState(const QString& nodeId) const;
+    // The tree row's own toggle: that part, or every part under that assembly.
+    Q_INVOKABLE void setNodeTransparent(const QString& nodeId, bool transparent);
+    // How opaque a part draws: 1 unless it is transparent, then its own setting, which
+    // starts at the default and is changed with the Properties panel's Opacity slider.
+    Q_INVOKABLE [[nodiscard]] double nodeOpacity(const QString& nodeId) const;
+    // The opacity the selection draws with (its first transparent part's), or 1.
+    Q_INVOKABLE [[nodiscard]] double selectionOpacity() const;
+    // Below 1 makes the selection transparent at that opacity; 1 makes it opaque again.
+    Q_INVOKABLE void setSelectionOpacity(double opacity);
+    // Whether a transparent part still draws its edges: yes unless turned off for it, in
+    // the Properties panel.
+    Q_INVOKABLE [[nodiscard]] bool nodeShowsTransparentEdges(const QString& nodeId) const;
+    Q_INVOKABLE [[nodiscard]] bool selectionShowsTransparentEdges() const;
+    Q_INVOKABLE void setSelectionTransparentEdges(bool shown);
+    static constexpr double kDefaultTransparentOpacity = 0.45;
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId, const QString& scope);
     Q_INVOKABLE bool setActiveAppearanceColor(const QString& color, const QString& scope);
@@ -202,6 +299,8 @@ public:
     // to the view direction -- that leaves the in-plane axis undefined.
     Q_INVOKABLE QVector3D upForStandardView(const QString& name) const;
     Q_INVOKABLE QString labelForStandardView(const QString& name) const;
+    // The name the assembly tree shows for a node.
+    Q_INVOKABLE [[nodiscard]] QString nodeDisplayName(const QString& nodeId) const;
     Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
                                          bool additive = false);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
@@ -221,9 +320,15 @@ signals:
     void cacheHitChanged();
     void modelExtentChanged();
     void fitRequested();
+    void documentNameChanged();
+    void assemblyExportChanged();
+    void assemblyExportProgressChanged();
+    void viewNormalToFaceRequested();
+    void explodedExportRequested();
     void viewerPresentationChanged();
     void visibilityChanged();
     void importProgressChanged();
+    void openTimingChanged();
     void effectiveUnitChanged();
     void upAxisChanged();
     void partColorsChanged();
@@ -254,6 +359,11 @@ private:
     void replayCachedGeometry(const QByteArray& archive);
     void replayGeometryChunk();
     void noteImportedColor(const QString& nodeId, const QString& color);
+    // Records one face-colour segment of a part and makes the part's imported colour the one
+    // covering the most face area. True when that colour changed.
+    bool noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color, const QByteArray& payload);
+    // Each drawn part's assembled bounds, for the exploded view.
+    void notePartBounds(const QString& nodeId, const QByteArray& payload);
     void rebuildPartColorOrder();
     [[nodiscard]] QString autoPartColor(const QString& nodeId) const;
     void partColorsUpdated();
@@ -285,6 +395,17 @@ private:
     int connectionAttempts_{};
     std::uint64_t activeRequestId_{};
     std::uint64_t activeExportRequestId_{};
+    std::uint64_t activeAssemblyExportRequestId_{};
+    bool activeAssemblyExportExploded_{false};
+    int visibilityRevision_{};
+    // A transparent part's own opacity, when it was set to other than the default.
+    QHash<QString, double> opacityByNode_;
+    // Transparent parts whose edges are turned off.
+    QSet<QString> transparentWithoutEdges_;
+    QString assemblyExportMessage_;
+    bool assemblyExportSucceeded_{false};
+    QString assemblyExportStageKey_;
+    double assemblyExportProgress_{0.0};
     std::uint64_t activeDrawingRequestId_{};
     // Only the newest preview may reach the UI; a late reply for an older revision is
     // dropped rather than shown over a newer one.
@@ -314,6 +435,8 @@ private:
     QHash<QString, int> edgeRevisionByNode_;
     int geometryRevisionCounter_{};
     QElapsedTimer importElapsed_;
+    QString documentPath_;
+    models::RemainingTimeEstimator importRemaining_;
     QTimer importProgressTimer_{this};
     double modelExtentMm_{};
     ViewerPresentation viewerPresentation_{ViewerPresentation::Full};
@@ -325,7 +448,15 @@ private:
     QHash<QString, QString> definitionByNode_;
     QHash<QString, QString> materialByNode_;
     QHash<QString, QString> appearanceByNode_;
+    // A part's file colour for its swatch: the colour of most of its surface. A part arrives
+    // as one segment per face colour, so the colour of whichever segment came last (a small
+    // logo face, say) was not the colour the part reads as.
     QHash<QString, QString> importedColorByNode_;
+    struct SegmentColor final {
+        QString color;
+        double areaMm2{};
+    };
+    QHash<QString, QHash<QString, SegmentColor>> segmentColorsByNode_;
     QString partColorMode_{QStringLiteral("file")};
     bool recolorFileColors_{false};
     std::uint32_t partColorSeed_{};
@@ -334,7 +465,7 @@ private:
     QSet<QString> importedFaceColors_;
     bool importedUncolouredFace_{false};
     bool fileColorsUniform_{false};
-    int renderMode_{};
+    int renderMode_{1}; // Solid + Edges
     // Part definitions in tree order, then each one's position in the palette walk.
     QStringList partColorKeys_;
     QHash<QString, int> partColorPositionByKey_;
@@ -343,6 +474,18 @@ private:
     QHash<QString, cache::AppearanceOverride> persistedAppearanceByKey_;
     tools::MeasurementController measurementController_{this};
     tools::SectionController sectionController_{this};
+    tools::ExplodeController explodeController_{this};
+    models::SavedViews savedViews_{this};
+    // Opening time, from the moment the file is opened: first geometry on screen, every
+    // part shown, every part fully detailed (ms; -1 until reached).
+    void markOpenMilestone(qint64& milestone);
+    void recordOpen();
+    QElapsedTimer openClock_;
+    qint64 openViewMs_{-1};
+    qint64 openPreviewMs_{-1};
+    qint64 openFullMs_{-1};
+    qint64 openSizeBytes_{};
+    bool openRecorded_{false};
     tools::CaptureController captureController_{this};
     exporting::ExportWorkspaceController exportWorkspaceController_{this};
     drawing::DrawingWorkspaceController drawingWorkspaceController_{this};
