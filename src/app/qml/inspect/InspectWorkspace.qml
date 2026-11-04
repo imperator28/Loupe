@@ -597,9 +597,12 @@ Item {
                 }
             }
             InspectionDock {
+                objectName: "inspectionDock"
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: 24
+                availableWidth: parent.width - 2 * root.theme.spacing3
+                openTool: root.taskPanelVisible ? root.activeTask : ""
                 viewerPresentation: root.controller ? root.controller.viewerPresentation : AppState.Full
                 exploded: root.exploded
                 measureBlocked: root.explodedShowing

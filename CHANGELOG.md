@@ -73,6 +73,9 @@ commercial import SDK and is not in this release.
   parts. Edges stay solid at any zoom.
 - **Interface**:
   - A System / Light / Dark switch with icons.
+  - The Inspect toolbar sets the buttons that act on the model apart from those that
+    open a tool window, lights a tool while its window is open, and drops to icons when
+    the viewport is narrow, so it never runs over the side panels.
   - Drawn icons and check marks everywhere instead of text characters.
   - Menus sized to their entries.
   - One style for every panel title.

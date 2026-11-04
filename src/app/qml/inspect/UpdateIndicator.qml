@@ -211,6 +211,9 @@ Item {
                 wrapMode: Text.WordWrap
             }
             RowLayout {
+                // Only with a button to show: an empty row would still add its margin and
+                // spacing under the text, so the padding would read deeper at the bottom.
+                visible: root.state === Updates.Available || root.ready || root.failed || root.downloading
                 Layout.fillWidth: true
                 Layout.topMargin: root.theme.spacing2
                 spacing: root.theme.spacing2
