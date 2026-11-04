@@ -1,6 +1,7 @@
 #include "app/models/OpenHistory.h"
 
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
@@ -14,8 +15,10 @@ namespace loupe::app::models {
 
 OpenHistory& OpenHistory::shared()
 {
-    static OpenHistory history;
-    return history;
+    // Owned by the application, so it goes with it rather than as a static after it: a
+    // QObject destroyed once Qt has shut down crashed the process on exit on Windows.
+    static OpenHistory* history = new OpenHistory(QCoreApplication::instance());
+    return *history;
 }
 
 OpenHistory::OpenHistory(QObject* parent)
