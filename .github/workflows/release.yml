@@ -263,14 +263,17 @@ jobs:
     # A tag publishes its release. A manual run publishes too when its label is a
     # pre-release name (v1.2.3-beta.N or v1.2.3-rc.N), so a beta reaches the in-app
     # updater without anyone pushing a tag by hand: the release creates the tag, at the
-    # commit that was built. Any other manual run stops at artifacts.
+    # commit that was built. A manual run on master labelled with the project version
+    # itself (v1.2.3) publishes the final release the same way. Any other manual run
+    # stops at artifacts; the step below holds each label to its exact form.
     # The tag check is skipped on a manual run, and a job downstream of a skipped one is
     # skipped too unless its condition says otherwise -- hence the explicit build result.
     if: >-
       !cancelled() && needs.build.result == 'success'
       && (startsWith(github.ref, 'refs/tags/v')
           || (github.event_name == 'workflow_dispatch'
-              && (contains(inputs.label, '-beta.') || contains(inputs.label, '-rc.'))))
+              && (contains(inputs.label, '-beta.') || contains(inputs.label, '-rc.')
+                  || (github.ref == 'refs/heads/master' && startsWith(inputs.label, 'v')))))
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -279,18 +282,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the pre-release label
+      - name: Check the release label
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
-          # The same rules as a pushed tag: a well-formed pre-release name whose version
-          # is the project's, so the app's About and the release agree.
-          if ! [[ "${RELEASE_TAG}" =~ ^v([0-9.]+)-(beta|rc)\.[0-9]+$ ]]; then
-            echo "::error::A published manual run needs a label like v1.2.3-beta.N or v1.2.3-rc.N, not ${RELEASE_TAG}"
+          # The same rules as a pushed tag: a well-formed name whose version is the
+          # project's, so the app's About and the release agree. A final release (no
+          # suffix) is published only from master, as the merged code.
+          if ! [[ "${RELEASE_TAG}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-(beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::A published manual run needs a label like v1.2.3, v1.2.3-beta.N or v1.2.3-rc.N, not ${RELEASE_TAG}"
+            exit 1
+          fi
+          label_version="${BASH_REMATCH[1]}"
+          if [ -z "${BASH_REMATCH[2]}" ] && [ "${GITHUB_REF}" != "refs/heads/master" ]; then
+            echo "::error::The final release ${RELEASE_TAG} is published from master, not ${GITHUB_REF}"
             exit 1
           fi
           project_version="$(sed -n 's/^project(Loupe VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
-          if [ "${BASH_REMATCH[1]}" != "${project_version}" ]; then
+          if [ "${label_version}" != "${project_version}" ]; then
             echo "::error::Label ${RELEASE_TAG} is not project version ${project_version}"
             exit 1
           fi

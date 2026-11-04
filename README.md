@@ -139,7 +139,7 @@ Loupe checks GitHub for a newer release each time it starts. When there is one, 
 
 The first launch of a new version shows **What's New**, a short list of its highlights; **Help > What's New in Loupe…** shows it again.
 
-Maintainers: each release adds its highlights to [`src/app/resources/whats-new.json`](src/app/resources/whats-new.json) (the build's tests fail without them). A manual run of the Release workflow labelled like `v0.1.5-beta.9` or `v0.1.5-rc.1` builds, tags and publishes a pre-release; pushing a `vX.Y.Z` tag publishes a full release.
+Maintainers: each release adds its highlights to [`src/app/resources/whats-new.json`](src/app/resources/whats-new.json) (the build's tests fail without them). A manual run of the Release workflow labelled like `v0.1.5-beta.9` or `v0.1.5-rc.1` builds, tags and publishes a pre-release. A full release is published by pushing a `vX.Y.Z` tag, or by a manual run on `master` labelled with the project version (`v0.1.5`).
 
 ## Install a Release Build
 
