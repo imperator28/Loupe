@@ -9,6 +9,8 @@ qt_add_executable(loupe-app
     platform/FileOpenRouter.h
     platform/WindowManager.cpp
     platform/WindowManager.h
+    platform/TempHygiene.cpp
+    platform/TempHygiene.h
     platform/UpdateController.cpp
     platform/UpdateController.h
     ApplicationController.h
@@ -23,6 +25,10 @@ qt_add_executable(loupe-app
     models/SelectionModel.cpp
     models/SelectionModel.h
     models/VisibilityModel.cpp
+    models/SavedViews.cpp
+    models/OpenHistory.cpp
+    models/OpenHistory.h
+    models/SavedViews.h
     models/VisibilityModel.h
     models/RemainingTimeEstimator.cpp
     models/RemainingTimeEstimator.h
@@ -202,6 +208,8 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedSlider.qml
         qml/inspect/ThemedSpinBox.qml
         qml/inspect/UpdateIndicator.qml
+        qml/inspect/ViewsPanel.qml
+        qml/inspect/OpenHistoryDialog.qml
         qml/inspect/WhatsNewDialog.qml
         qml/inspect/ThemedSwitch.qml
         qml/inspect/ThemedRadioButton.qml

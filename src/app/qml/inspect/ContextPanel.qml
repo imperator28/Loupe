@@ -237,8 +237,72 @@ ElevatedPanel {
                       : qsTr("This file gives every part the same colour. An automatic palette tells them apart.")
                 color: root.subduedForeground
             }
+
+            // How long this file took to open, against the clock from opening it -- the
+            // figures to set against another CAD program's. History lists every open.
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.topMargin: root.theme.spacing3
+                Layout.preferredHeight: 1
+                color: root.theme.border
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: qsTr("Opening time"); color: root.foreground; Layout.fillWidth: true }
+                Label {
+                    visible: root.openTiming.cached === true
+                    text: qsTr("from cache")
+                    color: root.subduedForeground
+                    font.pixelSize: root.theme.fontCaption
+                }
+            }
+            Repeater {
+                model: [{ key: "viewMs", label: qsTr("Ready to view"), hint: qsTr("The first parts are on screen; the model can be turned and zoomed") },
+                        { key: "previewMs", label: qsTr("All parts shown"), hint: qsTr("Every part is on screen, at preview detail") },
+                        { key: "fullMs", label: qsTr("Fully detailed"), hint: qsTr("Every part at full detail, ready to measure and export") }]
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Label {
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        color: root.subduedForeground
+                        HoverHandler { id: timingHover }
+                        ThemedToolTip { theme: root.theme; text: modelData.hint; visible: timingHover.hovered }
+                    }
+                    Label {
+                        objectName: "openTiming-" + modelData.key
+                        text: root.formatDuration(root.openTiming[modelData.key])
+                        color: root.foreground
+                        font.features: { "tnum": 1 }
+                    }
+                }
+            }
+            ThemedButton {
+                objectName: "openHistoryButton"
+                theme: root.theme
+                Layout.topMargin: root.theme.spacing1
+                text: qsTr("Opening History…")
+                onClicked: openHistoryDialog.open()
+            }
         }
         Item { Layout.fillHeight: true }
+    }
+
+    readonly property var openTiming: controller ? controller.openTiming : ({})
+    // 840 ms, 4.2 s, 1 min 12 s; a dash until reached.
+    function formatDuration(ms) {
+        if (ms === undefined || ms < 0) return root.openTiming.opening ? qsTr("…") : qsTr("—")
+        if (ms < 1000) return qsTr("%1 ms").arg(Math.round(ms))
+        if (ms < 60000) return qsTr("%1 s").arg((ms / 1000).toFixed(ms < 10000 ? 1 : 0))
+        return qsTr("%1 min %2 s").arg(Math.floor(ms / 60000)).arg(Math.round((ms % 60000) / 1000))
+    }
+
+    OpenHistoryDialog {
+        id: openHistoryDialog
+        theme: root.theme
+        history: controller ? controller.openHistory : null
+        formatDuration: root.formatDuration
     }
 
     ThemedColorDialog {

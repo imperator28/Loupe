@@ -2,6 +2,7 @@
 #include "app/DocumentTabs.h"
 #include "app/platform/FileAssociation.h"
 #include "app/platform/FileOpenRouter.h"
+#include "app/platform/TempHygiene.h"
 #include "app/platform/UpdateController.h"
 #include "app/platform/WindowManager.h"
 #include "app/platform/WindowChrome.h"
@@ -80,6 +81,8 @@ int main(int argc, char* argv[])
 
     // Packaged builds check for updates each launch; LOUPE_NO_UPDATE_CHECK turns it off.
     loupe::app::platform::UpdateController::setAutomaticChecks(!selfCheck && !qEnvironmentVariableIsSet("LOUPE_NO_UPDATE_CHECK"));
+    // Leftovers of an earlier Loupe that crashed or was force-quit.
+    if (!selfCheck) loupe::app::platform::sweepStaleTempFilesAtLaunch();
     // What's New shows once after an update; never during the packaging self-check.
     loupe::app::platform::UpdateController::setShowWhatsNewOnLaunch(!selfCheck);
     QQmlApplicationEngine engine;

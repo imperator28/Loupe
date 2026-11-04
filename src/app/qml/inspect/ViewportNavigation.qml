@@ -63,6 +63,101 @@ QtObject {
         return height / Math.max(0.000001, 2.0 * magnification * Math.tan(halfAngle))
     }
 
+    // Saved camera views (Views tool window): the whole camera as plain numbers, which the
+    // app keeps with the file.
+    function cameraState() {
+        return {
+            position: [cameraPosition.x, cameraPosition.y, cameraPosition.z],
+            orientation: [orientation.scalar, orientation.x, orientation.y, orientation.z],
+            pivot: [activePivot.x, activePivot.y, activePivot.z],
+            distance: distance,
+            magnification: orthographicMagnification,
+            fieldOfView: perspectiveFieldOfView,
+            projection: projectionMode
+        }
+    }
+
+    // Back to a saved camera, gliding there over `duration` ms (0: at once). Any other
+    // camera move -- a drag, a zoom, a fit -- takes over from wherever the glide has got to.
+    property real tweenProgress: 0
+    property var tweenFrom: null
+    property var tweenTo: null
+    property NumberAnimation tween: NumberAnimation {
+        target: root
+        property: "tweenProgress"
+        from: 0
+        to: 1
+        easing.type: Easing.BezierSpline
+        easing.bezierCurve: [0.20, 0.0, 0.0, 1.0, 1.0, 1.0]
+    }
+    onTweenProgressChanged: if (tweenFrom && tweenTo) blendCamera(tweenProgress)
+
+    function validCameraState(state) {
+        const triple = function(value) { return value && value.length === 3 && value.every(isFinite) }
+        return state && triple(state.position) && triple(state.pivot) && state.orientation
+            && state.orientation.length === 4 && state.orientation.every(isFinite)
+            && isFinite(state.distance) && isFinite(state.magnification) && state.magnification > 0
+    }
+
+    function restoreCameraState(state, duration) {
+        if (!validCameraState(state)) return false
+        stopTween()
+        // The projection switches at once; position and zoom glide.
+        if (state.projection === "perspective" || state.projection === "orthographic") projectionMode = state.projection
+        tweenFrom = cameraState()
+        tweenTo = state
+        if (!(duration > 0)) {
+            blendCamera(1)
+            return true
+        }
+        tween.duration = duration
+        tweenProgress = 0
+        tween.restart()
+        return true
+    }
+
+    function stopTween() {
+        if (tween.running) tween.stop()
+        tweenFrom = null
+        tweenTo = null
+    }
+
+    function slerp(a, b, t) {
+        let bw = b[0], bx = b[1], by = b[2], bz = b[3]
+        let dot = a[0] * bw + a[1] * bx + a[2] * by + a[3] * bz
+        if (dot < 0) { bw = -bw; bx = -bx; by = -by; bz = -bz; dot = -dot }
+        let wa = 1 - t, wb = t
+        if (dot < 0.9995) {
+            const theta = Math.acos(Math.min(1, dot))
+            const sine = Math.sin(theta)
+            wa = Math.sin((1 - t) * theta) / sine
+            wb = Math.sin(t * theta) / sine
+        }
+        return Qt.quaternion(wa * a[0] + wb * bw, wa * a[1] + wb * bx, wa * a[2] + wb * by, wa * a[3] + wb * bz).normalized()
+    }
+
+    function blendCamera(t) {
+        const from = tweenFrom
+        const to = tweenTo
+        if (!from || !to) return
+        const mix = function(a, b) { return a + (b - a) * t }
+        const mix3 = function(a, b) { return Qt.vector3d(mix(a[0], b[0]), mix(a[1], b[1]), mix(a[2], b[2])) }
+        cameraPosition = mix3(from.position, to.position)
+        activePivot = mix3(from.pivot, to.pivot)
+        pendingPivot = activePivot
+        hasPendingPivot = false
+        orientation = slerp(from.orientation, to.orientation, t)
+        distance = mix(from.distance, to.distance)
+        // Zoom glides evenly in scale, not in raw magnification.
+        orthographicMagnification = Math.exp(mix(Math.log(from.magnification), Math.log(to.magnification)))
+        if (isFinite(to.fieldOfView)) perspectiveFieldOfView = mix(from.fieldOfView, to.fieldOfView)
+        apply()
+        if (t >= 1) {
+            tweenFrom = null
+            tweenTo = null
+        }
+    }
+
     function apply() {
         if (!cameraRig || !perspectiveCamera || !orthographicCamera) return
         cameraRig.position = cameraPosition
@@ -76,6 +171,7 @@ QtObject {
     }
 
     function reset() {
+        stopTween()
         orientation = Quaternion.fromEulerAngles(-35.264, 45, 0)
         activePivot = Qt.vector3d(0, 0, 0)
         pendingPivot = activePivot
@@ -88,6 +184,7 @@ QtObject {
     }
 
     function fitBounds(minimum, maximum) {
+        stopTween()
         activePivot = Qt.vector3d((minimum.x + maximum.x) * 0.5,
                                   (minimum.y + maximum.y) * 0.5,
                                   (minimum.z + maximum.z) * 0.5)
@@ -110,6 +207,7 @@ QtObject {
     // this out of fitBounds is what lets a named view re-frame without also resetting the
     // zoom, which is the whole reason a cube click stopped preserving magnification.
     function centreOn(minimum, maximum) {
+        stopTween()
         activePivot = Qt.vector3d((minimum.x + maximum.x) * 0.5,
                                   (minimum.y + maximum.y) * 0.5,
                                   (minimum.z + maximum.z) * 0.5)
@@ -140,6 +238,7 @@ QtObject {
     }
 
     function orbit(deltaX, deltaY) {
+        stopTween()
         activatePendingOrbitPivot()
         if (Math.abs(deltaX) < 0.0001 && Math.abs(deltaY) < 0.0001) return
 
@@ -161,6 +260,7 @@ QtObject {
     // makes this feel like turning the drawing rather than orbiting the part.
     // A standard-view click re-derives up from world axes and so clears any roll.
     function roll(degrees) {
+        stopTween()
         if (!isFinite(degrees) || Math.abs(degrees) < 0.0001) return
         const forward = orientation.times(Qt.vector3d(0, 0, 1))
         orientation = Quaternion.fromAxisAndAngle(forward, degrees).times(orientation).normalized()
@@ -168,6 +268,7 @@ QtObject {
     }
 
     function pan(deltaX, deltaY) {
+        stopTween()
         const right = orientation.times(Qt.vector3d(1, 0, 0))
         const up = orientation.times(Qt.vector3d(0, 1, 0))
         const worldPerPixel = projectionMode === "orthographic"
@@ -182,6 +283,7 @@ QtObject {
     }
 
     function alignToNormal(normal) {
+        stopTween()
         const direction = normalized(normal, Qt.vector3d(0, 0, 1))
         cameraPosition = add(activePivot, scaled(direction, distance))
         const up = Math.abs(direction.y) > 0.95 ? Qt.vector3d(0, 0, -1) : Qt.vector3d(0, 1, 0)
@@ -198,6 +300,7 @@ QtObject {
     // then turns to the nearest of that edge's four in-plane directions, so a rectangular
     // face reads square on screen instead of at whatever angle world up happens to give it.
     function viewAlong(direction, target, edgeDirection) {
+        stopTween()
         const back = normalized(direction, Qt.vector3d(0, 0, 1))
         let up = Math.abs(back.y) > 0.95 ? Qt.vector3d(0, 0, -1) : Qt.vector3d(0, 1, 0)
         if (edgeDirection) {
@@ -252,6 +355,7 @@ QtObject {
     }
 
     function setProjection(mode) {
+        stopTween()
         const normalizedMode = mode === "perspective" ? "perspective" : "orthographic"
         if (normalizedMode === projectionMode) return
         if (normalizedMode === "orthographic") {
@@ -269,6 +373,7 @@ QtObject {
 
     // A wheel step, as a zoom factor: positive deltas move closer.
     function zoom(delta, screenX, screenY) {
+        stopTween()
         zoomByFactor(1.0 / Math.pow(0.998, delta), screenX, screenY)
     }
 
@@ -281,6 +386,7 @@ QtObject {
     // moved away during a pinch, which reads as the view shifting on its own. Anchoring on the
     // pointer is how every other macOS pinch behaves.
     function zoomByFactor(factor, screenX, screenY) {
+        stopTween()
         if (!isFinite(factor) || factor <= 0) return
         const anchorX = (screenX === undefined || !isFinite(screenX)) ? 0 : screenX - viewportWidth * 0.5
         const anchorY = (screenY === undefined || !isFinite(screenY)) ? 0 : screenY - viewportHeight * 0.5

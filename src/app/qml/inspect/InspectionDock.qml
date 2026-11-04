@@ -22,6 +22,7 @@ ElevatedPanel {
         { key: "explode", icon: "explode", label: qsTr("Explode"), active: exploded },
         { key: "measure", icon: "measure", label: qsTr("Measure"), disabled: measureBlocked,
           hint: qsTr("Measuring works on the assembled model: switch the exploded view to Assembled to measure.") },
+        { key: "views", icon: "views", label: qsTr("Views") },
         { key: "capture", icon: "capture", label: qsTr("Capture") }
     ]
     flat: true

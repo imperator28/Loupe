@@ -2,10 +2,13 @@
 #include <QtTest/QTest>
 
 #include <QFile>
+#include <QDir>
+#include <QCoreApplication>
 #include <QTemporaryDir>
 #include <QUrl>
 
 #include "app/platform/UpdateController.h"
+#include "app/platform/TempHygiene.h"
 
 using loupe::app::platform::UpdateController;
 
@@ -21,6 +24,7 @@ private slots:
     void theBuildKnowsItsBetaLabel();
     void whatsNewIsReadForTheReleaseAndShownOncePerRelease();
     void everyReleaseShipsWhatsNewWithIconsThatExist();
+    void launchSweepsTheTempFilesOfLoupesThatAreGone();
 };
 
 namespace {
@@ -181,6 +185,34 @@ void UpdateControllerTest::everyReleaseShipsWhatsNewWithIconsThatExist()
         QVERIFY2(glyphs.contains(QStringLiteral("\"%1\": {").arg(icon)), qPrintable(icon));
         QVERIFY(!fields.value(QStringLiteral("body")).toString().isEmpty());
     }
+}
+
+void UpdateControllerTest::launchSweepsTheTempFilesOfLoupesThatAreGone()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto touch = [&](const QString& name) {
+        QFile file(QDir(directory.path()).filePath(name));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+    };
+    touch(QStringLiteral("loupe-worker-111-0a1b2c3d"));   // a crashed Loupe's importer copy
+    touch(QStringLiteral("loupe-111-deadbeef"));          // its connection
+    touch(QStringLiteral("loupe-worker-222-0a1b2c3d"));   // another Loupe, still running
+    touch(QStringLiteral("loupe-worker-333-0a1b2c3d"));   // this Loupe
+    touch(QStringLiteral("loupe-update.txt"));            // not ours to judge
+    touch(QStringLiteral("someone-else-111-0a1b2c3d"));
+    const auto running = [](const qint64 pid) { return pid == 222; };
+    const auto sweep = loupe::app::platform::sweepStaleTempFiles(directory.path(), 333, running);
+    QCOMPARE(sweep.removed, 2);
+    const auto left = QDir(directory.path()).entryList(QDir::Files);
+    QVERIFY(!left.contains(QStringLiteral("loupe-worker-111-0a1b2c3d")));
+    QVERIFY(!left.contains(QStringLiteral("loupe-111-deadbeef")));
+    QVERIFY(left.contains(QStringLiteral("loupe-worker-222-0a1b2c3d")));
+    QVERIFY(left.contains(QStringLiteral("loupe-worker-333-0a1b2c3d")));
+    QVERIFY(left.contains(QStringLiteral("loupe-update.txt")));
+    QVERIFY(left.contains(QStringLiteral("someone-else-111-0a1b2c3d")));
+    // This process is running, by the real check.
+    QVERIFY(loupe::app::platform::processIsRunning(QCoreApplication::applicationPid()));
 }
 
 QTEST_GUILESS_MAIN(UpdateControllerTest)

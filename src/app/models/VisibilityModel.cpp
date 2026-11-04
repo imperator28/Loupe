@@ -150,6 +150,24 @@ void VisibilityModel::showAll()
     }
 }
 
+void VisibilityModel::applyState(const QSet<QString>& hidden, const QSet<QString>& ghosted)
+{
+    const auto before = current_;
+    bool changed = false;
+    for (auto it = current_.begin(); it != current_.end(); ++it) {
+        const bool visible = !hidden.contains(it.key());
+        const bool ghost = visible && ghosted.contains(it.key());
+        if (it->visible == visible && it->ghosted == ghost) continue;
+        it->visible = visible;
+        it->ghosted = ghost;
+        changed = true;
+    }
+    if (changed) {
+        previous_ = before;
+        emit presentationChanged();
+    }
+}
+
 bool VisibilityModel::isVisible(const QString& nodeId) const
 {
     return current_.value(nodeId).visible;

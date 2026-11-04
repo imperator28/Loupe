@@ -27,6 +27,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
+#include <QDateTime>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <cmath>
@@ -166,6 +167,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             previewGeometryReceived_ = true;
             emit importProgressChanged();
         }
+        markOpenMilestone(openViewMs_);
         noteImportedColor(nodeId, sourceColor);
         if (noteSegmentColor(nodeId, segmentKey, sourceColor, meshJson) && isNodeSelected(nodeId))
             emit componentPropertiesChanged();
@@ -210,7 +212,21 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
             exportWorkspaceController_.setDocumentReady(true);
             drawingWorkspaceController_.setDocumentReady(true);
             saveGeometryCache();
+            markOpenMilestone(openFullMs_);
+            // The importer's own timings follow the last progress; record once they are in.
+            const auto request = activeRequestId_;
+            QTimer::singleShot(1500, this, [this, request] { if (request == activeRequestId_) recordOpen(); });
         }
+    });
+    // The importer's timings run from when it started, after the app launched it: shifted
+    // onto the app's clock by when it finished, they give when every part was first shown.
+    connect(&workerClient_, &worker::WorkerClient::importMetrics, this,
+            [this](const quint64 requestId, const QString&, const QString&, qint64, qint64, qint64, qint64,
+                   qint64, const qint64 previewReadyMs, const qint64 finalReadyMs, qint64, qint64, int) {
+        if (requestId != activeRequestId_ || !openClock_.isValid() || openPreviewMs_ >= 0 || previewReadyMs <= 0) return;
+        const auto offset = std::max<qint64>(0, openClock_.elapsed() - finalReadyMs);
+        openPreviewMs_ = previewReadyMs + offset;
+        emit openTimingChanged();
     });
     connect(&workerClient_, &worker::WorkerClient::requestCanceled, this, [this](quint64 requestId) {
         if (requestId == activeDrawingRequestId_) {
@@ -521,10 +537,18 @@ void ApplicationController::openFile(const QUrl& file)
     setActiveNodeId({});
     assemblyTreeModel_.replaceSnapshot({});
     pendingPath_ = sourceFile.absoluteFilePath();
+    // Opening time starts now, as the user sees it.
+    openClock_.start();
+    openViewMs_ = openPreviewMs_ = openFullMs_ = -1;
+    openSizeBytes_ = sourceFile.size();
+    openRecorded_ = false;
+    emit openTimingChanged();
     if (documentPath_ != pendingPath_) {
         documentPath_ = pendingPath_;
         emit documentNameChanged();
     }
+    // This file's saved views, as they were left.
+    savedViews_.setDocument(documentPath_);
     pendingSource_ = cache::SourceFingerprint::fromFile(pendingPath_);
     if (!pendingSource_) {
         setErrorMessage(tr("Loupe could not read the selected file."));
@@ -799,6 +823,114 @@ void ApplicationController::setSelectionTransparentEdges(const bool shown)
     emit visibilityChanged();
 }
 
+void ApplicationController::markOpenMilestone(qint64& milestone)
+{
+    if (!openClock_.isValid() || milestone >= 0) return;
+    milestone = openClock_.elapsed();
+    emit openTimingChanged();
+}
+
+QVariantMap ApplicationController::openTiming() const
+{
+    return {{QStringLiteral("viewMs"), openViewMs_},
+            {QStringLiteral("previewMs"), openPreviewMs_},
+            {QStringLiteral("fullMs"), openFullMs_},
+            {QStringLiteral("cached"), cachedGeometryLoaded_},
+            {QStringLiteral("opening"), openClock_.isValid() && openFullMs_ < 0}};
+}
+
+void ApplicationController::recordOpen()
+{
+    if (openRecorded_ || openFullMs_ < 0) return;
+    openRecorded_ = true;
+    // Every part shown can only come after the first and before fully detailed.
+    if (openPreviewMs_ >= 0) openPreviewMs_ = std::clamp(openPreviewMs_, std::max<qint64>(0, openViewMs_), openFullMs_);
+    models::OpenHistory::shared().append({{QStringLiteral("file"), QFileInfo(documentPath_).fileName()},
+                                          {QStringLiteral("path"), QDir::toNativeSeparators(documentPath_)},
+                                          {QStringLiteral("sizeBytes"), openSizeBytes_},
+                                          {QStringLiteral("parts"), static_cast<int>(geometryByNode_.size())},
+                                          {QStringLiteral("cached"), cachedGeometryLoaded_},
+                                          {QStringLiteral("viewMs"), openViewMs_},
+                                          {QStringLiteral("previewMs"), openPreviewMs_},
+                                          {QStringLiteral("fullMs"), openFullMs_},
+                                          {QStringLiteral("openedAt"), QDateTime::currentDateTime().toString(Qt::ISODate)},
+                                          {QStringLiteral("version"), applicationVersion()}});
+    emit openTimingChanged();
+}
+
+QString ApplicationController::saveDisplayState(const QString& name)
+{
+    if (geometryByNode_.isEmpty()) return {};
+    QJsonArray hidden;
+    QJsonArray transparent;
+    QJsonObject opacity;
+    QJsonArray withoutEdges;
+    int hiddenCount = 0;
+    int transparentCount = 0;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it) {
+        const auto& nodeId = it.key();
+        if (!visibilityModel_.isVisible(nodeId)) {
+            hidden.append(nodeId);
+            ++hiddenCount;
+        } else if (visibilityModel_.isGhosted(nodeId)) {
+            transparent.append(nodeId);
+            ++transparentCount;
+            if (opacityByNode_.contains(nodeId)) opacity.insert(nodeId, opacityByNode_.value(nodeId));
+            if (transparentWithoutEdges_.contains(nodeId)) withoutEdges.append(nodeId);
+        }
+    }
+    QStringList parts;
+    if (viewerPresentation_ == ViewerPresentation::Isolate) parts << tr("Isolated");
+    if (hiddenCount > 0) parts << tr("%1 hidden").arg(hiddenCount);
+    if (transparentCount > 0) parts << tr("%1 transparent").arg(transparentCount);
+    const auto summary = parts.isEmpty() ? tr("Everything shown") : parts.join(QStringLiteral(" · "));
+    return savedViews_.add(QStringLiteral("display"), name, summary,
+                           {{QStringLiteral("hidden"), hidden.toVariantList()},
+                            {QStringLiteral("transparent"), transparent.toVariantList()},
+                            {QStringLiteral("opacity"), opacity.toVariantMap()},
+                            {QStringLiteral("withoutEdges"), withoutEdges.toVariantList()},
+                            {QStringLiteral("presentation"), static_cast<int>(viewerPresentation_)}});
+}
+
+bool ApplicationController::applyDisplayState(const QString& id)
+{
+    const auto state = savedViews_.data(id);
+    if (state.isEmpty()) return false;
+    QSet<QString> hidden;
+    QSet<QString> transparent;
+    for (const auto& value : state.value(QStringLiteral("hidden")).toList()) hidden.insert(value.toString());
+    for (const auto& value : state.value(QStringLiteral("transparent")).toList()) transparent.insert(value.toString());
+    // Each transparent part's own opacity and edges, as they were saved.
+    const auto opacity = state.value(QStringLiteral("opacity")).toMap();
+    for (const auto& nodeId : transparent) {
+        if (opacity.contains(nodeId)) opacityByNode_.insert(nodeId, std::clamp(opacity.value(nodeId).toDouble(), 0.05, 0.995));
+        else opacityByNode_.remove(nodeId);
+        transparentWithoutEdges_.remove(nodeId);
+    }
+    for (const auto& value : state.value(QStringLiteral("withoutEdges")).toList()) transparentWithoutEdges_.insert(value.toString());
+    visibilityModel_.applyState(hidden, transparent);
+    const auto presentation = state.value(QStringLiteral("presentation")).toInt();
+    viewerPresentation_ = presentation == static_cast<int>(ViewerPresentation::Isolate) ? ViewerPresentation::Isolate
+                        : presentation == static_cast<int>(ViewerPresentation::Ghost) ? ViewerPresentation::Ghost
+                                                                                         : ViewerPresentation::Full;
+    emit viewerPresentationChanged();
+    // Opacity and edges may have changed with nothing else: redraw either way.
+    ++visibilityRevision_;
+    emit visibilityChanged();
+    return true;
+}
+
+void ApplicationController::resetDisplayState()
+{
+    showAllNodes();
+}
+
+QString ApplicationController::saveCameraView(const QString& name, const QVariantMap& camera, const QString& summary)
+{
+    if (camera.isEmpty()) return {};
+    return savedViews_.add(QStringLiteral("camera"), name, summary, camera);
+}
+
 QString ApplicationController::assemblyExportStage() const
 {
     if (assemblyExportStageKey_ == QStringLiteral("translate")) return tr("Translating to STEP");
@@ -999,11 +1131,14 @@ void ApplicationController::replayGeometryChunk()
             geometryReplayQueue_.clear();
             geometryReplayIndex_ = 0;
             if (previewGeometryReceived_) emit importProgressChanged();
+            // From the cache, every part is on screen once its geometry is replayed.
+            if (cachedGeometryLoaded_) markOpenMilestone(openPreviewMs_);
             return;
         }
         auto entry = std::move(geometryReplayQueue_[geometryReplayIndex_++]);
         if (entry.kind == 1) {
             previewGeometryReceived_ = true;
+            markOpenMilestone(openViewMs_);
             noteImportedColor(entry.nodeId, entry.sourceColor);
             static_cast<void>(noteSegmentColor(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload));
             notePartBounds(entry.nodeId, entry.payload);

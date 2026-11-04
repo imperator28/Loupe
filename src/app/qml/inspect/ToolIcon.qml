@@ -173,6 +173,24 @@ Item {
             f: "",
             t: "M3 4.5 H9 V7.5 H3 Z"
         },
+        // Saved views: two snapshots, one behind the other.
+        "views": {
+            s: "M3 7 H14 V16.5 H3 Z M6 7 V4 H17 V13.5 H14",
+            f: "",
+            t: "M3 7 H14 V16.5 H3 Z"
+        },
+        // Rename: a pencil.
+        "rename": {
+            s: "M4.5 15.5 L5.2 12.4 L12.9 4.7 Q13.6 4 14.3 4.7 L15.3 5.7 Q16 6.4 15.3 7.1 L7.6 14.8 Z M11.6 6 L14 8.4",
+            f: "",
+            t: ""
+        },
+        // Add: a plus.
+        "add": {
+            s: "M10 4.5 V15.5 M4.5 10 H15.5",
+            f: "",
+            t: ""
+        },
         // A drag grip: two columns of three dots.
         "grip": {
             s: "",

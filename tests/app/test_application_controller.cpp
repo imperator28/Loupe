@@ -2,6 +2,8 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QSignalSpy>
+#include <QStandardPaths>
+#include <QSettings>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -44,6 +46,8 @@ private slots:
     void fitViewNotifiesViewport();
     void renderModeIsSharedAndClamped();
     void transparencyTogglesTheSelectionAndOthers();
+    void displayStatesSaveAndRestoreWhatIsHiddenOrTransparent();
+    void eachOpenRecordsHowLongItTook();
     void isolatesHidesAndRestoresTheActiveComponentForViewerPresentation();
     void openingDocumentResetsTransientInspectionState();
     void reopensUnchangedStepFromLocalSnapshotCache();
@@ -409,6 +413,103 @@ void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
     QVERIFY(controller.isNodeTransparent(parts.at(1)));
     controller.showAllNodes();
     QVERIFY(!controller.isNodeTransparent(parts.at(1)));
+}
+
+void ApplicationControllerTest::eachOpenRecordsHowLongItTook()
+{
+    QTemporaryDir storage;
+    auto& history = loupe::app::models::OpenHistory::shared();
+    history.setStoragePath(QDir(storage.path()).filePath(QStringLiteral("open-history.json")));
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-open-time.step").toStdString());
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QVERIFY(controller.openTiming().value(QStringLiteral("opening")).toBool());
+    QTRY_COMPARE_WITH_TIMEOUT(history.records().size(), 1, 15'000);
+
+    const auto record = history.records().constFirst().toMap();
+    QCOMPARE(record.value(QStringLiteral("file")).toString(), QStringLiteral("controller-open-time.step"));
+    QCOMPARE(record.value(QStringLiteral("parts")).toInt(), 2);
+    QVERIFY(record.value(QStringLiteral("sizeBytes")).toLongLong() > 0);
+    // In order: first geometry on screen, every part shown, fully detailed.
+    const auto view = record.value(QStringLiteral("viewMs")).toLongLong();
+    const auto preview = record.value(QStringLiteral("previewMs")).toLongLong();
+    const auto full = record.value(QStringLiteral("fullMs")).toLongLong();
+    QVERIFY2(view >= 0 && view <= full, qPrintable(QStringLiteral("%1 %2 %3").arg(view).arg(preview).arg(full)));
+    QVERIFY2(preview < 0 || (preview >= view && preview <= full), qPrintable(QStringLiteral("%1 %2 %3").arg(view).arg(preview).arg(full)));
+    QVERIFY(!controller.openTiming().value(QStringLiteral("opening")).toBool());
+    QCOMPARE(controller.openTiming().value(QStringLiteral("fullMs")).toLongLong(), full);
+
+    // As CSV, for setting against another program's times.
+    const auto csv = history.csv();
+    QVERIFY(csv.startsWith(QStringLiteral("opened_at,file,size_mb,parts,from_cache,ready_to_view_s")));
+    QVERIFY(csv.contains(QStringLiteral("controller-open-time.step")));
+    QCOMPARE(csv.count(QLatin1Char('\n')), 2);
+    history.clear();
+    QVERIFY(history.records().isEmpty());
+}
+
+void ApplicationControllerTest::displayStatesSaveAndRestoreWhatIsHiddenOrTransparent()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-display-states.step").toStdString());
+    QSettings().remove(loupe::app::models::SavedViews::storageKeyFor(QFileInfo(QString::fromStdString(fixture.string())).absoluteFilePath()));
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    const auto parts = geometryNodeIds(controller);
+    QCOMPARE(parts.size(), 2);
+    auto& views = controller.savedViews();
+    QVERIFY(views.displayStates().isEmpty());
+
+    // Part 0 hidden, part 1 transparent at 30% with its edges off: saved under a name.
+    controller.setActiveNodeId(parts.at(0));
+    controller.hideActiveNode();
+    controller.setActiveNodeId(parts.at(1));
+    controller.setSelectionOpacity(0.3);
+    controller.setSelectionTransparentEdges(false);
+    const auto id = controller.saveDisplayState(QStringLiteral("Cover off"));
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(views.displayStates().size(), 1);
+    const auto entry = views.displayStates().constFirst().toMap();
+    QCOMPARE(entry.value(QStringLiteral("name")).toString(), QStringLiteral("Cover off"));
+    QCOMPARE(entry.value(QStringLiteral("summary")).toString(), QStringLiteral("1 hidden · 1 transparent"));
+
+    // Reset to default: everything shown and opaque; then the saved state comes back whole.
+    controller.resetDisplayState();
+    QVERIFY(controller.isNodeVisible(parts.at(0)));
+    QVERIFY(!controller.isNodeTransparent(parts.at(1)));
+    QVERIFY(controller.applyDisplayState(id));
+    QVERIFY(!controller.isNodeVisible(parts.at(0)));
+    QVERIFY(controller.isNodeTransparent(parts.at(1)));
+    QCOMPARE(controller.nodeOpacity(parts.at(1)), 0.3);
+    QVERIFY(!controller.nodeShowsTransparentEdges(parts.at(1)));
+    // Undoable as one step.
+    QVERIFY(controller.canRestoreVisibility());
+
+    // Default names count up; rename and delete.
+    controller.resetDisplayState();
+    const auto second = controller.saveDisplayState({});
+    QCOMPARE(views.displayStates().constFirst().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("Display 1"));
+    QCOMPARE(views.displayStates().constFirst().toMap().value(QStringLiteral("summary")).toString(), QStringLiteral("Everything shown"));
+    views.rename(second, QStringLiteral("All parts"));
+    QCOMPARE(views.displayStates().constFirst().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("All parts"));
+
+    // Kept with the file: another controller opening it sees both.
+    {
+        loupe::app::models::SavedViews reopened;
+        reopened.setDocument(QFileInfo(QString::fromStdString(fixture.string())).absoluteFilePath());
+        QCOMPARE(reopened.displayStates().size(), 2);
+        QCOMPARE(reopened.data(id).value(QStringLiteral("hidden")).toList().size(), 1);
+    }
+    views.remove(second);
+    views.remove(id);
+    QVERIFY(views.displayStates().isEmpty());
+
+    // Camera views are stored as given.
+    const auto camera = controller.saveCameraView(QStringLiteral("Front"), {{QStringLiteral("distance"), 42.0}}, QStringLiteral("Orthographic · Front"));
+    QCOMPARE(controller.cameraView(camera).value(QStringLiteral("distance")).toDouble(), 42.0);
+    QCOMPARE(views.cameraViews().size(), 1);
+    views.remove(camera);
 }
 
 void ApplicationControllerTest::exportsTheAssemblyWithoutItsHiddenParts()

@@ -19,6 +19,8 @@
 #include "app/models/MaterialLibraryModel.h"
 #include "app/models/RemainingTimeEstimator.h"
 #include "app/models/VisibilityModel.h"
+#include "app/models/SavedViews.h"
+#include "app/models/OpenHistory.h"
 #include "app/cache/OverrideStore.h"
 #include "app/drawing/DrawingWorkspaceController.h"
 #include "app/export/ExportWorkspaceController.h"
@@ -112,6 +114,12 @@ class ApplicationController : public QObject {
     Q_PROPERTY(QObject* measurement READ measurementController CONSTANT)
     Q_PROPERTY(QObject* section READ sectionController CONSTANT)
     Q_PROPERTY(QObject* explode READ explodeControllerObject CONSTANT)
+    // The Views tool window's saved display states and camera views for this file.
+    Q_PROPERTY(QObject* savedViews READ savedViewsObject CONSTANT)
+    // How long this file took to open (viewMs, previewMs, fullMs; -1 until reached;
+    // cached), and every open's record.
+    Q_PROPERTY(QVariantMap openTiming READ openTiming NOTIFY openTimingChanged)
+    Q_PROPERTY(QObject* openHistory READ openHistoryObject CONSTANT)
     Q_PROPERTY(QObject* capture READ captureController CONSTANT)
     // The open file's name, for its tab and the window title; empty before one is opened.
     Q_PROPERTY(QString documentName READ documentName NOTIFY documentNameChanged)
@@ -198,6 +206,20 @@ public:
     [[nodiscard]] QObject* measurementController() noexcept { return &measurementController_; }
     [[nodiscard]] QObject* sectionController() noexcept { return &sectionController_; }
     [[nodiscard]] QObject* explodeControllerObject() noexcept { return &explodeController_; }
+    [[nodiscard]] QObject* savedViewsObject() noexcept { return &savedViews_; }
+    [[nodiscard]] QVariantMap openTiming() const;
+    [[nodiscard]] QObject* openHistoryObject() noexcept { return &models::OpenHistory::shared(); }
+    [[nodiscard]] models::SavedViews& savedViews() noexcept { return savedViews_; }
+
+    // Saved views (Views tool window). A display state is what is hidden or transparent,
+    // with each transparent part's opacity and edges, and isolate; a camera view is the
+    // viewport's own camera state, which it passes in and restores itself.
+    Q_INVOKABLE QString saveDisplayState(const QString& name);
+    Q_INVOKABLE bool applyDisplayState(const QString& id);
+    // Everything shown and opaque: the file as it opened.
+    Q_INVOKABLE void resetDisplayState();
+    Q_INVOKABLE QString saveCameraView(const QString& name, const QVariantMap& camera, const QString& summary);
+    Q_INVOKABLE [[nodiscard]] QVariantMap cameraView(const QString& id) const { return savedViews_.data(id); }
     [[nodiscard]] tools::ExplodeController& explodeController() noexcept { return explodeController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
@@ -306,6 +328,7 @@ signals:
     void viewerPresentationChanged();
     void visibilityChanged();
     void importProgressChanged();
+    void openTimingChanged();
     void effectiveUnitChanged();
     void upAxisChanged();
     void partColorsChanged();
@@ -452,6 +475,17 @@ private:
     tools::MeasurementController measurementController_{this};
     tools::SectionController sectionController_{this};
     tools::ExplodeController explodeController_{this};
+    models::SavedViews savedViews_{this};
+    // Opening time, from the moment the file is opened: first geometry on screen, every
+    // part shown, every part fully detailed (ms; -1 until reached).
+    void markOpenMilestone(qint64& milestone);
+    void recordOpen();
+    QElapsedTimer openClock_;
+    qint64 openViewMs_{-1};
+    qint64 openPreviewMs_{-1};
+    qint64 openFullMs_{-1};
+    qint64 openSizeBytes_{};
+    bool openRecorded_{false};
     tools::CaptureController captureController_{this};
     exporting::ExportWorkspaceController exportWorkspaceController_{this};
     drawing::DrawingWorkspaceController drawingWorkspaceController_{this};

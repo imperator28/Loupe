@@ -6,6 +6,7 @@ import Loupe.App
 
 Item {
     id: root
+    objectName: presentationOnly ? "previewViewport" : "inspectViewport"
     focus: true
 
     property QtObject controller
@@ -348,6 +349,83 @@ Item {
         saved[pivotKey()] = handlePivot
         savedPivots = saved
         pickingPivot = false
+        return true
+    }
+
+    // Saved views (Views tool window). The one last gone to stays marked as current until
+    // the camera, or what is shown, changes.
+    property string currentCameraViewId: ""
+    property int currentCameraRevision: -1
+    property string currentDisplayStateId: ""
+    property int currentDisplayRevision: -1
+    readonly property string activeCameraViewId: currentCameraViewId.length > 0
+        && (navigation.tween.running || navigation.revision === currentCameraRevision) ? currentCameraViewId : ""
+    readonly property string activeDisplayStateId: currentDisplayStateId.length > 0 && controller
+        && controller.visibilityRevision === currentDisplayRevision ? currentDisplayStateId : ""
+    Connections {
+        target: navigation.tween
+        function onStopped() { root.currentCameraRevision = navigation.revision }
+    }
+
+    // What a camera view looks along, in a word: a standard view when it is one.
+    function cameraViewSummary() {
+        const projection = navigation.projectionMode === "perspective" ? qsTr("Perspective") : qsTr("Orthographic")
+        const d = viewDirection
+        const named = [[Qt.vector3d(0, 0, 1), qsTr("Front")], [Qt.vector3d(0, 0, -1), qsTr("Back")],
+                       [Qt.vector3d(0, 1, 0), qsTr("Top")], [Qt.vector3d(0, -1, 0), qsTr("Bottom")],
+                       [Qt.vector3d(1, 0, 0), qsTr("Right")], [Qt.vector3d(-1, 0, 0), qsTr("Left")]]
+        for (const entry of named) {
+            if (d.dotProduct(entry[0]) > 0.996) return projection + " · " + entry[1]
+        }
+        return projection
+    }
+
+    // A small picture of the view as it is now, saved as an entry's thumbnail.
+    function saveViewThumbnail(id) {
+        if (!controller || id.length === 0 || view.width <= 0 || view.height <= 0) return
+        const scale = Math.min(1, 240 / view.width)
+        view.grabToImage(function(result) {
+            if (root.controller && result.saveToFile(root.controller.savedViews.thumbnailPath(id)))
+                root.controller.savedViews.thumbnailSaved(id)
+        }, Qt.size(Math.round(view.width * scale), Math.round(view.height * scale)))
+    }
+
+    function saveCameraView(name) {
+        if (!controller) return ""
+        const id = controller.saveCameraView(name, navigation.cameraState(), cameraViewSummary())
+        if (id.length > 0) {
+            currentCameraViewId = id
+            currentCameraRevision = navigation.revision
+            saveViewThumbnail(id)
+        }
+        return id
+    }
+
+    function goToCameraView(id) {
+        if (!controller) return false
+        const state = controller.cameraView(id)
+        const duration = root.theme && root.theme.durSpatial !== undefined ? Math.round(root.theme.durSpatial * 1.5) : 0
+        if (!navigation.restoreCameraState(state, duration)) return false
+        currentCameraViewId = id
+        if (duration <= 0) currentCameraRevision = navigation.revision
+        return true
+    }
+
+    function saveDisplayState(name) {
+        if (!controller) return ""
+        const id = controller.saveDisplayState(name)
+        if (id.length > 0) {
+            currentDisplayStateId = id
+            currentDisplayRevision = controller.visibilityRevision
+            saveViewThumbnail(id)
+        }
+        return id
+    }
+
+    function goToDisplayState(id) {
+        if (!controller || !controller.applyDisplayState(id)) return false
+        currentDisplayStateId = id
+        currentDisplayRevision = controller.visibilityRevision
         return true
     }
 
@@ -2577,6 +2655,7 @@ Item {
     Shortcut { sequence: "M"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("measure") }
     Shortcut { sequence: "S"; enabled: root.visible && (!root.presentationOnly); onActivated: root.toolRequested("section") }
     Shortcut { sequence: "E"; enabled: root.visible && (!root.presentationOnly) && root.explodedLayoutEnabled; onActivated: root.toolRequested("explode") }
+    Shortcut { sequence: "V"; enabled: root.visible && (!root.presentationOnly) && root.explodedLayoutEnabled; onActivated: root.toolRequested("views") }
     // root.visible matters as much as presentationOnly: every workspace in the stack is
     // instantiated, so Inspect's viewport kept these enabled while Export was on screen. Two
     // enabled "1" shortcuts is an ambiguous sequence, and Qt fires neither -- which is why

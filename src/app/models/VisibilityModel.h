@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QHash>
+#include <QSet>
 #include <QStringList>
 
 namespace loupe::app::models {
@@ -27,6 +28,9 @@ public:
     // is behind it can be seen and picked. Restorable, like hide.
     void setGhosted(const QStringList& nodeIds, bool ghosted);
     void showAll();
+    // A saved display state, all at once: these hidden, these semi-transparent, every
+    // other node shown and opaque. Undoable as one step, like hide.
+    void applyState(const QSet<QString>& hidden, const QSet<QString>& ghosted);
     void restorePrevious();
 
     [[nodiscard]] bool isVisible(const QString& nodeId) const;

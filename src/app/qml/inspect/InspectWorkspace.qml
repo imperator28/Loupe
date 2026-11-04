@@ -6,6 +6,7 @@ import Loupe.App
 
 Item {
     id: root
+    objectName: "inspectWorkspace"
     property QtObject controller
     property QtObject theme
     // Remembers the tree panel's width; optional, so tests can load this without one.
@@ -610,7 +611,7 @@ Item {
                         root.controller.toggleIsolateActiveNode()
                     } else if (tool === "hide") root.controller.hideActiveNode()
                     else if (tool === "transparent") root.controller.toggleTransparentSelection()
-                    else if (tool === "section" || tool === "measure" || tool === "capture" || tool === "explode") root.showTask(tool)
+                    else if (tool === "section" || tool === "measure" || tool === "capture" || tool === "explode" || tool === "views") root.showTask(tool)
                 }
             }
         }
@@ -704,6 +705,7 @@ Item {
         title: root.activeTask === "measure" ? qsTr("Measure")
              : root.activeTask === "section" ? qsTr("Section")
              : root.activeTask === "explode" ? qsTr("Exploded view")
+             : root.activeTask === "views" ? qsTr("Views")
              : qsTr("Capture PNG")
         onCloseRequested: root.taskPanelVisible = false
 
@@ -713,6 +715,7 @@ Item {
             source: root.activeTask === "measure" ? "MeasurementPanel.qml"
                   : root.activeTask === "section" ? "SectionPanel.qml"
                   : root.activeTask === "explode" ? "ExplodePanel.qml"
+                  : root.activeTask === "views" ? "ViewsPanel.qml"
                   : "CapturePanel.qml"
             onLoaded: {
                 item.theme = root.theme
@@ -730,6 +733,9 @@ Item {
                         if (viewportLoader.item) viewportLoader.item.animateExplodeReset()
                     })
                     item.exportRequested.connect(root.chooseExplodedExport)
+                } else if (root.activeTask === "views") {
+                    item.documentController = root.controller
+                    item.viewport = Qt.binding(function() { return viewportLoader.item })
                 } else {
                     item.taskController = root.controller.capture
                     item.captureRequested.connect(function() { captureDialog.open() })

@@ -46,6 +46,8 @@ Loupe is deliberately focused on the inspection controls engineers use repeatedl
 | **Section** | Pick a principal axis or a selected face plane, adjust offset, flip the clipped side, inspect normal or opposite views, cap cut faces, and create an outline, filled, or filled-plus-outline 2D slice. Slice outline color and thickness are adjustable. |
 | **Exploded view** | Pull an assembly apart to see how its parts fit. **Assembled / Exploded** compares the two states, and **Spread** sets how far auto-explode takes the selected sub-assembly (or the whole model) apart. Drag a part or sub-assembly (Shift- or Ctrl/⌘-click for several) by its arrows along X, Y or Z, its ball freely in the screen plane, or its rings to turn it; moves snap, and Shift moves freely. Under **Advanced**: exact offsets and angles, move by a distance, and a picked pivot that stays with its part until **Use centre**. Every move can be undone; section and view normal to face work on the layout, and measuring waits for Assembled. **Export…** saves the layout as a STEP assembly, one STL, or a DXF/SVG/PDF drawing of the current view at true scale, leaving hidden parts out. The file itself is never changed. |
 | **Measure** | Inspect points, edges, faces, radii, angles, area, volume, and bounds with topology-specific hover and persistent pick highlights. |
+| **Saved views** | **Views** (`V`) keeps snapshots to come back to, as in Photoshop or a CAD program's saved orientations: **Display** states hold what is hidden or transparent (opacity and edges included); **Camera** views hold the angle, zoom and projection, and the camera glides back to them. Each has a thumbnail and a name; **Reset** returns to the file as it opened. Kept per file on this computer; the file is never changed. |
+| **Opening time** | Document properties shows how long the file took to be ready to view, to show every part, and to be fully detailed. **Opening History…** lists every open (size, parts, from cache or not) and copies as CSV, to compare with another CAD program. |
 | **Capture** | Export the current inspection view as a PNG with transparent background and optional measurement/section content. Use 2x, 3x, or 5x presets or enter a custom render scale; the app renders at the requested resolution and reports capture progress. |
 
 ## Split-Part Export
@@ -116,6 +118,7 @@ Useful shortcuts:
 | `Ctrl/Cmd+Shift+H` | Show all |
 | `M` | Open Measure |
 | `S` | Open Section |
+| `V` | Open saved views |
 | `E` | Open the exploded view; `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z` undo / redo a move while it is open |
 | `1`, `2`, `3` | Solid, Solid + Edges, Edges Only |
 | `Ctrl/Cmd+O` | Open STEP (in a new tab if one is already open) |

@@ -38,6 +38,7 @@
 #include <QScopeGuard>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
+#include <QStandardPaths>
 #include <qqml.h>
 
 #include <algorithm>
@@ -754,6 +755,28 @@ void QmlSmokeTest::viewportRightClickKeepsTheSelectionAndViewsNormalToAFace()
     QVERIFY(QMetaObject::invokeMethod(viewport, "viewNormalToFaceAt", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, 200.0), Q_ARG(QVariant, 200.0)));
     direction = viewport->property("viewDirection").value<QVector3D>();
     QVERIFY((direction + normal).length() < 1.0e-4F);
+
+    // A saved camera view: going back to it after turning away glides the camera home, and
+    // it stays marked as current until the camera moves again.
+    QStandardPaths::setTestModeEnabled(true);
+    controller.savedViews().setDocument(QStringLiteral("/tmp/loupe-smoke-views.step"));
+    auto* navigation = viewport->findChild<QObject*>(QStringLiteral("viewportNavigation"));
+    QVERIFY(navigation != nullptr);
+    QVariant savedId;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "saveCameraView", Q_RETURN_ARG(QVariant, savedId), Q_ARG(QVariant, QStringLiteral("Head on"))));
+    QVERIFY(!savedId.toString().isEmpty());
+    QCOMPARE(viewport->property("activeCameraViewId").toString(), savedId.toString());
+    const auto savedOrientation = navigation->property("orientation").value<QQuaternion>();
+    QVERIFY(QMetaObject::invokeMethod(navigation, "orbit", Q_ARG(QVariant, 120.0), Q_ARG(QVariant, 40.0)));
+    QVERIFY(viewport->property("activeCameraViewId").toString().isEmpty());
+    QVERIFY(qAbs(QQuaternion::dotProduct(navigation->property("orientation").value<QQuaternion>(), savedOrientation)) < 0.999F);
+    QVariant went;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "goToCameraView", Q_RETURN_ARG(QVariant, went), Q_ARG(QVariant, savedId)));
+    QVERIFY(went.toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(QQuaternion::dotProduct(navigation->property("orientation").value<QQuaternion>(), savedOrientation)) > 0.99999F, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(viewport->property("activeCameraViewId").toString(), savedId.toString(), 3000);
+    QCOMPARE(controller.savedViews().cameraViews().constFirst().toMap().value(QStringLiteral("summary")).toString(), QStringLiteral("Orthographic"));
+    controller.savedViews().remove(savedId.toString());
 
     // The empty-space menu is exactly as tall as the entries it shows (the exploded-view
     // entry is hidden here), and as wide as the longest one, so nothing is cut short.
@@ -1515,6 +1538,8 @@ void QmlSmokeTest::inspectionTaskPanelsLoad()
         QStringLiteral("MeasurementPanel.qml"),
         QStringLiteral("SectionPanel.qml"),
         QStringLiteral("CapturePanel.qml"),
+        QStringLiteral("ViewsPanel.qml"),
+        QStringLiteral("OpenHistoryDialog.qml"),
     };
 
     for (const auto& panelFile : panelFiles) {

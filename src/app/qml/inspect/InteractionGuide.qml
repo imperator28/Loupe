@@ -196,7 +196,7 @@ Dialog {
                     GuideRow { input: ["k:Mod", "+", "k:F"]; action: qsTr("Find a part in the assembly tree") }
                     GuideRow { input: ["k:Mod", "+", "k:8"]; action: qsTr("Look straight at the face under the cursor (again: its other side)") }
                     GuideRow { input: ["k:Mod", "+", "k:Shift", "+", "k:H"]; action: qsTr("Show all") }
-                    GuideRow { input: ["k:M", "/", "k:S", "/", "k:E"]; action: qsTr("Measure / Section / Exploded view") }
+                    GuideRow { input: ["k:M", "/", "k:S", "/", "k:E", "/", "k:V"]; action: qsTr("Measure / Section / Exploded view / Saved views") }
                     GuideRow { input: ["k:Esc"]; action: qsTr("Cancel a drag, restore visibility, or close a tool") }
                 }
 

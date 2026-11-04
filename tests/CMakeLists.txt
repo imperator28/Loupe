@@ -113,6 +113,10 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
@@ -230,6 +234,10 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/cache/MaterialStore.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/OpenHistory.h"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/VisibilityModel.h"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerClient.h"
@@ -481,6 +489,8 @@ add_executable(loupe-update-controller-tests
     app/test_update_controller.cpp
     "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/TempHygiene.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/TempHygiene.h"
 )
 target_link_libraries(loupe-update-controller-tests PRIVATE Qt6::Core Qt6::Test)
 target_include_directories(loupe-update-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")

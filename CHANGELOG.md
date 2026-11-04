@@ -26,6 +26,18 @@ commercial import SDK and is not in this release.
   - Undo and redo each move. Section and view normal to face work on the layout.
   - **Export…** saves the layout as a STEP assembly, one STL, or a DXF/SVG/PDF drawing of
     the current view at true scale. The source file is never changed.
+- **Saved views** (`V`): a Views window keeps snapshots of the model to come back to.
+  - **Display** states hold what is hidden or transparent, with each part's opacity and
+    edges.
+  - **Camera** views hold the angle, zoom and projection, and the camera glides back to
+    them.
+  - Each has a thumbnail and a name you can edit. **Reset** returns to the file as it
+    opened.
+  - They are kept per file on this computer, and the file is never changed.
+- **Opening time**: Document properties shows how long the file took to be ready to
+  view, to show every part, and to be fully detailed.
+  - **Opening History…** lists every open with its size and part count, marks opens
+    from the cache, and copies as CSV to compare with other CAD programs.
 - **Export the assembly without hidden parts**: File → Export Assembly Without Hidden
   Parts… writes one STEP file with the tree, names, placements, colours and unit kept.
   A card at the bottom right shows each stage and the progress.
@@ -71,6 +83,9 @@ commercial import SDK and is not in this release.
 - **Import time estimate** follows measured time and counts down instead of growing.
 
 ### Fixed
+
+- Leftovers of a Loupe that crashed or was force-quit (importer copies, connections, a
+  stale update download) are cleared on the next launch.
 
 - Right-clicking a part kept in a multi-selection no longer drops the selection.
 - Assembly tree selection works as in file lists: ⌘-click (Ctrl-click on Windows) adds
