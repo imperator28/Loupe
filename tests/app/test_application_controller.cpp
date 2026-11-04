@@ -1,4 +1,5 @@
 #include <QtTest/QTest>
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QDir>
 #include <QSignalSpy>
@@ -460,6 +461,10 @@ void ApplicationControllerTest::eachOpenRecordsHowLongItTook()
 void ApplicationControllerTest::displayStatesSaveAndRestoreWhatIsHiddenOrTransparent()
 {
     QStandardPaths::setTestModeEnabled(true);
+    // As the app does in main: without an organisation, QSettings on Windows (the
+    // registry) neither reads nor writes, so nothing would be kept with the file.
+    QCoreApplication::setOrganizationName(QStringLiteral("Loupe"));
+    QCoreApplication::setApplicationName(QStringLiteral("LoupeApplicationControllerTests"));
     const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-display-states.step").toStdString());
     QSettings().remove(loupe::app::models::SavedViews::storageKeyFor(QFileInfo(QString::fromStdString(fixture.string())).absoluteFilePath()));
     loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
