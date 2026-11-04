@@ -3,7 +3,8 @@
 ## v0.1.5
 
 Tabs and multiple windows, an exploded view, in-app updates, and a broad interface
-polish. Built from eleven betas; each beta's notes are on its GitHub pre-release.
+polish. Built from eleven betas and five release candidates; each one's notes are on
+its GitHub pre-release.
 Opening native NX, Creo and SOLIDWORKS files (#5) waits on a decision about a
 commercial import SDK and is not in this release.
 
@@ -58,8 +59,8 @@ commercial import SDK and is not in this release.
   to this version's release notes, What's New, Check for Updates, all releases, the
   source and licences. Copy Version Info is there for bug reports.
 - **Workspace layout**: every side panel is resizable and remembered. Measure, Section,
-  Capture and Exploded view open in small windows that can be dragged or collapsed to
-  their title bar.
+  Capture, Views and Exploded view open in small windows that can be dragged or
+  collapsed to their title bar.
 - **Output folder beside the STEP file** by default, for both Export and Drawing.
 
 ### Improved
