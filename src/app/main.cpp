@@ -80,6 +80,8 @@ int main(int argc, char* argv[])
 
     // Packaged builds check for updates each launch; LOUPE_NO_UPDATE_CHECK turns it off.
     loupe::app::platform::UpdateController::setAutomaticChecks(!selfCheck && !qEnvironmentVariableIsSet("LOUPE_NO_UPDATE_CHECK"));
+    // What's New shows once after an update; never during the packaging self-check.
+    loupe::app::platform::UpdateController::setShowWhatsNewOnLaunch(!selfCheck);
     QQmlApplicationEngine engine;
     engine.loadFromModule("Loupe.App", "Main");
     if (engine.rootObjects().isEmpty()) {

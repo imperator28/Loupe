@@ -19,6 +19,8 @@ private slots:
     void betasAreOfferedOnlyWhenAskedFor();
     void aCheckAgainstAReleaseListReportsWhatItFound();
     void theBuildKnowsItsBetaLabel();
+    void whatsNewIsReadForTheReleaseAndShownOncePerRelease();
+    void everyReleaseShipsWhatsNewWithIconsThatExist();
 };
 
 namespace {
@@ -137,6 +139,48 @@ void UpdateControllerTest::theBuildKnowsItsBetaLabel()
     QVERIFY(script.contains(QStringLiteral("ditto \"$new\" \"$old\"")));
     QVERIFY(script.contains(QStringLiteral("mv \"$backup\" \"$old\"")));
 #endif
+}
+
+void UpdateControllerTest::whatsNewIsReadForTheReleaseAndShownOncePerRelease()
+{
+    const auto json = QByteArrayLiteral(R"({"versions":[
+        {"version":"0.1.5","items":[{"icon":"tabs","title":"Tabs","body":"Several files."},{"icon":"x","title":"","body":"no title"}]},
+        {"version":"0.1.6","items":[{"icon":"explode","title":"Later","body":"Next."}]}]})");
+    // A beta shares its release's notes; a title-less item is dropped.
+    const auto items = UpdateController::whatsNewFor(json, QStringLiteral("v0.1.5-beta.11"));
+    QCOMPARE(items.size(), 1);
+    QCOMPARE(items.at(0).toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Tabs"));
+    QCOMPARE(items.at(0).toMap().value(QStringLiteral("icon")).toString(), QStringLiteral("tabs"));
+    QVERIFY(UpdateController::whatsNewFor(json, QStringLiteral("0.1.7")).isEmpty());
+    QVERIFY(UpdateController::whatsNewFor(json, QStringLiteral("main")).isEmpty());
+    QCOMPARE(UpdateController::releaseVersionOf(QStringLiteral("v0.1.5-beta.11")), QStringLiteral("0.1.5"));
+
+    // Once per release: first launch of it (fresh, or after an update), not again for its
+    // betas or later launches, and never when there is nothing to show.
+    QVERIFY(UpdateController::shouldShowWhatsNew({}, QStringLiteral("0.1.5"), true));
+    QVERIFY(UpdateController::shouldShowWhatsNew(QStringLiteral("0.1.4"), QStringLiteral("0.1.5"), true));
+    QVERIFY(!UpdateController::shouldShowWhatsNew(QStringLiteral("0.1.5"), QStringLiteral("0.1.5"), true));
+    QVERIFY(!UpdateController::shouldShowWhatsNew(QStringLiteral("0.1.4"), QStringLiteral("0.1.5"), false));
+}
+
+void UpdateControllerTest::everyReleaseShipsWhatsNewWithIconsThatExist()
+{
+    // The release being built must say what is new in it -- a version bump without a
+    // whats-new.json entry fails here -- and every icon named must be one ToolIcon draws.
+    QFile file(QStringLiteral(LOUPE_SOURCE_DIR "/src/app/resources/whats-new.json"));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto items = UpdateController::whatsNewFor(file.readAll(), QStringLiteral(LOUPE_PROJECT_VERSION));
+    QVERIFY2(!items.isEmpty(), "add this version's highlights to src/app/resources/whats-new.json");
+    QVERIFY2(items.size() <= 7, "keep What's New to a few highlights");
+    QFile icons(QStringLiteral(LOUPE_SOURCE_DIR "/src/app/qml/inspect/ToolIcon.qml"));
+    QVERIFY(icons.open(QIODevice::ReadOnly));
+    const auto glyphs = QString::fromUtf8(icons.readAll());
+    for (const auto& item : items) {
+        const auto fields = item.toMap();
+        const auto icon = fields.value(QStringLiteral("icon")).toString();
+        QVERIFY2(glyphs.contains(QStringLiteral("\"%1\": {").arg(icon)), qPrintable(icon));
+        QVERIFY(!fields.value(QStringLiteral("body")).toString().isEmpty());
+    }
 }
 
 QTEST_GUILESS_MAIN(UpdateControllerTest)

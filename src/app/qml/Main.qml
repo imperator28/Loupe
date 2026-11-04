@@ -443,6 +443,12 @@ ApplicationWindow {
             Inspect.ThemedMenuSeparator { theme: appTheme }
             Inspect.ThemedMenuItem {
                 theme: appTheme
+                text: qsTr("What's New in Loupe…")
+                enabled: Updates.whatsNewItems.length > 0
+                onTriggered: whatsNew.open()
+            }
+            Inspect.ThemedMenuItem {
+                theme: appTheme
                 text: qsTr("About Loupe")
                 onTriggered: aboutLoupe.open()
             }
@@ -969,6 +975,18 @@ ApplicationWindow {
     Inspect.InteractionGuide {
         id: interactionGuide
         theme: appTheme
+    }
+
+    // After an update, once per release: what is new in it.
+    Inspect.WhatsNewDialog {
+        id: whatsNew
+        theme: appTheme
+    }
+    // A moment after the window is up, so it opens over a drawn app rather than with it.
+    Timer {
+        interval: 700
+        running: Updates.whatsNewPending && root.visible
+        onTriggered: if (Updates.whatsNewPending && !whatsNew.opened) whatsNew.open()
     }
 
     FileDialog {

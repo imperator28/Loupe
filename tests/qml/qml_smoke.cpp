@@ -103,6 +103,7 @@ private slots:
     void explodePanelTypesPositionsAndExplodesTheSelectedSubAssembly();
     void floatingToolWindowDragsMinimisesAndStaysInside();
     void updateIndicatorShowsTheDownloadAsARing();
+    void whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed();
     void everyWorkspaceSidePanelGoesDownToTheSameMinimum();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
@@ -1244,6 +1245,45 @@ void QmlSmokeTest::updateIndicatorShowsTheDownloadAsARing()
     QCOMPARE(ring->property("sweep").toDouble(), 360.0);
     updates->setProperty("dismissed", true);
     QVERIFY(!indicator->property("visible").toBool());
+}
+
+void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(
+        "import QtQuick\n"
+        "import Loupe.App\n"
+        "import \"..\"\n"
+        "Window {\n"
+        "  id: host\n"
+        "  width: 800; height: 700; visible: true\n"
+        "  property alias dialog: dialog\n"
+        "  property int seen: 0\n"
+        "  Theme { id: theme }\n"
+        "  property QtObject updates: QtObject {\n"
+        "    property var whatsNewItems: [{icon: \"tabs\", title: \"Tabs and windows\", body: \"Several files.\"},\n"
+        "                                 {icon: \"explode\", title: \"Exploded view\", body: \"Pull it apart.\"}]\n"
+        "    property string whatsNewVersion: \"0.1.5\"\n"
+        "    function markWhatsNewSeen() { seen += 1 }\n"
+        "  }\n"
+        "  WhatsNewDialog { id: dialog; theme: theme; updates: host.updates }\n"
+        "}\n"), QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/WhatsNewHost.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> host(component.create());
+    QVERIFY2(host != nullptr, qPrintable(component.errorString()));
+    auto* window = qobject_cast<QQuickWindow*>(host.get());
+    QVERIFY(window != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(window->isExposed(), 3000);
+    auto* dialog = host->property("dialog").value<QObject*>();
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 3000);
+    QCOMPARE(dialog->property("items").toList().size(), 2);
+    auto* title = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewTitle"));
+    QVERIFY(title == nullptr || title->property("text").toString().contains(QStringLiteral("What's New")));
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+    QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 3000);
+    QCOMPARE(host->property("seen").toInt(), 1);
 }
 
 void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()

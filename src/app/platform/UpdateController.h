@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QObject>
+#include <QVariantList>
 #include <QPointer>
 #include <QProcess>
 #include <QString>
@@ -40,6 +41,11 @@ class UpdateController final : public QObject {
     // The last check came from Help > Check for Updates, so its result is worth showing
     // even when it is "up to date".
     Q_PROPERTY(bool userInitiated READ userInitiated NOTIFY changed)
+    // What's New: this version's highlights (icon, title, body), and whether they are still
+    // to be shown -- the first launch after an update, once per version.
+    Q_PROPERTY(QVariantList whatsNewItems READ whatsNewItems CONSTANT)
+    Q_PROPERTY(QString whatsNewVersion READ whatsNewVersion CONSTANT)
+    Q_PROPERTY(bool whatsNewPending READ whatsNewPending NOTIFY changed)
 
 public:
     enum class State { Idle, Checking, UpToDate, Available, Downloading, Ready, Installing, Failed };
@@ -96,6 +102,22 @@ public:
     // after it is made, which is each launch.
     static void setAutomaticChecks(bool enabled);
 
+    // What's New. The highlights for a version ("0.1.5", or a beta of it) from the bundled
+    // whats-new.json; empty when it has none.
+    [[nodiscard]] static QVariantList whatsNewFor(const QByteArray& whatsNewJson, const QString& version);
+    // "0.1.5" for "v0.1.5-beta.7": the release a build belongs to, which its notes are for.
+    [[nodiscard]] static QString releaseVersionOf(const QString& version);
+    // Whether to show them on this launch: there are some, and this release's were not
+    // shown before.
+    [[nodiscard]] static bool shouldShowWhatsNew(const QString& lastShown, const QString& release, bool hasItems);
+    // The app turns this on, as for automatic checks; tests and the self-check leave it off.
+    static void setShowWhatsNewOnLaunch(bool enabled);
+    [[nodiscard]] QVariantList whatsNewItems() const { return whatsNewItems_; }
+    [[nodiscard]] QString whatsNewVersion() const { return releaseVersionOf(currentVersion_); }
+    [[nodiscard]] bool whatsNewPending() const noexcept { return whatsNewPending_; }
+    // Shown: not again for this release.
+    Q_INVOKABLE void markWhatsNewSeen();
+
     // Where GitHub is asked; a test points it at a file.
     void setReleasesUrl(const QString& url) { releasesUrl_ = url; }
 
@@ -134,6 +156,8 @@ private:
     QString message_;
     bool includePrereleases_{false};
     bool userInitiated_{false};
+    QVariantList whatsNewItems_;
+    bool whatsNewPending_{false};
     bool dismissed_{false};
     qint64 bytesReceived_{};
     QString packagePath_;

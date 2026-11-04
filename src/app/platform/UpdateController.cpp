@@ -21,6 +21,8 @@ namespace {
 constexpr auto kReleasesUrl = "https://api.github.com/repos/imperator28/Loupe/releases?per_page=30";
 constexpr auto kIncludePrereleasesKey = "updates/includePrereleases";
 bool automaticChecks = false;
+bool showWhatsNewOnLaunch = false;
+constexpr auto kWhatsNewShownKey = "whatsNew/lastShownVersion";
 
 QString buildVersion()
 {
@@ -70,11 +72,64 @@ UpdateController::UpdateController(QObject* parent)
     });
     // A moment after launch, so opening the window and a file never waits on the network.
     if (automaticChecks && supported()) QTimer::singleShot(4000, this, [this] { checkForUpdates(false); });
+
+    QFile whatsNew(QStringLiteral(":/whats-new/whats-new.json"));
+    if (whatsNew.open(QIODevice::ReadOnly)) whatsNewItems_ = whatsNewFor(whatsNew.readAll(), currentVersion_);
+    whatsNewPending_ = showWhatsNewOnLaunch
+        && shouldShowWhatsNew(QSettings().value(QString::fromLatin1(kWhatsNewShownKey)).toString(),
+                              releaseVersionOf(currentVersion_), !whatsNewItems_.isEmpty());
 }
 
 void UpdateController::setAutomaticChecks(const bool enabled)
 {
     automaticChecks = enabled;
+}
+
+void UpdateController::setShowWhatsNewOnLaunch(const bool enabled)
+{
+    showWhatsNewOnLaunch = enabled;
+}
+
+QString UpdateController::releaseVersionOf(const QString& version)
+{
+    const auto parsed = parseVersion(version);
+    return parsed ? QStringLiteral("%1.%2.%3").arg(parsed->major).arg(parsed->minor).arg(parsed->patch) : QString{};
+}
+
+QVariantList UpdateController::whatsNewFor(const QByteArray& whatsNewJson, const QString& version)
+{
+    const auto release = releaseVersionOf(version);
+    if (release.isEmpty()) return {};
+    const auto versions = QJsonDocument::fromJson(whatsNewJson).object().value(QStringLiteral("versions")).toArray();
+    for (const auto& entry : versions) {
+        const auto object = entry.toObject();
+        if (object.value(QStringLiteral("version")).toString() != release) continue;
+        QVariantList items;
+        for (const auto& item : object.value(QStringLiteral("items")).toArray()) {
+            const auto fields = item.toObject();
+            if (fields.value(QStringLiteral("title")).toString().isEmpty()) continue;
+            items.append(QVariantMap{{QStringLiteral("icon"), fields.value(QStringLiteral("icon")).toString()},
+                                     {QStringLiteral("title"), fields.value(QStringLiteral("title")).toString()},
+                                     {QStringLiteral("body"), fields.value(QStringLiteral("body")).toString()}});
+        }
+        return items;
+    }
+    return {};
+}
+
+bool UpdateController::shouldShowWhatsNew(const QString& lastShown, const QString& release, const bool hasItems)
+{
+    // Once per release: the first launch after updating to it (or installing it), not
+    // again for its betas or later launches.
+    return hasItems && !release.isEmpty() && lastShown != release;
+}
+
+void UpdateController::markWhatsNewSeen()
+{
+    QSettings().setValue(QString::fromLatin1(kWhatsNewShownKey), releaseVersionOf(currentVersion_));
+    if (!whatsNewPending_) return;
+    whatsNewPending_ = false;
+    emit changed();
 }
 
 UpdateController::~UpdateController()

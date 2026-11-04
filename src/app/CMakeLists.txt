@@ -71,6 +71,13 @@ set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")
 set(loupe_app_icon_svg "${loupe_branding_dir}/loupe-app-icon.svg")
 set(loupe_app_icon_png "${loupe_branding_dir}/loupe-app-icon.png")
 
+# What's New: each release's highlights, shown once after an update.
+qt_add_resources(loupe-app "loupe-whats-new"
+    PREFIX "/whats-new"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/whats-new.json"
+)
+
 qt_add_resources(loupe-app "loupe-branding"
     PREFIX "/branding"
     BASE "${loupe_branding_dir}"
@@ -194,6 +201,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedSlider.qml
         qml/inspect/ThemedSpinBox.qml
         qml/inspect/UpdateIndicator.qml
+        qml/inspect/WhatsNewDialog.qml
         qml/inspect/ThemedSwitch.qml
         qml/inspect/ThemedRadioButton.qml
         qml/inspect/ThemedTextField.qml

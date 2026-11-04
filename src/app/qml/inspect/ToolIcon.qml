@@ -167,6 +167,12 @@ Item {
             f: "",
             t: ""
         },
+        // Tabs: a window with two tabs along its top, the first in front.
+        "tabs": {
+            s: "M3 7.5 H17 V16 H3 Z M3 7.5 V4.5 H9 V7.5 M9 7.5 V4.5 H14.5 V7.5",
+            f: "",
+            t: "M3 4.5 H9 V7.5 H3 Z"
+        },
         // A drag grip: two columns of three dots.
         "grip": {
             s: "",

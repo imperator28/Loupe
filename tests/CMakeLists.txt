@@ -484,7 +484,8 @@ add_executable(loupe-update-controller-tests
 )
 target_link_libraries(loupe-update-controller-tests PRIVATE Qt6::Core Qt6::Test)
 target_include_directories(loupe-update-controller-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
-target_compile_definitions(loupe-update-controller-tests PRIVATE LOUPE_VERSION="0.1.5" LOUPE_RELEASE_LABEL="v0.1.5-beta.6")
+target_compile_definitions(loupe-update-controller-tests PRIVATE LOUPE_VERSION="0.1.5" LOUPE_RELEASE_LABEL="v0.1.5-beta.6"
+    LOUPE_SOURCE_DIR="${PROJECT_SOURCE_DIR}" LOUPE_PROJECT_VERSION="${PROJECT_VERSION}")
 loupe_enable_warnings(loupe-update-controller-tests)
 
 add_test(NAME update-controller COMMAND loupe-update-controller-tests)
