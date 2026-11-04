@@ -207,6 +207,8 @@ public:
     Q_INVOKABLE void setWorkspace(Workspace workspace);
     Q_INVOKABLE void setActiveNodeId(const QString& activeNodeId);
     Q_INVOKABLE void selectNode(const QString& nodeId, bool additive);
+    // Several at once, the tree's Shift-click range: in place of the selection, or added to it.
+    Q_INVOKABLE void selectNodes(const QStringList& nodeIds, const QString& activeNodeId, bool additive);
     Q_INVOKABLE bool isNodeSelected(const QString& nodeId) const;
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();

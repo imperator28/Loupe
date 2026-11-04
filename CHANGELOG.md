@@ -73,6 +73,9 @@ commercial import SDK and is not in this release.
 ### Fixed
 
 - Right-clicking a part kept in a multi-selection no longer drops the selection.
+- Assembly tree selection works as in file lists: ⌘-click (Ctrl-click on Windows) adds
+  or removes a row, and Shift-click selects every row between, or adds them with ⌘. The
+  tree had read no modifiers at all, so every click was a plain one.
 - Trackpad pinch and wheel zoom keep the point under the pointer fixed (macOS).
 - The appearance swatch shows the colour covering most of a multicoloured part.
 - macOS: no crash on launch on newer macOS. Builds run on macOS 15 and support 14.

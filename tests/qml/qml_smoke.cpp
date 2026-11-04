@@ -107,6 +107,7 @@ private slots:
     void everyWorkspaceSidePanelGoesDownToTheSameMinimum();
     void drawingWorkspaceQueuesOnePartAtSeveralViews();
     void inspectTreeRevealCallsIntoTheModelWithoutAQmlError();
+    void inspectTreeTakesModifierClicksAndShiftRanges();
     void drawingPreviewBuildsDrawablePathsFromProjectedGeometry();
     void drawingPreviewOrientationAndScaleSurviveTheScreenTransform();
     void drawingPreviewZoomKeepsThePointUnderTheCursorFixed();
@@ -1643,6 +1644,70 @@ void capturingMessageHandler(QtMsgType type, const QMessageLogContext& context, 
 }
 
 } // namespace
+
+void QmlSmokeTest::inspectTreeTakesModifierClicksAndShiftRanges()
+{
+    loupe::app::ApplicationController controller;
+    auto* treeModel = qobject_cast<loupe::app::models::AssemblyTreeModel*>(
+        controller.property("assemblyTree").value<QObject*>());
+    QVERIFY(treeModel != nullptr);
+    treeModel->replaceSnapshot({
+        {QStringLiteral("root"), {}, QStringLiteral("assembly"), QStringLiteral("Housing"), 1},
+        {QStringLiteral("p1"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("One"), 1},
+        {QStringLiteral("p2"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("Two"), 1},
+        {QStringLiteral("p3"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("Three"), 1},
+        {QStringLiteral("p4"), QStringLiteral("root"), QStringLiteral("part"), QStringLiteral("Four"), 1},
+    });
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY(theme != nullptr);
+    QQmlComponent workspaceComponent(&engine, QUrl::fromLocalFile(
+        QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/InspectWorkspace.qml")));
+    QVERIFY2(workspaceComponent.isReady(), qPrintable(workspaceComponent.errorString()));
+    std::unique_ptr<QObject> workspaceObject(workspaceComponent.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("width"), 900},
+        {QStringLiteral("height"), 600},
+    }));
+    QVERIFY2(workspaceObject != nullptr, qPrintable(workspaceComponent.errorString()));
+    auto* workspace = qobject_cast<QQuickItem*>(workspaceObject.get());
+    QQuickWindow window;
+    window.resize(900, 600);
+    workspace->setParentItem(window.contentItem());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    const auto rowCentre = [&](const char* id) {
+        auto* row = findItemByObjectName(window.contentItem(), QStringLiteral("treeRow-") + QLatin1String(id));
+        return row ? row->mapToScene(QPointF(row->width() * 0.3, row->height() / 2)).toPoint() : QPoint(-1, -1);
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(rowCentre("p4").x() >= 0, 3000);
+    const auto click = [&](const char* id, Qt::KeyboardModifiers modifiers) {
+        QTest::mouseClick(&window, Qt::LeftButton, modifiers, rowCentre(id));
+        QTest::qWait(50);
+    };
+    const auto selected = [&] { auto ids = controller.selectedNodeIds(); ids.sort(); return ids.join(QLatin1Char(',')); };
+
+    click("p1", Qt::NoModifier);
+    QCOMPARE(selected(), QStringLiteral("p1"));
+    // ⌘ (Qt's Control on a Mac) or Ctrl: add a row, and again to take it out.
+    click("p3", Qt::ControlModifier);
+    QCOMPARE(selected(), QStringLiteral("p1,p3"));
+    click("p3", Qt::ControlModifier);
+    QCOMPARE(selected(), QStringLiteral("p1"));
+    // Shift: every row from the anchor to the one clicked, either way.
+    click("p2", Qt::NoModifier);
+    click("p4", Qt::ShiftModifier);
+    QCOMPARE(selected(), QStringLiteral("p2,p3,p4"));
+    click("p1", Qt::ShiftModifier);
+    QCOMPARE(selected(), QStringLiteral("p1,p2"));
+    // Shift with ⌘: the range is added to what is selected.
+    click("p4", Qt::NoModifier);
+    click("p1", Qt::ControlModifier);
+    click("p3", Qt::ShiftModifier | Qt::ControlModifier);
+    QCOMPARE(selected(), QStringLiteral("p1,p2,p3,p4"));
+}
 
 void QmlSmokeTest::inspectTreeRevealCallsIntoTheModelWithoutAQmlError()
 {

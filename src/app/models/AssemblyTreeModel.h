@@ -39,6 +39,8 @@ public:
     // Nodes whose name contains `text`, ignoring case, in the order the tree shows them, so
     // stepping through matches walks down the tree.
     Q_INVOKABLE [[nodiscard]] QStringList findNodes(const QString& text) const;
+    // The node a TreeView row shows, for a Shift-click range taken row by row.
+    Q_INVOKABLE [[nodiscard]] QString stableIdAt(const QModelIndex& index) const { return data(index, StableIdRole).toString(); }
 
     [[nodiscard]] QModelIndex index(int row, int column, const QModelIndex& parent = {}) const override;
     [[nodiscard]] QModelIndex parent(const QModelIndex& child) const override;

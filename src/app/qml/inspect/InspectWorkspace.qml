@@ -15,6 +15,36 @@ Item {
     property string activeTask: ""
     property bool taskPanelVisible: false
     property string treeHoveredNodeId: ""
+    // The row a Shift-click range runs from: the last row clicked without Shift. Kept as the
+    // node, not the row number, which changes as branches open and close.
+    property string treeSelectionAnchor: ""
+
+    // A click on a tree row, the way file lists take one: alone it selects the row;
+    // ⌘ (Ctrl on Windows and Linux) adds or removes it; Shift selects every row shown from
+    // the anchor to it, and with ⌘ adds those rows to the selection.
+    function treeClicked(row, stableId, modifiers) {
+        const toggle = (modifiers & Qt.ControlModifier) || (modifiers & Qt.MetaModifier)
+        const range = modifiers & Qt.ShiftModifier
+        const model = root.controller ? root.controller.assemblyTree : null
+        // No anchor clicked in the tree yet: the part selected in the view.
+        const anchor = treeSelectionAnchor.length > 0 ? treeSelectionAnchor
+                     : root.controller ? root.controller.activeNodeId : ""
+        const anchorRow = range && model && anchor.length > 0
+            ? assemblyTree.rowAtIndex(model.indexForStableId(anchor)) : -1
+        if (range && anchorRow >= 0) {
+            const ids = []
+            const step = row >= anchorRow ? 1 : -1
+            for (let r = anchorRow; ; r += step) {
+                const id = model.stableIdAt(assemblyTree.index(r, 0))
+                if (id.length > 0) ids.push(id)
+                if (r === row) break
+            }
+            root.controller.selectNodes(ids, stableId, toggle)
+            return
+        }
+        root.controller.selectNode(stableId, toggle || range)
+        treeSelectionAnchor = stableId
+    }
     signal openFileRequested()
 
     // -1: not enough to go on yet; 0: the projected finish has passed and work continues.
@@ -210,6 +240,7 @@ Item {
                     Layout.fillHeight: true
                     delegate: TreeViewDelegate {
                         id: treeDelegate
+                        objectName: "treeRow-" + stableId
                         required property string name
                         required property string stableId
                         required property int definitionQuantity
@@ -386,6 +417,7 @@ Item {
                         }
                         onStableIdChanged: if (treeHover.hovered) root.treeHoveredNodeId = stableId
                         TapHandler {
+                            id: rowTap
                             acceptedButtons: Qt.LeftButton | Qt.RightButton
                             onTapped: function(eventPoint, button) {
                                 if (button === Qt.RightButton) {
@@ -397,10 +429,9 @@ Item {
                                     treeContextMenu.popup()
                                     return
                                 }
-                                const modifiers = eventPoint.modifiers
-                                root.controller.selectNode(stableId, (modifiers & Qt.ShiftModifier)
-                                                           || (modifiers & Qt.ControlModifier)
-                                                           || (modifiers & Qt.MetaModifier))
+                                // The modifiers are the handler point's: the event point passed
+                                // in has none, which left every click a plain one.
+                                root.treeClicked(treeDelegate.row, stableId, rowTap.point.modifiers)
                             }
                         }
                     }

@@ -456,6 +456,18 @@ void ApplicationController::selectNode(const QString& nodeId, const bool additiv
     }
 }
 
+void ApplicationController::selectNodes(const QStringList& nodeIds, const QString& activeNodeId, const bool additive)
+{
+    if (!additive) {
+        setSelection(nodeIds, activeNodeId);
+        return;
+    }
+    auto selected = selectedNodeIds_;
+    for (const auto& nodeId : nodeIds)
+        if (!selected.contains(nodeId)) selected.append(nodeId);
+    setSelection(selected, activeNodeId);
+}
+
 void ApplicationController::setSelection(const QStringList& nodeIds, const QString& activeNodeId)
 {
     QStringList normalized;
