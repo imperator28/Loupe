@@ -86,7 +86,6 @@ commercial import SDK and is not in this release.
 
 - Leftovers of a Loupe that crashed or was force-quit (importer copies, connections, a
   stale update download) are cleared on the next launch.
-
 - Right-clicking a part kept in a multi-selection no longer drops the selection.
 - Assembly tree selection works as in file lists: ⌘-click (Ctrl-click on Windows) adds
   or removes a row, and Shift-click selects every row between, or adds them with ⌘. The
