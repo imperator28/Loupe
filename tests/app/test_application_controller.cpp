@@ -14,11 +14,19 @@
 #include <QSet>
 #include <QUrl>
 
+#include <cstdio>
+
 #include "app/ApplicationController.h"
 #include "app/DocumentTabs.h"
 #include "app/models/AssemblyTreeModel.h"
 #include "core/domain/AssemblyTypes.h"
 #include "fixtures/FixtureFactory.h"
+
+namespace {
+// QtTest's report is buffered when stdout is a pipe, so a process that dies before
+// exit loses all of it. Unbuffered, each line reaches the CI log as it is written.
+[[maybe_unused]] const int unbufferedStdout = std::setvbuf(stdout, nullptr, _IONBF, 0);
+} // namespace
 
 class ApplicationControllerTest final : public QObject
 {
@@ -417,7 +425,8 @@ void ApplicationControllerTest::transparencyTogglesTheSelectionAndOthers()
 
 void ApplicationControllerTest::eachOpenRecordsHowLongItTook()
 {
-    QTemporaryDir storage;
+    // Outlives the test: later opens still write the shared history to this path.
+    static QTemporaryDir storage;
     auto& history = loupe::app::models::OpenHistory::shared();
     history.setStoragePath(QDir(storage.path()).filePath(QStringLiteral("open-history.json")));
     const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-open-time.step").toStdString());

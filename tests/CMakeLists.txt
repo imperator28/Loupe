@@ -141,7 +141,7 @@ target_compile_definitions(loupe-application-controller-tests PRIVATE LOUPE_WORK
 add_dependencies(loupe-application-controller-tests loupe-worker)
 loupe_enable_warnings(loupe-application-controller-tests)
 
-add_test(NAME application-controller COMMAND loupe-application-controller-tests)
+add_test(NAME application-controller COMMAND loupe-application-controller-tests -o application-controller.log,txt -o -,txt)
 set_tests_properties(application-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
