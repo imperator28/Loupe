@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.5-beta.11
+
+- **Modern check marks**: checkboxes and checked menu entries draw their tick instead of
+  using the "✓" character, which each platform drew in its own symbol font -- heavy and
+  dated on Windows. The tick is now the same clean 2 px mark everywhere.
+
 ## v0.1.5-beta.10
 
 - **Section finalizes much faster on large assemblies**:

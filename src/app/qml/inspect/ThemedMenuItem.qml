@@ -40,13 +40,15 @@ MenuItem {
             border.width: control.checked ? 0 : 1
         }
 
-        Text {
+        ToolIcon {
             anchors.centerIn: parent
-            text: control.checked ? "✓" : ""
+            width: 12
+            height: 12
+            visible: control.checked
+            name: "check"
+            strokeWidth: 2
             color: control.highlighted ? control.accentForegroundColor
                                        : (control.theme && control.theme.accentForeground !== undefined ? control.theme.accentForeground : control.normalTextColor)
-            font.bold: true
-            font.pixelSize: 12
         }
     }
 
