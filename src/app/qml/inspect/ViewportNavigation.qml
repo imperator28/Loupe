@@ -69,7 +69,7 @@ QtObject {
         cameraRig.rotation = orientation
         perspectiveCamera.position = Qt.vector3d(0, 0, 0)
         perspectiveCamera.fieldOfView = perspectiveFieldOfView
-        orthographicCamera.position = Qt.vector3d(0, 0, 0)
+        // Its distance behind the rig is the viewport's (orthographicBackoff), not set here.
         orthographicCamera.horizontalMagnification = orthographicMagnification
         orthographicCamera.verticalMagnification = orthographicMagnification
         revision += 1

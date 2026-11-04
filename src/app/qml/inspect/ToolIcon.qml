@@ -144,6 +144,28 @@ Item {
             f: "",
             t: ""
         },
+        // A circle with a mark: something went wrong.
+        "alert": {
+            s: "M10 3 A7 7 0 1 0 10.01 3 Z M10 6.4 V10.8",
+            f: "M10 12.6 A1 1 0 1 0 10.01 12.6 Z",
+            t: ""
+        },
+        // The colour theme: follow the system (a display), light (a sun), dark (a moon).
+        "themeSystem": {
+            s: "M3 4.5 H17 V13.5 H3 Z M7 16.5 H13 M10 13.5 V16.5",
+            f: "",
+            t: "M10 4.5 H17 V13.5 H10 Z"
+        },
+        "themeLight": {
+            s: "M10 6.8 A3.2 3.2 0 1 0 10.01 6.8 Z M15.30 10.00 L17.20 10.00 M13.75 13.75 L15.09 15.09 M10.00 15.30 L10.00 17.20 M6.25 13.75 L4.91 15.09 M4.70 10.00 L2.80 10.00 M6.25 6.25 L4.91 4.91 M10.00 4.70 L10.00 2.80 M13.75 6.25 L15.09 4.91",
+            f: "",
+            t: ""
+        },
+        "themeDark": {
+            s: "M15.6 12.4 A6.4 6.4 0 1 1 7.6 3.9 A5.1 5.1 0 0 0 15.6 12.4 Z",
+            f: "",
+            t: ""
+        },
         "expandAll": {
             s: "M6 5.5 L10 9.5 L14 5.5 M6 10.5 L10 14.5 L14 10.5",
             f: "",

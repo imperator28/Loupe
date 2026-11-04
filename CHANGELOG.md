@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.1.5-beta.9
+
+- **Solid edges again**: beta.8's fitted clip planes made the pull that keeps edges in
+  front of their faces tiny, so on Windows edges broke into dashes. The pull is now
+  worked out from the planes and is the same small distance in the model at any zoom.
+- **Export and Drawing views draw on Windows**: an orthographic camera now always sits
+  in front of the model, and the clip planes fall back to the old fixed range whenever
+  they cannot be worked out. A camera inside the model left a near plane behind it,
+  which Direct3D did not draw.
+- **A picked pivot stays with its part**: in the exploded view, a pivot picked for a
+  part (or a set of parts) comes back whenever those parts are selected again, until
+  **Use centre** clears it.
+- **Where a dragged tab will land**: dragging a tab over another window shows a pulsing
+  bar in that window's tab strip, at the place the tab will be put.
+- **Cool and warm part colours tell parts apart**: each family now spans a band of hues
+  and a little more chroma instead of mostly lightness, which the model's shading
+  masks.
+  - Cool runs from teal through steel blue to violet; warm from terracotta through sand
+    to olive.
+  - The colours are picked by farthest-point sampling in OKLab, so consecutive parts are
+    at least about 0.075 apart (some four just-noticeable differences, up from 0.04).
+    They stay well short of the vivid style's contrast.
+- **Assembly export shows its progress**: exporting without hidden parts shows a card at
+  the bottom right with the stage (preparing, translating to STEP, writing the file),
+  the percentage and a progress bar.
+  - Then it shows the result: a success clears itself, and a failure stays until closed.
+  - The card uses the app's neutral surface instead of a red or blue outline.
+- **Theme switch**: System / Light / Dark is a three-position switch with icons (a
+  display, a sun, a moon) instead of a drop-down, with each name on hover.
+
 ## v0.1.5-beta.8
 
 - **Update indicator in the toolbar**: a newer release shows as a download icon with a

@@ -1151,6 +1151,11 @@ void WorkerServer::exportAssembly(const protocol::ExportAssembly& command)
             if (server) server->send(event);
         }, Qt::QueuedConnection);
     };
+    // How far along it is, for the app's progress notice.
+    request.progress = [post, requestId](const std::string& stage, const double fraction) {
+        post({{QStringLiteral("type"), QStringLiteral("progress")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+              {QStringLiteral("stage"), QString::fromStdString(stage)}, {QStringLiteral("fraction"), fraction}});
+    };
     auto* thread = QThread::create([requestId, request, session, post, destination] {
         try {
             const auto result = loupe::exporting::AssemblyExporter{}.write(session->imported, request);

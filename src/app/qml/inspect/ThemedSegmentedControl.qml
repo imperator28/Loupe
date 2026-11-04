@@ -8,6 +8,10 @@ Item {
 
     property QtObject theme
     property var model: []
+    // Optional ToolIcon glyph names, one per segment: the segments then show the icon,
+    // with the model's text as tooltip and accessible name.
+    property var icons: []
+    readonly property bool iconOnly: icons && icons.length === segmentCount && segmentCount > 0
     property int currentIndex: 0
     signal activated(int index)
 
@@ -25,7 +29,8 @@ Item {
     readonly property real segmentWidth: segmentCount > 0 ? (width - 4) / segmentCount : 0
 
     implicitHeight: theme && theme.controlHeight !== undefined ? theme.controlHeight : 30
-    implicitWidth: Math.max(48 * Math.max(1, segmentCount) + 4, segmentRow.implicitWidth + 4)
+    implicitWidth: iconOnly ? 32 * segmentCount + 4
+                            : Math.max(48 * Math.max(1, segmentCount) + 4, segmentRow.implicitWidth + 4)
 
     activeFocusOnTab: true
     Accessible.role: Accessible.PageTabList
@@ -73,8 +78,10 @@ Item {
             model: control.model
 
             AbstractButton {
+                id: segment
                 required property var modelData
                 required property int index
+                readonly property bool current: control.currentIndex === index
                 width: control.segmentWidth
                 height: segmentRow.height
                 Accessible.role: Accessible.PageTab
@@ -85,16 +92,44 @@ Item {
                         control.activated(index)
                 }
 
-                contentItem: Text {
-                    text: parent.text
-                    color: control.currentIndex === parent.index ? control.foreground : control.subduedForeground
-                    font.weight: control.currentIndex === parent.index ? Font.DemiBold : Font.Normal
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
+                contentItem: Item {
+                    implicitWidth: control.iconOnly ? 16 : segmentLabel.implicitWidth
+                    implicitHeight: segmentLabel.implicitHeight
+                    ToolIcon {
+                        anchors.centerIn: parent
+                        width: 16
+                        height: 16
+                        visible: control.iconOnly
+                        name: control.iconOnly ? control.icons[segment.index] : ""
+                        color: segment.current || segment.hovered ? control.foreground : control.subduedForeground
+                    }
+                    Text {
+                        id: segmentLabel
+                        anchors.fill: parent
+                        visible: !control.iconOnly
+                        text: segment.text
+                        color: segment.current ? control.foreground : control.subduedForeground
+                        font.weight: segment.current ? Font.DemiBold : Font.Normal
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
                 }
 
-                background: Item {}
+                // Hover: the light wash other tool buttons use, inside the segment; never
+                // on the selected one, whose raised thumb already says where it is.
+                background: Rectangle {
+                    radius: control.cornerRadius - 1
+                    color: control.theme && control.theme.accentTint !== undefined ? control.theme.accentTint : "transparent"
+                    opacity: segment.hovered && !segment.current ? 0.55 : 0
+                }
+
+                // Icons alone need their names on hover (design.md iconography).
+                ThemedToolTip {
+                    theme: control.theme
+                    text: segment.text
+                    visible: control.iconOnly && segment.hovered
+                }
             }
         }
     }

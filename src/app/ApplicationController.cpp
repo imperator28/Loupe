@@ -198,6 +198,12 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         emit edgeReady(nodeId, edgeJson);
     });
     connect(&workerClient_, &worker::WorkerClient::progress, this, [this](quint64 requestId, const QString& stage, const double fraction) {
+        if (requestId != 0 && requestId == activeAssemblyExportRequestId_) {
+            assemblyExportStageKey_ = stage;
+            assemblyExportProgress_ = std::clamp(fraction, 0.0, 1.0);
+            emit assemblyExportProgressChanged();
+            return;
+        }
         if (requestId != activeRequestId_) return;
         setImportProgress(stage, fraction);
         if (fraction >= 1.0) {
@@ -271,15 +277,11 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         if (requestId != activeAssemblyExportRequestId_) return;
         activeAssemblyExportRequestId_ = 0;
         assemblyExportSucceeded_ = true;
-        if (activeAssemblyExportExploded_) {
-            assemblyExportMessage_ = removedCount > 0
-                ? tr("Exported the exploded assembly to %1, with %n hidden part(s) left out.", "", removedCount)
-                      .arg(QDir::toNativeSeparators(path))
-                : tr("Exported the exploded assembly to %1.").arg(QDir::toNativeSeparators(path));
-        } else {
-            assemblyExportMessage_ = tr("Exported %1 with %n hidden part(s) left out.", "", removedCount)
-                                         .arg(QDir::toNativeSeparators(path));
-        }
+        // The title already says what was exported; this says where, and what was left out.
+        const auto where = QDir::toNativeSeparators(path);
+        assemblyExportMessage_ = removedCount == 0 ? tr("Saved to %1.").arg(where)
+                               : removedCount == 1 ? tr("Saved to %1, with 1 hidden part left out.").arg(where)
+                                                   : tr("Saved to %1, with %2 hidden parts left out.").arg(where).arg(removedCount);
         Q_UNUSED(partCount);
         emit assemblyExportChanged();
     });
@@ -760,6 +762,15 @@ void ApplicationController::setNodeTransparent(const QString& nodeId, const bool
     if (!parts.isEmpty()) visibilityModel_.setGhosted(parts, transparent);
 }
 
+QString ApplicationController::assemblyExportStage() const
+{
+    if (assemblyExportStageKey_ == QStringLiteral("translate")) return tr("Translating to STEP");
+    if (assemblyExportStageKey_ == QStringLiteral("write")) return tr("Writing the file");
+    if (assemblyExportStageKey_ == QStringLiteral("mesh")) return tr("Meshing the parts");
+    if (assemblyExportStageKey_ == QStringLiteral("draw")) return tr("Drawing the view");
+    return tr("Preparing the assembly");
+}
+
 double ApplicationController::nodeOpacity(const QString& nodeId) const
 {
     return visibilityModel_.isGhosted(nodeId) ? opacityByNode_.value(nodeId, kDefaultTransparentOpacity) : 1.0;
@@ -1041,6 +1052,9 @@ bool ApplicationController::exportAssemblyWithoutHiddenParts(const QUrl& destina
     assemblyExportMessage_.clear();
     assemblyExportSucceeded_ = false;
     activeAssemblyExportExploded_ = false;
+    assemblyExportStageKey_ = QStringLiteral("copy");
+    assemblyExportProgress_ = 0.0;
+    emit assemblyExportProgressChanged();
     activeAssemblyExportRequestId_ = workerClient_.exportAssembly(destination.toLocalFile(), hidden, effectiveUnit_);
     emit assemblyExportChanged();
     return true;
@@ -1087,6 +1101,9 @@ bool ApplicationController::exportExplodedAssembly(const QUrl& destination, cons
     assemblyExportMessage_.clear();
     assemblyExportSucceeded_ = false;
     activeAssemblyExportExploded_ = true;
+    assemblyExportStageKey_ = QStringLiteral("copy");
+    assemblyExportProgress_ = 0.0;
+    emit assemblyExportProgressChanged();
     activeAssemblyExportRequestId_ = workerClient_.exportAssembly(std::move(request));
     emit assemblyExportChanged();
     return true;

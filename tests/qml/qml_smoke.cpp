@@ -441,7 +441,18 @@ void QmlSmokeTest::tabsDragToReorderAndOffTheStripIntoANewWindow()
     items = tabItems();
     const auto moving = tabs->documentAt(0);
     const auto start = centreOf(items.at(0));
-    drag(start, onOpened - window->position());
+    // While the tab is over the other window, that window marks where it would land, and
+    // stops once it is let go.
+    auto* dropIndicator = findItemByObjectName(opened->contentItem(), QStringLiteral("tabDropIndicator"));
+    QVERIFY(dropIndicator != nullptr);
+    QVERIFY(!dropIndicator->isVisible());
+    QTest::mousePress(window, Qt::LeftButton, {}, start);
+    for (int step = 1; step <= 12; ++step)
+        QTest::mouseMove(window, start + (onOpened - window->position() - start) * step / 12, 16);
+    QTRY_VERIFY_WITH_TIMEOUT(dropIndicator->isVisible(), 3000);
+    QTest::mouseRelease(window, Qt::LeftButton, {}, onOpened - window->position());
+    QTest::qWait(100);
+    QTRY_VERIFY_WITH_TIMEOUT(!dropIndicator->isVisible(), 3000);
     QTRY_COMPARE_WITH_TIMEOUT(openedTabs->count(), 2, 3000);
     QCOMPARE(tabs->count(), 1);
     QVERIFY(openedTabs->documentAt(0) == moving || openedTabs->documentAt(1) == moving);
@@ -983,7 +994,17 @@ void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
     viewport->setProperty("handleAlignToFace", true);
     const auto frame = viewport->property("handleFrame").value<QQuaternion>();
     QVERIFY((frame.rotatedVector({0, 0, 1}) - QVector3D(0, 0, 1)).length() < 1e-3F);
+    // The pivot is kept for that part: selecting another part uses its centre, and selecting
+    // this one again brings the pivot back, until Use centre clears it.
+    controller.selectNode(QStringLiteral("a"), false);
+    QVERIFY(viewport->property("handlePivot").isNull());
+    controller.selectNode(QStringLiteral("b"), false);
+    QVERIFY(!viewport->property("handlePivot").isNull());
+    QTRY_VERIFY_WITH_TIMEOUT((viewport->property("handleCentre").value<QVector3D>() - (pivotAt + QVector3D(0, 0, 7))).length() < 1e-2F, 3000);
     QVERIFY(QMetaObject::invokeMethod(viewport, "clearPivot"));
+    QVERIFY(viewport->property("handlePivot").isNull());
+    controller.selectNode(QStringLiteral("a"), false);
+    controller.selectNode(QStringLiteral("b"), false);
     QVERIFY(viewport->property("handlePivot").isNull());
 
     // Assembled and Exploded: the view eases between the assembly and the layout, keeping it.

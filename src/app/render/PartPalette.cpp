@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <numbers>
 #include <utility>
 #include <vector>
@@ -115,6 +116,100 @@ std::uint64_t stableHash(const QString& key, const std::uint32_t seed)
     return hash;
 }
 
+// The cool and warm families: a set of colours spread as far apart as the family allows,
+// in hue and chroma as well as lightness.
+//
+// A shaded model is lit, and lighting moves a face's lightness across most of the range,
+// so parts that differ only in lightness are easily mistaken for one shaded part. Hue and
+// chroma survive the lighting. So the family spans a band of related hues (cool: teal
+// through slate blue to violet; warm: terracotta through sand to olive), at a chroma that
+// stays calm but is clearly coloured, and the colours are picked from that volume by
+// farthest-point sampling in OKLab (each next colour the one furthest from all picked so
+// far). Taken in that order, any two consecutive colours -- consecutive parts -- are at
+// least the set's minimum spacing apart (about 0.075, four or so just-noticeable
+// differences), the wrap from the last back to the first included.
+struct FamilyVolume final {
+    double lightnessLow{};
+    double lightnessHigh{};
+    double chromaLow{};
+    double chromaHigh{};
+    double hueLow{};
+    double hueHigh{};
+};
+
+constexpr FamilyVolume familyFor(const PartPaletteStyle style)
+{
+    return style == PartPaletteStyle::WarmShades ? FamilyVolume{0.62, 0.86, 0.05, 0.11, 20.0, 110.0}
+                                                 : FamilyVolume{0.60, 0.84, 0.05, 0.11, 175.0, 295.0};
+}
+
+constexpr int kFamilySize = 12;
+
+double familyDistance(const Oklab& first, const Oklab& second)
+{
+    const auto l = first.l - second.l;
+    return std::sqrt(l * l + (first.a - second.a) * (first.a - second.a) + (first.b - second.b) * (first.b - second.b));
+}
+
+std::vector<Oklab> familyColours(const PartPaletteStyle style, const std::uint32_t seed)
+{
+    const auto volume = familyFor(style);
+    std::vector<Oklab> candidates;
+    constexpr int lightnessSteps = 5;
+    constexpr int chromaSteps = 3;
+    constexpr int hueSteps = 13;
+    for (int l = 0; l < lightnessSteps; ++l) {
+        for (int c = 0; c < chromaSteps; ++c) {
+            for (int h = 0; h < hueSteps; ++h) {
+                const auto lightness = volume.lightnessLow + (volume.lightnessHigh - volume.lightnessLow) * l / (lightnessSteps - 1);
+                const auto chroma = volume.chromaLow + (volume.chromaHigh - volume.chromaLow) * c / (chromaSteps - 1);
+                const auto hue = (volume.hueLow + (volume.hueHigh - volume.hueLow) * h / (hueSteps - 1)) * std::numbers::pi / 180.0;
+                candidates.push_back(inGamut({lightness, chroma * std::cos(hue), chroma * std::sin(hue)}));
+            }
+        }
+    }
+    // The first colour: the middle of the volume, or for a shuffle one the seed picks.
+    std::size_t first = candidates.size() / 2;
+    if (seed != 0) first = static_cast<std::size_t>(stableHash(QStringLiteral("family"), seed) % candidates.size());
+    std::vector<Oklab> picked{candidates[first]};
+    std::vector<double> nearest(candidates.size());
+    for (std::size_t index = 0; index < candidates.size(); ++index) nearest[index] = familyDistance(candidates[index], picked.front());
+    while (static_cast<int>(picked.size()) < kFamilySize) {
+        const auto next = static_cast<std::size_t>(std::distance(nearest.begin(), std::ranges::max_element(nearest)));
+        picked.push_back(candidates[next]);
+        for (std::size_t index = 0; index < candidates.size(); ++index)
+            nearest[index] = std::min(nearest[index], familyDistance(candidates[index], candidates[next]));
+    }
+    return picked;
+}
+
+QColor familyColor(const PartPaletteStyle style, const int position, const std::uint32_t seed)
+{
+    // Computed once per style and seed: the app asks for one colour per part.
+    thread_local std::vector<std::pair<std::pair<int, std::uint32_t>, std::vector<Oklab>>> cache;
+    const auto key = std::pair{static_cast<int>(style), seed};
+    auto found = std::ranges::find_if(cache, [&](const auto& entry) { return entry.first == key; });
+    if (found == cache.end()) {
+        if (cache.size() > 8) cache.clear();
+        cache.emplace_back(key, familyColours(style, seed));
+        found = std::prev(cache.end());
+    }
+    const auto& colours = found->second;
+    // Past the set, each further round starts seven colours on, so the round boundary is
+    // still two well-separated colours, and is a shade lighter or darker, so parts a set
+    // apart do not come out exactly the same.
+    const auto size = static_cast<int>(colours.size());
+    const auto clamped = std::max(0, position);
+    const auto round = clamped / size;
+    auto colour = colours[static_cast<std::size_t>((clamped + round * 7) % size)];
+    if (round > 0) {
+        const auto volume = familyFor(style);
+        colour.l = std::clamp(colour.l + (round % 2 == 1 ? 0.02 : -0.02), volume.lightnessLow, volume.lightnessHigh);
+        colour = inGamut(colour);
+    }
+    return fromOklab(colour);
+}
+
 } // namespace
 
 std::optional<PartPaletteStyle> partPaletteStyleFromName(const QString& name)
@@ -128,6 +223,8 @@ std::optional<PartPaletteStyle> partPaletteStyleFromName(const QString& name)
 
 QColor partPaletteColor(const PartPaletteStyle style, const int position, const std::uint32_t seed)
 {
+    if (style == PartPaletteStyle::CoolShades || style == PartPaletteStyle::WarmShades)
+        return familyColor(style, position, seed);
     const auto band = bandFor(style);
     // A seed-dependent phase, so a shuffle moves colours along the walk as well as
     // reordering who gets which.

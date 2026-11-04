@@ -145,8 +145,21 @@ ApplicationWindow {
         return root.documents.count
     }
 
+    // While a tab from another window is dragged over this one: mark where it would land.
+    function showTabDropIndicator(x, y) {
+        const index = tabDropIndexAt(x, y)
+        if (index < 0) { hideTabDropIndicator(); return }
+        tabDropIndicator.index = index
+        tabDropIndicator.shown = true
+    }
+
+    function hideTabDropIndicator() {
+        tabDropIndicator.shown = false
+    }
+
     // Take in a tab dragged here from another window.
     function adoptDocumentAt(document, index) {
+        hideTabDropIndicator()
         root.documents.adopt(document, index)
         root.raise()
         root.requestActivate()
@@ -486,15 +499,17 @@ ApplicationWindow {
                 Accessible.name: qsTr("Review source units")
                 onClicked: unitReview.open()
             }
-            Inspect.ThemedComboBox {
+            // System, light or dark: three positions, one click each, rather than a menu.
+            Inspect.ThemedSegmentedControl {
                 id: themeChooser
+                objectName: "themeChooser"
                 theme: appTheme
-                model: [qsTr("System"), qsTr("Light"), qsTr("Dark")]
+                model: [qsTr("Follow the system"), qsTr("Light"), qsTr("Dark")]
+                icons: ["themeSystem", "themeLight", "themeDark"]
                 currentIndex: root.themePreference.mode === "Light" ? 1 : root.themePreference.mode === "Dark" ? 2 : 0
                 Accessible.name: qsTr("Color theme")
-                implicitWidth: 116
-                onActivated: {
-                    const mode = currentIndex === 1 ? "Light" : currentIndex === 2 ? "Dark" : "System"
+                onActivated: function(index) {
+                    const mode = index === 1 ? "Light" : index === 2 ? "Dark" : "System"
                     appTheme.mode = mode
                     root.themePreference.mode = mode
                 }
@@ -507,8 +522,36 @@ ApplicationWindow {
             id: tabStrip
             objectName: "documentTabStrip"
             Layout.fillWidth: true
-            visible: root.documents.count > 1 || root.controller.documentName.length > 0
+            visible: root.documents.count > 1 || root.controller.documentName.length > 0 || tabDropIndicator.shown
             implicitHeight: visible ? appTheme.rowCompact + appTheme.spacing2 * 2 : 0
+            // Where a tab dragged from another window would land: a pulsing accent bar
+            // between tabs, the way a text caret marks an insertion point.
+            Rectangle {
+                id: tabDropIndicator
+                objectName: "tabDropIndicator"
+                property int index: 0
+                // Its own flag: `visible` reads false while the strip is still hidden, which
+                // would keep the strip hidden for good.
+                property bool shown: false
+                readonly property Item before: shown && index < root.documents.count ? tabRepeater.itemAt(index) : null
+                readonly property Item last: shown && root.documents.count > 0 ? tabRepeater.itemAt(root.documents.count - 1) : null
+                readonly property real rowX: before ? before.x - tabRow.spacing / 2
+                                           : last ? last.x + last.width + tabRow.spacing / 2 : 0
+                visible: shown
+                z: 5
+                x: tabRow.x + rowX - width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                width: 3
+                height: appTheme.rowCompact
+                radius: 1.5
+                color: appTheme.accent
+                SequentialAnimation on opacity {
+                    running: tabDropIndicator.shown
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1; to: 0.25; duration: appTheme.durIndeterminatePulse; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.25; to: 1; duration: appTheme.durIndeterminatePulse; easing.type: Easing.InOutSine }
+                }
+            }
             color: appTheme.surface
             Rectangle {
                 anchors.left: parent.left
@@ -548,6 +591,14 @@ ApplicationWindow {
                             target: null
                             dragThreshold: 6
                             property bool outside: false
+                            // The window under the pointer, if another one: it shows where the
+                            // tab would land, since this window cannot draw over it.
+                            property var markedTarget: null
+                            function markTarget(target, x, y) {
+                                if (markedTarget && markedTarget !== target) markedTarget.hideTabDropIndicator()
+                                markedTarget = target
+                                if (target) target.showTabDropIndicator(x, y)
+                            }
                             onCentroidChanged: {
                                 if (!active) return
                                 const scene = centroid.scenePosition
@@ -555,6 +606,7 @@ ApplicationWindow {
                                 // Over another window's tab strip, the tab goes there -- even
                                 // a window's only tab, which then closes its window.
                                 const dropTarget = Windows.dropTargetAt(root.x + scene.x, root.y + scene.y, root)
+                                markTarget(dropTarget, root.x + scene.x, root.y + scene.y)
                                 outside = dropTarget !== null
                                           || (root.documents.count > 1
                                               && (inStrip.y < -tabStrip.height || inStrip.y > tabStrip.height * 2.5))
@@ -582,6 +634,7 @@ ApplicationWindow {
                                     return
                                 }
                                 tabGhost.visible = false
+                                markTarget(null, 0, 0)
                                 if (!outside) return
                                 outside = false
                                 // Everything needed is read first: take() removes this tab's row,
@@ -927,35 +980,90 @@ ApplicationWindow {
         onAccepted: root.controller.exportAssemblyWithoutHiddenParts(selectedFile)
     }
 
-    // The outcome of a whole-assembly export, briefly, at the foot of the window.
+    // A whole-assembly export: its progress while it runs, then how it went. A neutral card
+    // at the bottom right (design.md toasts), not over the dock; a success clears itself,
+    // a failure stays until it is read and closed.
     Rectangle {
         id: assemblyExportNotice
         objectName: "assemblyExportNotice"
+        readonly property bool running: root.controller.assemblyExportInProgress
+        readonly property bool failed: !running && !root.controller.assemblyExportSucceeded
         z: 300
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: appTheme.spacing6
-        width: Math.min(parent.width - appTheme.spacing6 * 2, noticeText.implicitWidth + appTheme.spacing4 * 2)
-        height: noticeText.implicitHeight + appTheme.spacing3 * 2
+        anchors.rightMargin: appTheme.spacing4
+        anchors.bottomMargin: appTheme.spacing4
+        width: Math.min(parent.width - appTheme.spacing4 * 2, 360)
+        height: noticeContent.implicitHeight + appTheme.spacing3 * 2
         radius: appTheme.radius3
-        color: appTheme.surfaceRaised
-        border.color: root.controller.assemblyExportSucceeded ? appTheme.accent : appTheme.error
+        color: appTheme.surface3
+        border.color: appTheme.border
         visible: false
-        Label {
-            id: noticeText
-            anchors.centerIn: parent
-            width: Math.min(implicitWidth, assemblyExportNotice.parent.width - appTheme.spacing6 * 2 - appTheme.spacing4 * 2)
-            text: root.controller.assemblyExportInProgress ? qsTr("Exporting the assembly…") : root.controller.assemblyExportMessage
-            color: root.themeForeground
-            wrapMode: Text.Wrap
+
+        RowLayout {
+            id: noticeContent
+            anchors.fill: parent
+            anchors.margins: appTheme.spacing3
+            spacing: appTheme.spacing3
+
+            Inspect.ToolIcon {
+                Layout.alignment: Qt.AlignTop
+                name: assemblyExportNotice.running ? "download" : assemblyExportNotice.failed ? "alert" : "check"
+                color: assemblyExportNotice.running ? appTheme.accent
+                     : assemblyExportNotice.failed ? appTheme.error : appTheme.success
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: appTheme.spacing1
+                Label {
+                    objectName: "assemblyExportNoticeTitle"
+                    Layout.fillWidth: true
+                    text: assemblyExportNotice.running ? qsTr("Exporting the assembly")
+                        : assemblyExportNotice.failed ? qsTr("Export failed") : qsTr("Assembly exported")
+                    font.bold: true
+                    color: root.themeForeground
+                    elide: Text.ElideRight
+                }
+                Label {
+                    objectName: "assemblyExportNoticeDetail"
+                    Layout.fillWidth: true
+                    text: assemblyExportNotice.running
+                          ? qsTr("%1 · %2%").arg(root.controller.assemblyExportStage)
+                                            .arg(Math.round(root.controller.assemblyExportProgress * 100))
+                          : root.controller.assemblyExportMessage
+                    color: appTheme.muted
+                    font.pixelSize: appTheme.fontCaption
+                    font.features: { "tnum": 1 }
+                    wrapMode: Text.Wrap
+                }
+                Inspect.ThemedProgressBar {
+                    theme: appTheme
+                    Layout.fillWidth: true
+                    Layout.topMargin: appTheme.spacing1
+                    visible: assemblyExportNotice.running
+                    from: 0
+                    to: 1
+                    value: root.controller.assemblyExportProgress
+                }
+            }
+            Inspect.IconButton {
+                Layout.alignment: Qt.AlignTop
+                theme: appTheme
+                visible: !assemblyExportNotice.running
+                glyph: "close"
+                Accessible.name: qsTr("Dismiss")
+                onClicked: assemblyExportNotice.visible = false
+            }
         }
-        Timer { id: noticeTimer; interval: 7000; onTriggered: assemblyExportNotice.visible = false }
+        Timer { id: noticeTimer; interval: 5000; onTriggered: assemblyExportNotice.visible = false }
         Connections {
             target: root.controller
             function onAssemblyExportChanged() {
                 assemblyExportNotice.visible = root.controller.assemblyExportInProgress
                                                || root.controller.assemblyExportMessage.length > 0
-                if (!root.controller.assemblyExportInProgress) noticeTimer.restart()
+                noticeTimer.stop()
+                if (!root.controller.assemblyExportInProgress && root.controller.assemblyExportSucceeded)
+                    noticeTimer.restart()
             }
         }
     }

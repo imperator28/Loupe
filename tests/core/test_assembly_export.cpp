@@ -24,6 +24,7 @@
 #include <gp_Vec.hxx>
 
 #include <algorithm>
+#include <utility>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -119,8 +120,17 @@ TEST_CASE("an assembly re-exports without its hidden parts, keeping its tree", "
     for (const auto& node : imported.snapshot.nodes)
         if (node.name == "Screw" && node.kind == NodeKind::Occurrence) request.excludedNodeIds.insert(node.id);
     REQUIRE(request.excludedNodeIds.size() == 2);
+    // It says how far along it is, never going back, and finishes at 1.
+    std::vector<std::pair<std::string, double>> progress;
+    request.progress = [&](const std::string& stage, const double fraction) { progress.emplace_back(stage, fraction); };
 
     const auto result = loupe::exporting::AssemblyExporter{}.write(imported, request);
+    REQUIRE(progress.size() >= 3);
+    CHECK(progress.front().first == "copy");
+    CHECK(progress.back() == std::pair<std::string, double>{"write", 1.0});
+    CHECK(std::is_sorted(progress.begin(), progress.end(),
+                         [](const auto& left, const auto& right) { return left.second < right.second; }));
+    CHECK(std::ranges::any_of(progress, [](const auto& entry) { return entry.first == "translate"; }));
     CHECK(result.partCount == 2);
     CHECK(result.removedCount == 2);
 

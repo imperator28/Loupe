@@ -9,6 +9,10 @@
 #include <DESTEP_Parameters.hxx>
 #include <Quantity_ColorRGBA.hxx>
 #include <STEPCAFControl_Writer.hxx>
+#include <Message_ProgressIndicator.hxx>
+#include <Message_ProgressScope.hxx>
+#include <IFSelect_ReturnStatus.hxx>
+#include <STEPControl_StepModelType.hxx>
 #include <TCollection_AsciiString.hxx>
 #include <TDF_Tool.hxx>
 #include <TDataStd_Name.hxx>
@@ -25,6 +29,7 @@
 
 #include <cmath>
 #include <optional>
+#include <algorithm>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -249,8 +254,38 @@ private:
 
 } // namespace
 
+namespace {
+
+// OCCT's progress through the STEP translation, mapped into [from, to] of the whole.
+class StageProgress final : public Message_ProgressIndicator {
+public:
+    StageProgress(const AssemblyExportRequest& request, double from, double to) : request_(request), from_(from), to_(to) {}
+
+    void Show(const Message_ProgressScope&, const bool isForce) override
+    {
+        const auto position = std::clamp(GetPosition(), 0.0, 1.0);
+        if (!isForce && position - lastReported_ < 0.01) return;
+        lastReported_ = position;
+        request_.progress("translate", from_ + (to_ - from_) * position);
+    }
+
+private:
+    const AssemblyExportRequest& request_;
+    double from_;
+    double to_;
+    double lastReported_{-1.0};
+};
+
+void report(const AssemblyExportRequest& request, const std::string& stage, const double fraction)
+{
+    if (request.progress) request.progress(stage, fraction);
+}
+
+} // namespace
+
 AssemblyExportResult AssemblyExporter::write(const import::ImportResult& imported, const AssemblyExportRequest& request) const
 {
+    report(request, "copy", 0.0);
     if (!imported.native || imported.native->document.IsNull()) throw std::runtime_error("import has no native XCAF document");
     occ::handle<TDocStd_Document> document;
     XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", document);
@@ -266,6 +301,8 @@ AssemblyExportResult AssemblyExporter::write(const import::ImportResult& importe
     if (result.partCount == 0) result.partCount = written.Length();
     XCAFDoc_DocumentTool::ShapeTool(document->Main())->UpdateAssemblies();
 
+    report(request, request.output == AssemblyOutput::Step ? "translate"
+                    : request.output == AssemblyOutput::Stl ? "mesh" : "draw", 0.15);
     if (request.output != AssemblyOutput::Step) {
         // One shape of everything kept, each part where it was placed (or moved), in mm.
         const auto shapes = XCAFDoc_DocumentTool::ShapeTool(document->Main());
@@ -276,6 +313,7 @@ AssemblyExportResult AssemblyExporter::write(const import::ImportResult& importe
         if (request.output == AssemblyOutput::Stl) {
             const auto unitScale = request.outputUnit == units::LengthUnit::Inch ? 1.0 / 25.4 : 1.0;
             detail::writeStlShape(detail::scaledAboutOrigin(everything, unitScale), request.destination);
+            report(request, "write", 1.0);
             return result;
         }
         drawing::ShapeDrawingRequest drawingRequest;
@@ -292,6 +330,7 @@ AssemblyExportResult AssemblyExporter::write(const import::ImportResult& importe
             std::filesystem::remove(request.destination, ignored);
             throw;
         }
+        report(request, "write", 1.0);
         return result;
     }
 
@@ -305,8 +344,19 @@ AssemblyExportResult AssemblyExporter::write(const import::ImportResult& importe
     writer.SetColorMode(true);
     DESTEP_Parameters parameters;
     parameters.WriteUnit = inches ? UnitsMethods_LengthUnit_Inch : UnitsMethods_LengthUnit_Millimeter;
-    if (!writer.Perform(document, partial.partial().string().c_str(), parameters)) throw std::runtime_error("STEP writer failed");
+    // Translating is nearly all of the time; writing the file the rest.
+    bool transferred = false;
+    if (request.progress) {
+        const occ::handle<StageProgress> indicator = new StageProgress(request, 0.15, 0.85);
+        transferred = writer.Transfer(document, parameters, STEPControl_AsIs, nullptr, indicator->Start());
+    } else {
+        transferred = writer.Transfer(document, parameters);
+    }
+    if (!transferred) throw std::runtime_error("STEP writer could not translate the assembly");
+    report(request, "write", 0.85);
+    if (writer.Write(partial.partial().string().c_str()) != IFSelect_RetDone) throw std::runtime_error("STEP writer failed");
     partial.finalize();
+    report(request, "write", 1.0);
     return result;
 }
 

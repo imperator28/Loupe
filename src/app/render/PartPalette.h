@@ -15,8 +15,8 @@ namespace loupe::app::render {
 // in OKLCH, where a fixed lightness band and a small chroma stay visually even. Vivid is
 // the exception, for when telling parts apart matters more than calm.
 enum class PartPaletteStyle {
-    CoolShades, // one slate-blue hue, varying lightness
-    WarmShades, // one sand hue, varying lightness
+    CoolShades, // cool family: teal, slate blue and indigo, spread in hue, chroma and lightness
+    WarmShades, // warm family: terracotta, sand and olive, likewise
     Muted,      // soft hues around the wheel at an even, low chroma
     Vivid,      // high contrast: saturated hues around the wheel, two lightness levels
 };

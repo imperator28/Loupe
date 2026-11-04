@@ -75,6 +75,9 @@ class ApplicationController : public QObject {
     Q_PROPERTY(bool assemblyExportInProgress READ assemblyExportInProgress NOTIFY assemblyExportChanged)
     Q_PROPERTY(QString assemblyExportMessage READ assemblyExportMessage NOTIFY assemblyExportChanged)
     Q_PROPERTY(bool assemblyExportSucceeded READ assemblyExportSucceeded NOTIFY assemblyExportChanged)
+    // While an assembly export runs: what it is doing, and how far along it is (0 to 1).
+    Q_PROPERTY(QString assemblyExportStage READ assemblyExportStage NOTIFY assemblyExportProgressChanged)
+    Q_PROPERTY(double assemblyExportProgress READ assemblyExportProgress NOTIFY assemblyExportProgressChanged)
     Q_PROPERTY(QUrl suggestedAssemblyExportUrl READ suggestedAssemblyExportUrl NOTIFY documentNameChanged)
     Q_PROPERTY(QUrl suggestedAssemblyExportFolderUrl READ suggestedAssemblyExportFolderUrl NOTIFY documentNameChanged)
     Q_PROPERTY(QString importStage READ importStage NOTIFY importProgressChanged)
@@ -158,6 +161,8 @@ public:
     [[nodiscard]] bool assemblyExportInProgress() const noexcept { return activeAssemblyExportRequestId_ != 0; }
     [[nodiscard]] const QString& assemblyExportMessage() const noexcept { return assemblyExportMessage_; }
     [[nodiscard]] bool assemblyExportSucceeded() const noexcept { return assemblyExportSucceeded_; }
+    [[nodiscard]] QString assemblyExportStage() const;
+    [[nodiscard]] double assemblyExportProgress() const noexcept { return assemblyExportProgress_; }
     [[nodiscard]] QString suggestedAssemblyExportPath() const;
     [[nodiscard]] QUrl suggestedAssemblyExportUrl() const;
     [[nodiscard]] QUrl suggestedAssemblyExportFolderUrl() const;
@@ -288,6 +293,7 @@ signals:
     void fitRequested();
     void documentNameChanged();
     void assemblyExportChanged();
+    void assemblyExportProgressChanged();
     void viewNormalToFaceRequested();
     void explodedExportRequested();
     void viewerPresentationChanged();
@@ -366,6 +372,8 @@ private:
     QHash<QString, double> opacityByNode_;
     QString assemblyExportMessage_;
     bool assemblyExportSucceeded_{false};
+    QString assemblyExportStageKey_;
+    double assemblyExportProgress_{0.0};
     std::uint64_t activeDrawingRequestId_{};
     // Only the newest preview may reach the UI; a late reply for an older revision is
     // dropped rather than shown over a newer one.

@@ -17,6 +17,7 @@ private slots:
     void colorsAreReproducibleAndSeedsChangeThem();
     void shuffleReordersTheSamePartsReproducibly();
     void vividSeparatesNeighboursStrongly();
+    void coolAndWarmSpreadInHueAndChromaNotJustLightness();
 };
 
 namespace {
@@ -56,7 +57,9 @@ void PartPaletteTest::everyStyleStaysLowInContrast()
                     color, loupe::app::render::partPaletteColor(style, second, 0)));
             }
         }
-        QVERIFY2(farthest <= 0.27, qPrintable(QString::number(farthest)));
+        // Cool and warm reach a little further, in hue, to tell parts apart on a lit model.
+        const auto ceiling = style == PartPaletteStyle::Muted ? 0.27 : 0.32;
+        QVERIFY2(farthest <= ceiling, qPrintable(QString::number(farthest)));
     }
     QVERIFY(loupe::app::render::oklabDistance(QColor(Qt::red), QColor(Qt::blue)) > 0.5);
 }
@@ -70,7 +73,8 @@ void PartPaletteTest::neighbouringPartsAreStillDistinguishable()
             const auto distance = loupe::app::render::oklabDistance(
                 loupe::app::render::partPaletteColor(style, position, 0),
                 loupe::app::render::partPaletteColor(style, position + 1, 0));
-            QVERIFY2(distance >= 0.04, qPrintable(QStringLiteral("position %1: %2").arg(position).arg(distance)));
+            const auto floor = style == PartPaletteStyle::Muted ? 0.04 : 0.06;
+            QVERIFY2(distance >= floor, qPrintable(QStringLiteral("style %1 position %2: %3").arg(static_cast<int>(style)).arg(position).arg(distance)));
         }
     }
 }
@@ -115,6 +119,40 @@ void PartPaletteTest::vividSeparatesNeighboursStrongly()
     const auto grey = QColor(QStringLiteral("#9AA2B2"));
     for (int position = 0; position < kSampleSize; ++position)
         QVERIFY(loupe::app::render::oklabDistance(loupe::app::render::partPaletteColor(PartPaletteStyle::Vivid, position, 0), grey) > 0.08);
+}
+
+void PartPaletteTest::coolAndWarmSpreadInHueAndChromaNotJustLightness()
+{
+    // On a lit model, lighting moves lightness across most of its range, so parts that
+    // differ only in lightness read as one part in shade. The two families must stay in
+    // their temperature yet differ in hue and chroma: every colour clearly tinted, the
+    // family spanning a real band of hues, and its first dozen colours (the parts a
+    // small assembly has) all clearly apart from one another.
+    const auto chromaOf = [](const QColor& color) {
+        const auto r = color.redF(), g = color.greenF(), b = color.blueF();
+        const auto max = std::max({r, g, b}), min = std::min({r, g, b});
+        return max - min;
+    };
+    for (const auto style : {PartPaletteStyle::CoolShades, PartPaletteStyle::WarmShades}) {
+        double lowestHue = 360.0, highestHue = 0.0, closest = 1.0;
+        for (int first = 0; first < 12; ++first) {
+            const auto color = loupe::app::render::partPaletteColor(style, first, 0);
+            QVERIFY2(chromaOf(color) > 0.07, qPrintable(color.name()));
+            const auto hue = color.hsvHueF() * 360.0;
+            lowestHue = std::min(lowestHue, hue);
+            highestHue = std::max(highestHue, hue);
+            for (int second = first + 1; second < 12; ++second)
+                closest = std::min(closest, loupe::app::render::oklabDistance(color, loupe::app::render::partPaletteColor(style, second, 0)));
+        }
+        QVERIFY2(highestHue - lowestHue > 40.0, qPrintable(QStringLiteral("%1-%2").arg(lowestHue).arg(highestHue)));
+        QVERIFY2(closest >= 0.07, qPrintable(QString::number(closest)));
+        // In their temperature: cool colours have more blue than red, warm more red than blue.
+        for (int position = 0; position < kSampleSize; ++position) {
+            const auto color = loupe::app::render::partPaletteColor(style, position, 0);
+            if (style == PartPaletteStyle::CoolShades) QVERIFY2(color.blueF() > color.redF(), qPrintable(color.name()));
+            else QVERIFY2(color.redF() > color.blueF(), qPrintable(color.name()));
+        }
+    }
 }
 
 QTEST_GUILESS_MAIN(PartPaletteTest)

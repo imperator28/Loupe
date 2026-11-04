@@ -129,13 +129,40 @@ Item {
         const forward = navigation.orientation.times(Qt.vector3d(0, 0, -1))
         return depthBounds.centre.minus(navigation.cameraPosition).dotProduct(forward)
     }
-    readonly property real perspectiveClipNear: Math.max(depthBounds.radius * 0.0005,
-                                                         perspectiveDepthDistance - depthBounds.radius * 1.25)
-    readonly property real perspectiveClipFar: Math.max(perspectiveClipNear * 4,
-                                                        perspectiveDepthDistance + depthBounds.radius * 1.5)
-    // Orthographic depth is linear, but 2,000,000 mm of it still left ~0.1 mm steps.
-    readonly property real orthographicClipNear: perspectiveDepthDistance - depthBounds.radius * 1.5
-    readonly property real orthographicClipFar: perspectiveDepthDistance + depthBounds.radius * 1.5
+    // Planes that are not finite (bounds or camera not settled yet) fall back to the old
+    // fixed range rather than clip everything away.
+    readonly property bool clipPlanesValid: hasSceneBounds && isFinite(perspectiveDepthDistance)
+                                            && isFinite(depthBounds.radius) && depthBounds.radius > 0
+    readonly property real perspectiveClipNear: clipPlanesValid
+        ? Math.max(depthBounds.radius * 0.0005, perspectiveDepthDistance - depthBounds.radius * 1.25) : 0.01
+    readonly property real perspectiveClipFar: clipPlanesValid
+        ? Math.max(perspectiveClipNear * 4, perspectiveDepthDistance + depthBounds.radius * 1.5) : 1000000
+    // Orthographic depth is linear, but 2,000,000 mm of it still left ~0.1 mm steps. An
+    // orthographic picture does not depend on how far back the camera is, so its cameras
+    // sit back far enough that the near plane is always in front of the model: a camera
+    // inside the model meant a near plane behind it, which not every graphics backend
+    // draws the same way.
+    readonly property real orthographicBackoff: clipPlanesValid
+        ? Math.max(0, depthBounds.radius * 2.5 - perspectiveDepthDistance) : 0
+    readonly property real orthographicClipNear: clipPlanesValid
+        ? perspectiveDepthDistance + orthographicBackoff - depthBounds.radius * 1.5 : -1000000
+    readonly property real orthographicClipFar: clipPlanesValid
+        ? perspectiveDepthDistance + orthographicBackoff + depthBounds.radius * 1.5 : 1000000
+    // Edges are drawn a little in front of the faces they outline. The shader takes that
+    // as a share of the depth range, so it is worked out here from the planes to come to
+    // the same distance in the model whatever the range: as a fixed share it shrank to
+    // thousandths of a millimetre once the planes fitted the model, and edges broke into
+    // dashes where they met the tessellated faces.
+    readonly property real edgeDepthBiasDistance: Math.min(5, Math.max(0.02, depthBounds.radius * 0.0004))
+    readonly property real edgeDepthBias: {
+        if (!clipPlanesValid) return 0.0000002
+        if (navigation.projectionMode === "orthographic")
+            return 2 * edgeDepthBiasDistance / Math.max(0.001, orthographicClipFar - orthographicClipNear)
+        const n = perspectiveClipNear
+        const f = perspectiveClipFar
+        const d = Math.max(n, perspectiveDepthDistance)
+        return edgeDepthBiasDistance * 2 * f * n / Math.max(0.000001, (f - n) * d * d)
+    }
     readonly property real sceneDiagonal: {
         const x = sceneMaximum.x - sceneMinimum.x
         const y = sceneMaximum.y - sceneMinimum.y
@@ -216,6 +243,12 @@ Item {
     // Where the handle sits and turns about: the selection's centre, or a point the user
     // picked on a part (#17), which goes along with that part as it moves.
     property var handlePivot: null
+    // Every pivot picked this session, by the parts it was picked for: selecting those
+    // parts again brings their pivot back, until Use centre clears it.
+    property var savedPivots: ({})
+    function pivotKey() {
+        return controller ? controller.selectedNodeIds.slice().sort().join("|") : ""
+    }
     // Turn the handle to the face the pivot was picked on, so its arrows run along and off
     // that face rather than along the world's axes.
     property bool handleAlignToFace: false
@@ -290,6 +323,9 @@ Item {
     }
 
     function clearPivot() {
+        const saved = savedPivots
+        delete saved[pivotKey()]
+        savedPivots = saved
         handlePivot = null
         pickingPivot = false
     }
@@ -303,6 +339,9 @@ Item {
         const normal = hit.sceneNormal ? model.mapDirectionFromScene(hit.sceneNormal) : null
         handlePivot = { nodeId: model.nodeId, local: model.mapPositionFromScene(hit.scenePosition),
                         normal: normal && normal.length() > 0 ? normal.normalized() : null }
+        const saved = savedPivots
+        saved[pivotKey()] = handlePivot
+        savedPivots = saved
         pickingPivot = false
         return true
     }
@@ -333,8 +372,13 @@ Item {
 
     Connections {
         target: root.controller
-        // The pivot belongs to the parts it was picked for.
-        function onSelectionChanged() { if (root.handlePivot) root.handlePivot = null }
+        // The pivot belongs to the parts it was picked for: theirs, or the centre.
+        function onSelectionChanged() {
+            const saved = root.savedPivots[root.pivotKey()]
+            root.handlePivot = saved !== undefined ? saved : null
+        }
+        // A new document starts without pivots.
+        function onDocumentNameChanged() { root.savedPivots = ({}); root.handlePivot = null }
     }
 
     function screenPoint(scenePoint) {
@@ -1601,6 +1645,7 @@ Item {
             materials: [standardEdgeMaterial]
             CadEdgeMaterial {
                 id: standardEdgeMaterial
+                depthBiasAmount: root.edgeDepthBias
                 edgeColor: edgeModelItem.selected ? viewportVisualTheme.selectionEdgeColor
                                                    : viewportVisualTheme.edgeColor
                 lineWidth: edgeModelItem.selected ? 2.5 : 1.5
@@ -1661,14 +1706,15 @@ Item {
             id: cameraRig
             PerspectiveCamera {
                 id: perspectiveCamera
-                clipNear: root.hasSceneBounds ? root.perspectiveClipNear : 0.01
-                clipFar: root.hasSceneBounds ? root.perspectiveClipFar : 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: orthographicCamera
-                clipNear: root.hasSceneBounds ? root.orthographicClipNear : -1000000
-                clipFar: root.hasSceneBounds ? root.orthographicClipFar : 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1744,14 +1790,15 @@ Item {
             rotation: navigation.orientation
             PerspectiveCamera {
                 id: componentXrayPerspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: componentXrayOrthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1787,14 +1834,15 @@ Item {
 
             PerspectiveCamera {
                 id: xrayPerspectiveCamera
-                clipNear: 0.01
-                clipFar: 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: xrayOrthographicCamera
-                clipNear: -1000000
-                clipFar: 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
@@ -1843,14 +1891,15 @@ Item {
             rotation: navigation.orientation
             PerspectiveCamera {
                 id: handlePerspectiveCamera
-                clipNear: root.hasSceneBounds ? root.perspectiveClipNear : 0.01
-                clipFar: root.hasSceneBounds ? root.perspectiveClipFar : 1000000
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
                 fieldOfView: navigation.perspectiveFieldOfView
             }
             OrthographicCamera {
                 id: handleOrthographicCamera
-                clipNear: root.hasSceneBounds ? root.orthographicClipNear : -1000000
-                clipFar: root.hasSceneBounds ? root.orthographicClipFar : 1000000
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }

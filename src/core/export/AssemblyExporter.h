@@ -7,6 +7,7 @@
 #include <gp_Trsf.hxx>
 
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,6 +39,9 @@ struct AssemblyExportRequest {
     // For the drawings: the direction the view is seen from, and the drawing's up.
     gp_Dir viewDirection{0.0, 0.0, 1.0};
     gp_Dir upDirection{0.0, 1.0, 0.0};
+    // How far along it is, 0 to 1, and in which stage ("copy", "translate", "write",
+    // "mesh", "draw"). Called on the exporting thread; may be empty.
+    std::function<void(const std::string& stage, double fraction)> progress;
 };
 
 struct AssemblyExportResult {
