@@ -8,6 +8,10 @@
   A lightweight, engineer-oriented STEP inspector for fast CAD review, measurement, sectioning, materials, split-part export, and 2D drawing projection.
 </p>
 
+<p align="center">
+  <a href="https://imperator28.github.io/Loupe/">Website</a> · <a href="https://github.com/imperator28/Loupe/releases/latest">Download</a>
+</p>
+
 ## Status
 
 Loupe is a functional desktop review build under active development. It is designed to make a typical engineering inspection workflow feel immediate: open a STEP file, understand the assembly, inspect geometry and mass, capture evidence, then prepare only the parts a vendor or prototype shop needs — as 3D files, or as 2D drawings a cutter can run.
