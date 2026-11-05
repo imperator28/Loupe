@@ -208,21 +208,35 @@ QString colorString(const Quantity_ColorRGBA& color)
     return (QStringLiteral("#") + channel(red) + channel(green) + channel(blue)).toUpper();
 }
 
-QString colorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Label& occurrence,
-                 const TDF_Label& definition, const TopoDS_Face& face)
+// A face's own colour, if it has one. Finding it searches the document's colour table for the
+// face, which made colours most of the cost of encoding an assembly of repeated parts; the answer
+// is the same for every copy of the face, so each is looked up once. Empty: no colour of its own.
+using FaceColors = std::unordered_map<TopoDS_Shape, QString>;
+
+QString faceColorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TopoDS_Face& face, FaceColors& faceColors)
+{
+    if (const auto found = faceColors.find(face); found != faceColors.end()) return found->second;
+    Quantity_ColorRGBA color;
+    QString value;
+    if (colors && (colors->GetColor(face, XCAFDoc_ColorSurf, color) || colors->GetColor(face, XCAFDoc_ColorGen, color)))
+        value = colorString(color);
+    faceColors.emplace(face, value);
+    return value;
+}
+
+// A body's colour where its face has none: the occurrence's, else its definition's. No colour,
+// rather than a stand-in one. A placeholder was indistinguishable from a part genuinely coloured
+// that way, so the app could neither show its own neutral fallback (which the inspector swatch
+// did, so the two disagreed) nor tell which parts to auto-colour.
+QString bodyColorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Label& occurrence, const TDF_Label& definition)
 {
     Quantity_ColorRGBA color;
-    if (colors && (colors->GetColor(face, XCAFDoc_ColorSurf, color)
-                   || colors->GetColor(face, XCAFDoc_ColorGen, color)
-                   || XCAFDoc_ColorTool::GetColor(occurrence, XCAFDoc_ColorSurf, color)
+    if (colors && (XCAFDoc_ColorTool::GetColor(occurrence, XCAFDoc_ColorSurf, color)
                    || XCAFDoc_ColorTool::GetColor(occurrence, XCAFDoc_ColorGen, color)
                    || XCAFDoc_ColorTool::GetColor(definition, XCAFDoc_ColorSurf, color)
                    || XCAFDoc_ColorTool::GetColor(definition, XCAFDoc_ColorGen, color))) {
         return colorString(color);
     }
-    // No colour, rather than a stand-in one. A placeholder was indistinguishable from a part
-    // genuinely coloured that way, so the app could neither show its own neutral fallback
-    // (which the inspector swatch did, so the two disagreed) nor tell which parts to auto-colour.
     return {};
 }
 
@@ -272,9 +286,11 @@ FaceMeasure measureFace(const TopoDS_Face& face, const double sourceToMillimeter
 
 QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters,
                                 const occ::handle<XCAFDoc_ColorTool>& colors,
-                                const TDF_Label& occurrence, const TDF_Label& definition, FaceMeasures& faceMeasures)
+                                const TDF_Label& occurrence, const TDF_Label& definition, FaceMeasures& faceMeasures,
+                                FaceColors& faceColors)
 {
     QHash<QString, int> segmentIndexes;
+    std::optional<QString> bodyColor;
     QVector<MeshSegment> segments;
     TopTools_IndexedMapOfShape faceMap;
     TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
@@ -283,7 +299,11 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placem
         TopLoc_Location location;
         const auto triangulation = BRep_Tool::Triangulation(face, location);
         if (triangulation.IsNull()) continue;
-        const auto color = colorFor(colors, occurrence, definition, face);
+        auto color = faceColorFor(colors, face, faceColors);
+        if (color.isEmpty()) {
+            if (!bodyColor) bodyColor = bodyColorFor(colors, occurrence, definition);
+            color = *bodyColor;
+        }
         const auto segmentIndex = segmentIndexes.value(color, -1);
         if (segmentIndex < 0) {
             segmentIndexes.insert(color, segments.size());
@@ -693,6 +713,7 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 // Face areas are exact, so they hold for both passes; edge polylines depend on the
                 // pass's tolerance, so they are sampled afresh for each.
                 FaceMeasures faceMeasures;
+                FaceColors faceColors;
 
                 // How long each body took in the preview pass. Refinement repeats the same work
                 // body by body at finer tolerance, so these weight its progress: a uniform step
@@ -731,7 +752,7 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                         }
                         const auto segments = encodeMesh(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, colors,
                                                          sessionImport.native->labels[index], sessionImport.native->definitionLabels[index],
-                                                         faceMeasures);
+                                                         faceMeasures, faceColors);
                         if (job->canceled.load()) return false;
                         for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
                             if (job->canceled.load()) return false;
