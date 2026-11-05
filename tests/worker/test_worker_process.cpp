@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QProcess>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryFile>
@@ -19,6 +20,8 @@
 #include "protocol/ProtocolFrame.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <utility>
 
 class WorkerProcessTest final : public QObject
 {
@@ -30,6 +33,7 @@ private slots:
     void invalidFileDoesNotCrashWorker();
     void validStepProducesNonEmptySnapshot();
     void validStepStreamsTriangulatedMesh();
+    void everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady();
     void reviewedPlanWritesAndValidatesStep();
     void reviewedDrawingPlanWritesAndValidatesDxf();
     void aChangedDrawingPlanIsRefusedAtTheFingerprint();
@@ -249,6 +253,78 @@ void WorkerProcessTest::validStepStreamsTriangulatedMesh()
     QVERIFY(edges->vertices.size() >= 6);
     QVERIFY(edges->indices.size() >= 2);
     QVERIFY(worker.state() == QProcess::Running);
+}
+
+namespace {
+
+// Opens a file and returns each body's componentMetadata, keyed by node id, as they stood when the
+// worker reported Ready, plus the body node ids the snapshot listed. Empty on a timeout.
+std::pair<QHash<QString, QJsonObject>, QStringList> massPropertiesAtReady(const std::filesystem::path& fixture, const int requestId)
+{
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    if (!worker.waitForStarted(3'000)) return {};
+    QLocalSocket socket;
+    if (!connectToWorker(socket, name)) return {};
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), requestId},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+    QHash<QString, QJsonObject> metadata;
+    QStringList bodies;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 20'000) {
+        const auto frame = readFrame(socket, decoder);
+        if (!frame || frame->type != loupe::protocol::FrameType::ControlJson) continue;
+        const auto event = QJsonDocument::fromJson(frame->payload).object();
+        const auto type = event.value(QStringLiteral("type")).toString();
+        if (type == QStringLiteral("snapshotReady")) {
+            const auto snapshot = QJsonDocument::fromJson(
+                QByteArray::fromBase64(event.value(QStringLiteral("snapshotBase64")).toString().toLatin1())).object();
+            for (const auto& entry : snapshot.value(QStringLiteral("geometry")).toArray())
+                bodies.append(entry.toObject().value(QStringLiteral("nodeId")).toString());
+        } else if (type == QStringLiteral("componentMetadata")) {
+            metadata.insert(event.value(QStringLiteral("nodeId")).toString(), event);
+        } else if (type == QStringLiteral("progress") && event.value(QStringLiteral("stage")).toString() == QStringLiteral("Ready")) {
+            return {metadata, bodies};
+        } else if (type == QStringLiteral("failed")) {
+            return {};
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+void WorkerProcessTest::everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady()
+{
+    // Mass properties are worked out once per distinct shape and shared by its copies, so both
+    // copies of the repeated box must still get their own, equal, ones -- and the two different
+    // solids of one multi-solid part their own, different, ones.
+    const auto [copies, copyBodies] = massPropertiesAtReady(
+        loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("worker-mass-copies.step").toStdString(), loupe::tests::FixtureUnit::Millimeter), 30);
+    QCOMPARE(copyBodies.size(), 2);
+    for (const auto& nodeId : copyBodies) {
+        QVERIFY2(copies.contains(nodeId), qPrintable(nodeId));
+        QVERIFY(qAbs(copies.value(nodeId).value(QStringLiteral("volumeMm3")).toDouble() - 1000.0) < 1.0e-6);
+        QVERIFY(qAbs(copies.value(nodeId).value(QStringLiteral("surfaceAreaMm2")).toDouble() - 600.0) < 1.0e-6);
+        QCOMPARE(copies.value(nodeId).value(QStringLiteral("planarFaceCount")).toInt(), 6);
+    }
+
+    const auto [solids, solidBodies] = massPropertiesAtReady(
+        loupe::tests::writeMultiSolidBodyStep(QStringLiteral("worker-mass-solids.step").toStdString()), 31);
+    QCOMPARE(solidBodies.size(), 2);
+    QList<double> volumes;
+    for (const auto& nodeId : solidBodies) {
+        QVERIFY2(solids.contains(nodeId), qPrintable(nodeId));
+        volumes.append(solids.value(nodeId).value(QStringLiteral("volumeMm3")).toDouble());
+    }
+    std::sort(volumes.begin(), volumes.end());
+    QVERIFY(qAbs(volumes.at(0) - 216.0) < 1.0e-6);
+    QVERIFY(qAbs(volumes.at(1) - 1000.0) < 1.0e-6);
 }
 
 void WorkerProcessTest::reviewedPlanWritesAndValidatesStep()
