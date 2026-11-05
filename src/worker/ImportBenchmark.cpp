@@ -45,6 +45,8 @@ std::optional<QJsonObject> benchmarkFile(const QString& sourcePath, const QStrin
         .arg(QCoreApplication::applicationPid())
         .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
     QProcess process;
+    // The worker's own messages (such as its allocator's, with MIMALLOC_VERBOSE) go to ours.
+    process.setProcessChannelMode(QProcess::ForwardedErrorChannel);
     process.start(workerPath(worker), {QStringLiteral("--server-name"), socketName});
     if (!process.waitForStarted(kConnectTimeoutMs)) return std::nullopt;
 

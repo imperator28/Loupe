@@ -11,6 +11,7 @@ effect is printed beside its times, so a mimalloc build whose override did not t
 """
 import argparse
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -48,6 +49,14 @@ def main():
             allocator = runs[-1].get("allocator", "?")
             name = path.replace("\\", "/").rsplit("/", 1)[-1]
             print(f"{name:28} {label:10} {allocator:34} " + " ".join(f"{values[key]:>12.0f}" for key in keys))
+    # A worker that links mimalloc but reports another allocator: show mimalloc's own account.
+    for label, worker in workers:
+        report = run(arguments.benchmark, worker, arguments.files[0])
+        if label == "mimalloc" and report.get("allocator") != "mimalloc":
+            output = subprocess.run([arguments.benchmark, "--worker", worker, arguments.files[0]], capture_output=True,
+                                    text=True, timeout=600, env=dict(os.environ, MIMALLOC_VERBOSE="1"))
+            print(f"{label} worker reports '{report.get('allocator')}'. mimalloc says:")
+            print("\n".join(line for line in output.stderr.splitlines() if "mimalloc" in line.lower())[-3000:])
     if len(workers) == 2:
         (first, _), (second, _) = workers
         for path in arguments.files:

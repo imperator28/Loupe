@@ -155,8 +155,9 @@ jobs:
 
       - name: Benchmark the worker's allocator
         # mimalloc against the system allocator on this platform's runner: the same worker built
-        # twice, each opening the demo stage and a grid of 24 copies of it. Reported only; a
-        # worker whose override did not take already fails the tests above.
+        # twice, each opening the demo stage and a grid of 24 copies of it. Reported only, and
+        # run even when the tests failed, since it shows which allocator the worker got.
+        if: ${{ !cancelled() }}
         continue-on-error: true
         shell: bash
         run: |
@@ -166,6 +167,11 @@ jobs:
           if [[ -z "$system_worker" ]]; then
             echo "This build has no mimalloc worker to compare."
             exit 0
+          fi
+          minject=$(find "$build" -path "*tools/mimalloc/minject.exe" | head -1)
+          if [[ -n "$minject" ]]; then
+            echo "Worker imports, mimalloc.dll first for its malloc to be replaced:"
+            "$minject" --list "$(find_exe loupe-worker)" || true
           fi
           mkdir -p benchmark
           "$(find_exe loupe-demo-stage)" benchmark/stage.step

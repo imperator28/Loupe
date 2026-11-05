@@ -23,6 +23,20 @@ function(loupe_add_worker target use_mimalloc)
         # First, so its malloc is the one the worker's own code and the static libraries bind to.
         target_link_libraries(${target} PRIVATE $<IF:$<TARGET_EXISTS:mimalloc-static>,mimalloc-static,mimalloc>)
         target_compile_definitions(${target} PRIVATE LOUPE_WORKER_MIMALLOC=1)
+        if (WIN32)
+            # The redirect takes effect only when mimalloc.dll comes first in the executable's
+            # import table, which the link order does not guarantee: mimalloc's own minject
+            # moves it there. Without it the worker runs on the system allocator, and says so.
+            find_program(LOUPE_MINJECT minject
+                HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/mimalloc" NO_DEFAULT_PATH)
+            if (LOUPE_MINJECT)
+                add_custom_command(TARGET ${target} POST_BUILD
+                    COMMAND "${LOUPE_MINJECT}" --force --inplace "$<TARGET_FILE:${target}>"
+                    COMMENT "Putting mimalloc.dll first in ${target}'s imports")
+            else()
+                message(WARNING "minject not found: ${target} may not get mimalloc's malloc")
+            endif()
+        endif()
     endif()
     target_link_libraries(${target} PRIVATE loupe::core loupe::protocol Qt6::Core Qt6::Network)
     loupe_enable_warnings(${target})
