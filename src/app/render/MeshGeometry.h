@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QMatrix4x4>
+#include <QVariant>
 #include <QVariantList>
 
 #include <QQuick3DGeometry>
@@ -44,6 +46,12 @@ public:
     // boundary edge, which the caller can square the view up against.
     Q_INVOKABLE [[nodiscard]] QVariantMap faceViewFor(quint32 topologyId) const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
+    // The face as a measurement pick (a tools::MeasureEntity), in scene coordinates through
+    // `toScene` (the drawing model's scene transform): flat or not, its plane, its exact area
+    // and radius from the CAD face, and -- for a pick being accepted -- its triangles.
+    Q_INVOKABLE [[nodiscard]] QVariant faceEntity(quint32 topologyId, const QMatrix4x4& toScene,
+                                                  const QVector3D& scenePoint, const QVector3D& sceneNormal,
+                                                  bool withTriangles) const;
     Q_INVOKABLE bool copySectionOverlayFrom(QObject* source);
     // One cap for a whole part: the worker splits a part into one mesh per colour, and a
     // cut through any one of them alone is open, so it cannot be filled.

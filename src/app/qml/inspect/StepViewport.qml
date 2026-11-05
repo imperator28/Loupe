@@ -106,6 +106,11 @@ Item {
     // finish on the spot, so a pass gets through many of them; the cap keeps the UI live.
     readonly property int sectionItemsPerPass: 150
     property var hoverTopology: null
+    // Where the pointer is, for the measurement hover chip.
+    property point hoverPointer: Qt.point(0, 0)
+    // How close, in pixels, the pointer must be to take an edge, and an edge's end.
+    readonly property real measureEdgePixels: 7
+    readonly property real measureVertexPixels: 10
     property var acceptedTopologies: []
     readonly property bool hasAcceptedFaceHighlight: {
         for (const pick of acceptedTopologies) {
@@ -304,9 +309,12 @@ Item {
     }
     readonly property real handlePixels: 96
     readonly property real handleLength: worldPerPixelAt(handleCentre) * handlePixels
-    // Hidden while the view eases to (or shows) the assembly: a move is made to the layout.
+    // Shown on the layout and on the assembly alike, hidden only while the view eases between
+    // the two. On the assembly a drag starts a new layout from where the parts are assembled,
+    // and the one kept aside is saved first, so nothing is lost by starting over.
     readonly property bool handlesShown: explodedLayoutEnabled && explodeToolActive && explode !== null
-            && !presentationOnly && !captureUiHidden && handleBounds !== null && explode.blend > 0.999
+            && !presentationOnly && !captureUiHidden && handleBounds !== null
+            && (explode.blend > 0.999 || explode.blend < 0.001)
             && !pickingPivot
     // The handle under the pointer, and the drag in progress: {kind, axis, ...}.
     property var handleHover: null
@@ -442,6 +450,37 @@ Item {
             saveViewThumbnail(id)
         }
         return id
+    }
+
+    // Saved exploded layouts. Going to one eases the parts out of the assembly to it.
+    readonly property string activeExplodeLayoutId: {
+        const revision = explode ? explode.revision : -1
+        const showing = explode ? explode.blend > 0.5 : false
+        const saved = controller ? controller.savedViews.explodeLayouts : []
+        return controller && revision >= 0 && showing && saved.length > 0 ? controller.currentExplodeLayoutId() : ""
+    }
+
+    function saveExplodeLayout(name) {
+        if (!controller) return ""
+        const id = controller.saveExplodeLayout(name)
+        if (id.length > 0) saveViewThumbnail(id)
+        return id
+    }
+
+    function updateExplodeLayout(id) {
+        if (!controller || !controller.updateExplodeLayout(id)) return false
+        saveViewThumbnail(id)
+        return true
+    }
+
+    function goToExplodeLayout(id) {
+        if (!controller || !explode) return false
+        explodeResetAnimation.stop()
+        layoutViewAnimation.stop()
+        autoExplodeAnimation.stop()
+        if (!controller.applyExplodeLayout(id)) return false
+        showExploded()
+        return true
     }
 
     function goToDisplayState(id) {
@@ -1664,43 +1703,95 @@ Item {
         return true
     }
 
-    function topologyPickFromHit(hit) {
-        if (!root.controller || !hit.objectHit || !hit.objectHit.nodeId) return null
-        const mode = root.controller.measurement.mode
-        const nodeId = hit.objectHit.nodeId
-        let sourceGeometry = null
-        let info = null
+    // What a click at this hit would pick in the current mode, as the CAD tools snap: in
+    // point to point a vertex, else a circle's centre, else a point on an edge, else the point
+    // on the face; for the other modes the whole edge or face the mode is about. Null when
+    // the mode measures whole parts (volume, bounds) or nothing is there.
+    //   { nodeId, entity (a MeasureEntity), info (its description), entityKind ("face" or
+    //     "edge", what to highlight), topologyId, sourceGeometry, placementNode }
+    // `withShape` asks for a face's triangles too: only an accepted surface-to-surface pick
+    // needs them, and copying them on every hover would cost for nothing.
+    function measureCandidateAt(hit, withShape) {
+        if (!root.controller || !hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return null
+        const measurement = root.controller.measurement
+        const mode = measurement.mode
+        if (mode === 6 || mode === 7) return null
+        const model = hit.objectHit
+        const nodeId = model.nodeId
         // The part's geometry (faces and edges alike) is in its own frame -- a copy of a shared
-        // mesh, an exploded part -- so the hit is taken into it, as facePickFromHit does.
-        const local = hit.objectHit.mapPositionFromScene(hit.scenePosition)
-        if (mode === 1 || mode === 3) {
-            sourceGeometry = edgeGeometryByNode[nodeId]
-            if (sourceGeometry) {
-                const tolerance = Math.max(root.sceneDiagonal * 0.001, root.sectionWorldPerPixel * 10)
-                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z, tolerance)
-                if (info && mode === 3 && info.radiusMm <= 0) info = null
-            }
-            if (!info && mode === 3 && hit.objectHit.geometry) {
-                sourceGeometry = hit.objectHit.geometry
-                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z)
-                if (info && info.radiusMm <= 0) info = null
-            }
-        } else if (mode === 2 || mode === 4 || mode === 5) {
-            sourceGeometry = hit.objectHit.geometry
-            if (sourceGeometry)
-                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z)
+        // mesh, an exploded part -- so the hit is taken into it, and the entity back out.
+        const local = model.mapPositionFromScene(hit.scenePosition)
+        const toScene = model.sceneTransform
+        const pixel = root.worldPerPixelAt(hit.scenePosition)
+        const edgeGeometry = edgeGeometryByNode[nodeId]
+        const edgeModel = edgeModelByNode[nodeId]
+        const edgeToScene = edgeModel ? edgeModel.sceneTransform : toScene
+        let entity = undefined
+        let entityKind = ""
+        let sourceGeometry = null
+        let topologyId = 0
+        let placementNode = model.parent
+
+        const takeFace = function() {
+            const geometry = model.geometry
+            const info = geometry ? geometry.topologyAtPoint(local.x, local.y, local.z) : null
+            if (!info || !info.topologyId) return false
+            entity = geometry.faceEntity(info.topologyId, toScene, hit.scenePosition, hit.sceneNormal, withShape === true)
+            if (!entity) return false
+            entityKind = "face"
+            sourceGeometry = geometry
+            topologyId = info.topologyId
+            return true
         }
-        if (!info || !info.topologyId) return null
+        const takeEdge = function(round) {
+            if (!edgeGeometry) return false
+            // Within a few pixels of the pointer, whatever the zoom.
+            const info = edgeGeometry.topologyAtPoint(local.x, local.y, local.z, pixel * root.measureEdgePixels)
+            if (!info || !info.topologyId || (round && info.radiusMm <= 0)) return false
+            entity = edgeGeometry.edgeEntity(info.topologyId, edgeToScene, hit.scenePosition)
+            if (!entity) return false
+            entityKind = "edge"
+            sourceGeometry = edgeGeometry
+            topologyId = info.topologyId
+            placementNode = edgeModel ? edgeModel.parent : model.parent
+            return true
+        }
+
+        if (mode === 0) {
+            const snap = edgeGeometry ? edgeGeometry.snapPointAt(local.x, local.y, local.z, pixel * root.measureEdgePixels,
+                                                                 pixel * root.measureVertexPixels, edgeToScene) : undefined
+            if (snap) {
+                entity = snap
+                entityKind = "edge"
+                sourceGeometry = edgeGeometry
+                topologyId = measurement.describe(snap).topologyId
+                placementNode = edgeModel ? edgeModel.parent : model.parent
+            } else {
+                // A point on the face, with the face lit so it is clear which one.
+                takeFace()
+                entity = measurement.surfacePointEntity(hit.scenePosition, hit.sceneNormal)
+            }
+        } else if (mode === 1) {
+            takeEdge(false)
+        } else if (mode === 2 || mode === 5) {
+            takeFace()
+        } else if (mode === 3) {
+            // Round first; failing that, whatever is there, so the hover can say it is not round.
+            if (!takeEdge(true) && !takeFace()) takeEdge(false)
+        } else if (mode === 4) {
+            if (!takeEdge(false)) takeFace()
+        }
+        if (!entity) return null
+        const info = measurement.describe(entity)
         return {
             nodeId: nodeId,
-            entityKind: info.entityKind,
-            topologyId: info.topologyId,
-            measureMm: info.measureMm,
-            radiusMm: info.radiusMm,
+            entity: entity,
+            info: info,
+            entityKind: entityKind,
+            topologyId: topologyId,
             sourceGeometry: sourceGeometry,
-            placementNode: hit.objectHit.parent,
-            point: hit.scenePosition,
-            normal: hit.sceneNormal
+            placementNode: placementNode,
+            point: info.point
         }
     }
 
@@ -1714,10 +1805,15 @@ Item {
     }
 
     function showHoverTopology(pick) {
+        const same = pick && root.hoverTopology && pick.sourceGeometry === root.hoverTopology.sourceGeometry
+                && pick.topologyId === root.hoverTopology.topologyId && pick.entityKind === root.hoverTopology.entityKind
         root.hoverTopology = pick
+        // The pointer moved along the same face or edge: its highlight stands, only the snap
+        // point and the chip follow.
+        if (same) return
         hoverFaceHighlight.clearTopology()
         hoverEdgeGeometry.clearEdges()
-        if (!pick) return
+        if (!pick || !pick.sourceGeometry || !pick.topologyId) return
         if (pick.entityKind === "face") {
             hoverFaceHighlight.position = placementPosition(pick)
             hoverFaceHighlight.rotation = placementRotation(pick)
@@ -1738,28 +1834,22 @@ Item {
 
     function acceptMeasurementHit(hit) {
         const mode = root.controller.measurement.mode
-        if (mode === 0) {
-            root.controller.acceptViewPick(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                           hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
-            return
-        }
         if (mode === 6 || mode === 7) {
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
                                                 hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
             return
         }
-        const pick = topologyPickFromHit(hit)
-        if (!pick) return
-        if (!root.controller.acceptTopologyPick(pick.nodeId, pick.entityKind, pick.topologyId,
-                                                pick.point.x, pick.point.y, pick.point.z,
-                                                pick.normal.x, pick.normal.y, pick.normal.z,
-                                                pick.measureMm, pick.radiusMm)) return
-        const maximum = mode === 2 || mode === 4 ? 2 : 1
-        let next = root.acceptedTopologies.slice()
-        if (next.length >= maximum) next = []
-        next.push(pick)
+        // Surface to surface measures between whole faces, so it takes the face's triangles.
+        const pick = measureCandidateAt(hit, mode === 2)
+        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity)) return
+        // The measurement was started over when this pick began a new one.
+        let next = root.controller.measurement.pickedEntities.length === 1 ? [] : root.acceptedTopologies.slice()
+        // A whole edge or face stays lit in the measurement colour; a point has its numbered marker.
+        if (pick.sourceGeometry && pick.topologyId && (pick.info.kind === "edge" || pick.info.kind === "face")) next.push(pick)
         root.acceptedTopologies = next
         showHoverTopology(null)
+        // The hover is the next candidate, at once: no move needed to see it.
+        updateHover(input.mouseX, input.mouseY)
     }
 
     // A face pick independent of the measurement mode, so the drawing workspace can pick and
@@ -1882,13 +1972,14 @@ Item {
     }
 
     function updateHover(x, y) {
+        root.hoverPointer = Qt.point(x, y)
         const hit = view.pick(x, y)
         const nodeId = hit.objectHit && hit.objectHit.nodeId ? hit.objectHit.nodeId : ""
         if (hoveredNodeId !== nodeId) hoveredNodeId = nodeId
         if (root.faceFrameSelectionEnabled)
             showHoverTopology(root.facePickFromHit(hit))
         else if (root.measurementActive && hit.objectHit && hit.objectHit.nodeId)
-            showHoverTopology(topologyPickFromHit(hit))
+            showHoverTopology(measureCandidateAt(hit, false))
         else if (root.hoverTopology)
             showHoverTopology(null)
     }
@@ -1997,7 +2088,9 @@ Item {
                                          && root.controller.isNodeSelected(nodeId))
                                         || root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId))
             property bool hovered: !selected && root.hoveredNodeId === nodeId
-            property bool inspectionHovered: hovered && !root.measurementActive && root.componentHoverEnabled
+            // Volume and bounds measure the whole part, so the part is what the hover shows.
+            property bool inspectionHovered: hovered && root.componentHoverEnabled
+                                             && (!root.measurementActive || root.showComponentSelection)
             property bool transparent: false
             // The part's own opacity while transparent (Properties > Opacity).
             property real transparentOpacity: 0.45
@@ -2594,43 +2687,24 @@ Item {
         }
     }
 
-    Item {
-        id: measurementPickOverlay
-        visible: !root.presentationOnly && root.controller && root.controller.measurement.pickedPoints.length > 0
+    MeasurementOverlay {
+        id: measurementOverlay
+        objectName: "measurementOverlay"
         anchors.fill: parent
         z: 4
         enabled: false
-
-        Repeater {
-            model: root.controller ? root.controller.measurement.pickedPoints : []
-            delegate: Rectangle {
-                required property var modelData
-                readonly property point screenPosition: {
-                    // mapFrom3DScene has no declared camera dependency, so keep
-                    // the overlay projection synchronized with navigation.
-                    const navigationRevision = navigation.revision
-                    if (navigationRevision < 0) return Qt.point(-10000, -10000)
-                    return view.mapFrom3DScene(modelData)
-                }
-                width: 24
-                height: 24
-                radius: 12
-                x: screenPosition.x - width / 2
-                y: screenPosition.y - height / 2
-                color: viewportVisualTheme.selectionColor
-                border.color: viewportVisualTheme.markerBorder
-                border.width: 2
-                visible: screenPosition.x >= -width && screenPosition.x <= parent.width
-                         && screenPosition.y >= -height && screenPosition.y <= parent.height
-
-                Label {
-                    anchors.centerIn: parent
-                    text: index + 1
-                    color: viewportVisualTheme.sectionLabel
-                    font.bold: true
-                }
-            }
-        }
+        theme: root.theme
+        visualTheme: viewportVisualTheme
+        view: view
+        revision: navigation.revision
+        measurement: root.controller ? root.controller.measurement : null
+        visible: !root.presentationOnly && root.controller !== null
+                 && (root.measurementActive || root.controller.measurement.pickedPoints.length > 0)
+        // The hover is for aiming; a capture shows the result only, and only if asked to.
+        hover: root.measurementActive ? root.hoverTopology : null
+        pointer: root.hoverPointer
+        showHover: root.measurementActive && !root.captureUiHidden && input.containsMouse && input.pressedButtons === Qt.NoButton
+        showResult: !root.captureUiHidden || (root.controller !== null && root.controller.capture.includeMeasurements)
     }
 
     // Two-finger touch gestures: pinch to zoom, drag to pan, twist to roll.
@@ -3016,10 +3090,19 @@ Item {
                  && !root.isTextEditFocused()
         onActivated: root.explode.redo()
     }
+    // Esc clears the measurement first; pressed again it does what it otherwise does.
+    readonly property bool measurementHasPicks: root.measurementActive && root.controller !== null
+                                               && root.controller.measurement.pickedEntities.length > 0
+    Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && !root.presentationOnly && root.measurementHasPicks && !sectionArrowInput.dragging
+                 && root.handleDrag === null && !root.pickingPivot
+        onActivated: root.controller.measurement.clearPicks()
+    }
     Shortcut {
         sequence: "Esc"
         enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null
-                                  && !root.pickingPivot)
+                                  && !root.pickingPivot && !root.measurementHasPicks)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")

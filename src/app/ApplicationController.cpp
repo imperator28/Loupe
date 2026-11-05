@@ -115,6 +115,15 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     workerEnvironment.remove(QStringLiteral("XPC_FLAGS"));
     workerProcess_.setProcessEnvironment(workerEnvironment);
     workerProcess_.setProcessChannelMode(QProcess::ForwardedChannels);
+    // A layout set aside when an edit starts over from the assembly is kept, unless it is
+    // one already saved, so starting over never loses a layout.
+    connect(&explodeController_, &tools::ExplodeController::layoutSetAside, this,
+            [this](const QVariantMap& snapshot, const QString& summary) {
+        for (const auto& value : savedViews_.explodeLayouts()) {
+            if (snapshot == savedViews_.data(value.toMap().value(QStringLiteral("id")).toString())) return;
+        }
+        savedViews_.add(QStringLiteral("layout"), {}, tr("Set aside · %1").arg(summary), snapshot);
+    });
     connect(&workerProcess_, &QProcess::started, this, [this] {
         setImportProgress(tr("Starting STEP importer"), 0.005);
         connectWorker();
@@ -915,6 +924,34 @@ QString ApplicationController::saveDisplayState(const QString& name)
                             {QStringLiteral("opacity"), opacity.toVariantMap()},
                             {QStringLiteral("withoutEdges"), withoutEdges.toVariantList()},
                             {QStringLiteral("presentation"), static_cast<int>(viewerPresentation_)}});
+}
+
+QString ApplicationController::saveExplodeLayout(const QString& name)
+{
+    if (!explodeController_.exploded()) return {};
+    return savedViews_.add(QStringLiteral("layout"), name, explodeController_.layoutSummary(), explodeController_.layoutSnapshot());
+}
+
+bool ApplicationController::applyExplodeLayout(const QString& id)
+{
+    const auto snapshot = savedViews_.data(id);
+    return !snapshot.isEmpty() && explodeController_.restoreLayout(snapshot);
+}
+
+bool ApplicationController::updateExplodeLayout(const QString& id)
+{
+    if (!explodeController_.exploded()) return false;
+    return savedViews_.replace(id, explodeController_.layoutSummary(), explodeController_.layoutSnapshot());
+}
+
+QString ApplicationController::currentExplodeLayoutId() const
+{
+    if (!explodeController_.exploded() || explodeController_.showingAssembly()) return {};
+    for (const auto& value : savedViews_.explodeLayouts()) {
+        const auto id = value.toMap().value(QStringLiteral("id")).toString();
+        if (explodeController_.layoutMatches(savedViews_.data(id))) return id;
+    }
+    return {};
 }
 
 bool ApplicationController::applyDisplayState(const QString& id)
@@ -2081,6 +2118,16 @@ void ApplicationController::acceptViewPick(const QString& nodeId, const double x
     measurementController_.recordPick({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
                                       {static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)},
                                       displayNameByNode_.value(nodeId, tr("Component")), tr("Surface point"));
+}
+
+bool ApplicationController::acceptMeasureEntity(const QString& nodeId, const QVariant& entity)
+{
+    if (nodeId.isEmpty() || !entity.canConvert<tools::MeasureEntity>()) return false;
+    const auto pick = entity.value<tools::MeasureEntity>();
+    // As every pick does: a flat face offers its plane to the section tool.
+    if (pick.kind == tools::MeasureEntity::Kind::Face && pick.planar)
+        sectionController_.setCandidatePlane(pick.planeNormal, pick.planePoint);
+    return measurementController_.acceptEntity(entity, displayNameByNode_.value(nodeId, tr("Component")));
 }
 
 bool ApplicationController::acceptTopologyPick(const QString& nodeId, const QString& entityKind,

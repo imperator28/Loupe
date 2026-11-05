@@ -105,6 +105,19 @@ public:
     Q_INVOKABLE void setAngles(const QString& nodeId, const QVector3D& degrees);
     Q_INVOKABLE void resetNode(const QString& nodeId);
     Q_INVOKABLE void resetAll();
+
+    // Saved layouts: the layout as data to keep ({transforms: {node: 16 numbers, row-major},
+    // autoFactors: {scope: factor}}), and back. Restoring is one step to undo, and leaves the
+    // view on the assembly (blend 0) so the viewport can ease the parts out to it. Nodes the
+    // document does not have are skipped; false when nothing in the snapshot applies.
+    Q_INVOKABLE [[nodiscard]] QVariantMap layoutSnapshot() const;
+    Q_INVOKABLE bool restoreLayout(const QVariantMap& snapshot);
+    // Whether the layout is the one in `snapshot` (to a hair).
+    Q_INVOKABLE [[nodiscard]] bool layoutMatches(const QVariantMap& snapshot) const;
+    // "3 parts moved · 2 turned": what a layout holds, in a few words.
+    Q_INVOKABLE [[nodiscard]] QString layoutSummary() const;
+    // Whether the view is on the assembly with a layout kept aside (Assembled, not reset).
+    [[nodiscard]] bool showingAssembly() const noexcept { return exploded() && blend_ < 0.5; }
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
 
@@ -131,6 +144,10 @@ signals:
     void interactionChanged();
     void historyChanged();
     void settingsChanged();
+    // An edit was begun on the assembly while a layout was kept aside: the edit starts from
+    // where the file puts the parts, and the kept layout is handed over to be saved, so
+    // nothing is lost. Undo also brings it back.
+    void layoutSetAside(const QVariantMap& snapshot, const QString& summary);
 
 private:
     struct Bounds {
@@ -157,7 +174,12 @@ private:
     void setPlacement(const QString& nodeId, const QMatrix4x4& placement);
     void setOwnTransform(const QString& nodeId, const QMatrix4x4& transform);
     void invalidate();
-    void showLayoutForEditing();
+    enum class EditFrom { Layout, Assembly };
+    // An edit is made to what is on screen. On the assembly with a layout kept aside, an edit
+    // from the assembly (a drag, a spread, a typed move) starts a new layout and sets the
+    // kept one aside; anything else brings the kept layout back first.
+    void showLayoutForEditing(EditFrom from = EditFrom::Layout);
+    [[nodiscard]] static QVariantMap snapshotOf(const State& state);
     void announce(const QStringList& partIds);
     void announceStateChange(const State& before);
     void pushUndo(const State& before);

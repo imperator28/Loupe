@@ -1,4 +1,7 @@
 #include "app/render/CadEdgeGeometry.h"
+#include "app/tools/MeasureGeometry.h"
+
+#include <optional>
 
 #include "app/render/MeshGeometry.h"
 
@@ -116,6 +119,87 @@ QVariantMap CadEdgeGeometry::topologyAtPoint(const double x, const double y, con
             {QStringLiteral("entityKind"), QStringLiteral("edge")},
             {QStringLiteral("measureMm"), closestRange->measureMm},
             {QStringLiteral("radiusMm"), closestRange->radiusMm}};
+}
+
+QVariant CadEdgeGeometry::edgeEntity(const quint32 topologyId, const QMatrix4x4& toScene, const QVector3D& scenePoint) const
+{
+    const auto range = std::find_if(sourceTopology_.cbegin(), sourceTopology_.cend(),
+                                    [topologyId](const auto& value) { return value.topologyId == topologyId; });
+    if (range == sourceTopology_.cend()) return {};
+    tools::MeasureEntity edge;
+    edge.kind = tools::MeasureEntity::Kind::Edge;
+    edge.topologyId = topologyId;
+    edge.lengthMm = range->measureMm;
+    edge.radiusMm = range->radiusMm;
+    // The range is line-list pairs: (p0 p1) (p1 p2) ..., so the polyline is each pair's start
+    // and the last pair's end.
+    const auto end = static_cast<qsizetype>(range->firstIndex + range->indexCount);
+    const auto pointAt = [this](const quint32 index) {
+        const auto offset = static_cast<qsizetype>(index) * 3;
+        return QVector3D{sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1), sourceVertexData_.at(offset + 2)};
+    };
+    for (auto index = static_cast<qsizetype>(range->firstIndex); index + 1 < end; index += 2) {
+        const auto first = toScene.map(pointAt(sourceIndexData_.at(index)));
+        if (edge.polyline.isEmpty() || (edge.polyline.constLast() - first).lengthSquared() > 0.0F) edge.polyline.append(first);
+        if (index + 3 >= end) edge.polyline.append(toScene.map(pointAt(sourceIndexData_.at(index + 1))));
+    }
+    if (edge.polyline.size() < 2) return {};
+    tools::measure::describeEdge(&edge);
+    auto best = std::numeric_limits<float>::max();
+    for (qsizetype index = 0; index + 1 < edge.polyline.size(); ++index) {
+        const auto candidate = tools::measure::closestPointOnSegment(scenePoint, edge.polyline.at(index), edge.polyline.at(index + 1));
+        const auto distance = (candidate - scenePoint).lengthSquared();
+        if (distance < best) {
+            best = distance;
+            edge.point = candidate;
+        }
+    }
+    return QVariant::fromValue(edge);
+}
+
+QVariant CadEdgeGeometry::snapPointAt(const double x, const double y, const double z, const double edgeTolerance,
+                                      const double vertexTolerance, const QMatrix4x4& toScene) const
+{
+    const auto nearest = topologyAtPoint(x, y, z, edgeTolerance);
+    if (nearest.isEmpty()) return {};
+    const QVector3D local{static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
+    const auto scenePoint = toScene.map(local);
+    const auto entityValue = edgeEntity(nearest.value(QStringLiteral("topologyId")).toUInt(), toScene, scenePoint);
+    if (!entityValue.canConvert<tools::MeasureEntity>()) return {};
+    auto edge = entityValue.value<tools::MeasureEntity>();
+
+    // An end of any edge near the pointer: corners are where edges meet, and the nearest
+    // edge may not be the one whose end is under the pointer.
+    auto bestVertex = static_cast<float>(vertexTolerance * vertexTolerance);
+    std::optional<QVector3D> vertex;
+    const auto pointAt = [this](const quint32 index) {
+        const auto offset = static_cast<qsizetype>(index) * 3;
+        return QVector3D{sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1), sourceVertexData_.at(offset + 2)};
+    };
+    for (const auto& range : sourceTopology_) {
+        if (range.indexCount < 2) continue;
+        const auto ends = {pointAt(sourceIndexData_.at(range.firstIndex)),
+                           pointAt(sourceIndexData_.at(range.firstIndex + range.indexCount - 1))};
+        for (const auto& candidate : ends) {
+            const auto distance = (candidate - local).lengthSquared();
+            if (distance <= bestVertex) {
+                bestVertex = distance;
+                vertex = candidate;
+            }
+        }
+    }
+    tools::MeasureEntity snap = edge;
+    snap.triangles.clear();
+    if (vertex) {
+        snap.kind = tools::MeasureEntity::Kind::Vertex;
+        snap.point = toScene.map(*vertex);
+    } else if (edge.circular) {
+        snap.kind = tools::MeasureEntity::Kind::CircleCentre;
+        snap.point = edge.centre;
+    } else {
+        snap.kind = tools::MeasureEntity::Kind::EdgePoint;
+    }
+    return QVariant::fromValue(snap);
 }
 
 bool CadEdgeGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)

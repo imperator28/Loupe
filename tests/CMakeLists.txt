@@ -140,6 +140,8 @@ add_executable(loupe-application-controller-tests
     "${PROJECT_SOURCE_DIR}/src/app/cache/OverrideStore.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
@@ -261,6 +263,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/cache/OverrideStore.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"
@@ -373,6 +377,17 @@ set_tests_properties(qml-inspection-tools PROPERTIES
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
 )
 
+add_executable(loupe-saved-views-tests
+    app/test_saved_views.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/models/SavedViews.h"
+)
+target_link_libraries(loupe-saved-views-tests PRIVATE Qt6::Core Qt6::Test)
+target_include_directories(loupe-saved-views-tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+loupe_enable_warnings(loupe-saved-views-tests)
+
+add_test(NAME saved-views COMMAND loupe-saved-views-tests)
+
 add_executable(loupe-assembly-tree-tests
     app/test_assembly_tree_model.cpp
     "${PROJECT_SOURCE_DIR}/src/app/models/AssemblyTreeModel.cpp"
@@ -388,6 +403,8 @@ add_test(NAME assembly-tree COMMAND loupe-assembly-tree-tests)
 
 add_executable(loupe-scene-model-tests
     app/test_scene_model.cpp
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/MeshGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/render/SectionMeshBuilder.cpp"
@@ -486,6 +503,8 @@ add_executable(loupe-inspection-tools-tests
     app/test_inspection_tools.cpp
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/MeasurementController.h"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/tools/MeasureGeometry.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/tools/CaptureController.h"
     "${PROJECT_SOURCE_DIR}/src/app/tools/SectionController.cpp"

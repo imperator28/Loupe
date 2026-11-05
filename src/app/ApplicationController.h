@@ -221,6 +221,14 @@ public:
     Q_INVOKABLE void resetDisplayState();
     Q_INVOKABLE QString saveCameraView(const QString& name, const QVariantMap& camera, const QString& summary);
     Q_INVOKABLE [[nodiscard]] QVariantMap cameraView(const QString& id) const { return savedViews_.data(id); }
+    // A saved exploded layout: where every moved part is, for coming back to a spread or a
+    // set of turned parts in one click. Applying it leaves the view on the assembly for the
+    // viewport to ease out; updating saves the current layout over the entry.
+    Q_INVOKABLE QString saveExplodeLayout(const QString& name);
+    Q_INVOKABLE bool applyExplodeLayout(const QString& id);
+    Q_INVOKABLE bool updateExplodeLayout(const QString& id);
+    // The saved layout that is on screen now, or "".
+    Q_INVOKABLE [[nodiscard]] QString currentExplodeLayoutId() const;
     [[nodiscard]] tools::ExplodeController& explodeController() noexcept { return explodeController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
@@ -307,6 +315,8 @@ public:
     Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
                                          bool additive = false);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
+    // A measurement pick the viewport built from the part's geometry (a MeasureEntity).
+    Q_INVOKABLE bool acceptMeasureEntity(const QString& nodeId, const QVariant& entity);
     Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
                                         double x, double y, double z, double normalX, double normalY, double normalZ,
                                         double measureMm, double radiusMm);

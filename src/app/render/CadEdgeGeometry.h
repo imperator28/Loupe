@@ -3,6 +3,8 @@
 #include <QQuick3DGeometry>
 #include <QVector>
 #include <QVector3D>
+#include <QMatrix4x4>
+#include <QVariant>
 #include <QVariantMap>
 
 #include "protocol/GeometryPayload.h"
@@ -22,6 +24,15 @@ public:
     Q_INVOKABLE void clearEdges();
     Q_INVOKABLE QVariantMap topologyAtPoint(double x, double y, double z, double tolerance) const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
+    // The edge as a measurement pick (a tools::MeasureEntity) in scene coordinates through
+    // `toScene`: its polyline, straight or circular (centre and axis), its exact length and
+    // radius from the CAD curve, and the point on it nearest `scenePoint`.
+    Q_INVOKABLE [[nodiscard]] QVariant edgeEntity(quint32 topologyId, const QMatrix4x4& toScene, const QVector3D& scenePoint) const;
+    // A point pick near (x, y, z) in this geometry's frame, snapped as a CAD tool snaps: to an
+    // edge's end within `vertexTolerance`, else to a circular edge's centre, else to the
+    // nearest point on an edge within `edgeTolerance`. Invalid when no edge is that close.
+    Q_INVOKABLE [[nodiscard]] QVariant snapPointAt(double x, double y, double z, double edgeTolerance,
+                                                   double vertexTolerance, const QMatrix4x4& toScene) const;
     Q_INVOKABLE bool copyFaceBoundaryFrom(QObject* source, quint32 topologyId);
     Q_INVOKABLE void setSection(bool enabled, int axis, double position, bool flipped);
     Q_INVOKABLE void setSectionPlane(bool enabled, double normalX, double normalY, double normalZ, double offset, bool flipped);

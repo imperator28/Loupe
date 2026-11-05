@@ -51,6 +51,8 @@ qt_add_executable(loupe-app
     worker/WorkerClient.h
     tools/MeasurementController.cpp
     tools/MeasurementController.h
+    tools/MeasureGeometry.cpp
+    tools/MeasureGeometry.h
     tools/CaptureController.cpp
     tools/CaptureController.h
     tools/SectionController.cpp
@@ -209,6 +211,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/ThemedSpinBox.qml
         qml/inspect/UpdateIndicator.qml
         qml/inspect/ViewsPanel.qml
+        qml/inspect/SavedViewList.qml
         qml/inspect/OpenHistoryDialog.qml
         qml/inspect/WhatsNewDialog.qml
         qml/inspect/ThemedSwitch.qml
@@ -222,6 +225,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/InspectionDock.qml
         qml/inspect/ContextPanel.qml
         qml/inspect/MeasurementPanel.qml
+        qml/inspect/MeasurementOverlay.qml
         qml/inspect/SectionPanel.qml
         qml/inspect/ExplodePanel.qml
         qml/inspect/FloatingToolWindow.qml

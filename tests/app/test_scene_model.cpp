@@ -9,6 +9,7 @@
 #include "app/render/SceneModel.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/SectionMeshBuilder.h"
+#include "app/tools/MeasureGeometry.h"
 #include "protocol/GeometryPayload.h"
 
 class SceneModelTest final : public QObject
@@ -38,6 +39,7 @@ private slots:
     void sectionCapCompletesAContourWithLongStraightRuns();
     void sectionOverlayCapsAPartSplitAcrossColourSegments();
     void topologyRangesResolveAndCopyCompleteEntities();
+    void measurementEntitiesCarryShapeAndSnapToVerticesAndCentres();
     void faceBoundaryExcludesInternalTessellationEdges();
     void faceFrameDistinguishesAFlatFaceFromACurvedOne();
     void faceViewLooksAlongAPlaneNormalOrACylinderAxis();
@@ -447,6 +449,64 @@ void SceneModelTest::sectionOverlayCapsAPartSplitAcrossColourSegments()
     overlay.configureSection(true, 0.0, 0.0, 1.0, 0.0, false, true, false, true, true, false, 0.1);
     QTRY_VERIFY_WITH_TIMEOUT(!overlay.sectionBusy(), 3000);
     QVERIFY(overlay.sectionCapTriangleCount() >= 2);
+}
+
+void SceneModelTest::measurementEntitiesCarryShapeAndSnapToVerticesAndCentres()
+{
+    using loupe::app::tools::MeasureEntity;
+    // A flat square face, placed 10 up in the scene.
+    loupe::protocol::MeshPayload meshPayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"),
+        QStringLiteral("segment"), QStringLiteral("#ffffff"), 1,
+        {0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0},
+        {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, {0, 1, 2, 0, 2, 3},
+        {{7, loupe::protocol::TopologyKind::Face, 0, 6, 4.0F, 0.0F}}};
+    loupe::app::render::MeshGeometry mesh;
+    QVERIFY(mesh.appendWorkerMesh(loupe::protocol::encodeGeometry(meshPayload)));
+    QMatrix4x4 placed;
+    placed.translate(0, 0, 10);
+    const auto face = mesh.faceEntity(7, placed, {1, 1, 10}, {0, 0, 1}, true).value<MeasureEntity>();
+    QCOMPARE(face.kind, MeasureEntity::Kind::Face);
+    QVERIFY(face.planar);
+    QCOMPARE(face.areaMm2, 4.0);
+    QVERIFY((face.planePoint - QVector3D(1, 1, 10)).length() < 1e-5F);
+    QVERIFY((face.planeNormal - QVector3D(0, 0, 1)).length() < 1e-5F);
+    QCOMPARE(face.triangles.size(), 6);
+    QVERIFY(mesh.faceEntity(7, placed, {}, {}, false).value<MeasureEntity>().triangles.isEmpty());
+
+    // A straight edge from (0,0,0) to (4,0,0) in two segments, and a circle of radius 1 about (10,0,0).
+    QVector<float> vertices{0, 0, 0, 2, 0, 0, 4, 0, 0};
+    QVector<quint32> indices{0, 1, 1, 2};
+    const auto circleStart = static_cast<quint32>(vertices.size() / 3);
+    for (int step = 0; step < 32; ++step) {
+        const auto angle = 2.0 * std::numbers::pi * step / 32;
+        vertices.append({static_cast<float>(10 + std::cos(angle)), static_cast<float>(std::sin(angle)), 0.0F});
+    }
+    for (quint32 step = 0; step < 32; ++step) indices.append({circleStart + step, circleStart + (step + 1) % 32});
+    loupe::protocol::EdgePayload edgePayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"), 1, vertices, indices,
+        {{3, loupe::protocol::TopologyKind::Edge, 0, 4, 4.0F, 0.0F},
+         {5, loupe::protocol::TopologyKind::Edge, 4, 64, static_cast<float>(2 * std::numbers::pi), 1.0F}}};
+    loupe::app::render::CadEdgeGeometry edges;
+    QVERIFY(edges.replaceWorkerEdges(loupe::protocol::encodeGeometry(edgePayload)));
+    const QMatrix4x4 identity;
+    const auto line = edges.edgeEntity(3, identity, {3, 1, 0}).value<MeasureEntity>();
+    QVERIFY(line.linear);
+    QCOMPARE(line.polyline.size(), 3);
+    QVERIFY((line.point - QVector3D(3, 0, 0)).length() < 1e-5F);
+    const auto ring = edges.edgeEntity(5, identity, {}).value<MeasureEntity>();
+    QVERIFY(ring.circular);
+    QVERIFY((ring.centre - QVector3D(10, 0, 0)).length() < 1e-4F);
+
+    // Near the line's end: its vertex. Along it: a point on it. Near the circle: its centre.
+    const auto vertex = edges.snapPointAt(3.95, 0.02, 0, 0.1, 0.1, identity).value<MeasureEntity>();
+    QCOMPARE(vertex.kind, MeasureEntity::Kind::Vertex);
+    QVERIFY((vertex.point - QVector3D(4, 0, 0)).length() < 1e-5F);
+    const auto onEdge = edges.snapPointAt(1.3, 0.02, 0, 0.1, 0.1, identity).value<MeasureEntity>();
+    QCOMPARE(onEdge.kind, MeasureEntity::Kind::EdgePoint);
+    QVERIFY((onEdge.point - QVector3D(1.3F, 0, 0)).length() < 1e-5F);
+    const auto centre = edges.snapPointAt(10, 1.02, 0, 0.1, 0.01, identity).value<MeasureEntity>();
+    QCOMPARE(centre.kind, MeasureEntity::Kind::CircleCentre);
+    QVERIFY((centre.point - QVector3D(10, 0, 0)).length() < 1e-4F);
+    QVERIFY(!edges.snapPointAt(20, 20, 0, 0.1, 0.1, identity).isValid());
 }
 
 void SceneModelTest::topologyRangesResolveAndCopyCompleteEntities()

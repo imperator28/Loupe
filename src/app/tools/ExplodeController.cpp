@@ -254,7 +254,7 @@ QVector3D ExplodeController::movedCentre(const QStringList& nodeIds) const
         seen.insert(nodeId);
         const auto bounds = nodeBounds(nodeId);
         if (!bounds.valid) continue;
-        sum += effectiveTransform(nodeId).map(bounds.centre());
+        sum += showingAssembly() ? bounds.centre() : effectiveTransform(nodeId).map(bounds.centre());
         ++count;
     }
     return count > 0 ? sum / static_cast<float>(count) : QVector3D{};
@@ -292,14 +292,18 @@ QVariantMap ExplodeController::displayedBounds(const QStringList& nodeIds) const
     };
 }
 
+// The read-outs follow what is on screen: on the assembly, with a layout kept aside, a part
+// is where the file puts it, and that is where an edit starts from.
 QVector3D ExplodeController::offsetOf(const QString& nodeId) const
 {
+    if (showingAssembly()) return {};
     const auto centre = assembledCentre(nodeId);
     return effectiveTransform(nodeId).map(centre) - centre;
 }
 
 QVector3D ExplodeController::anglesOf(const QString& nodeId) const
 {
+    if (showingAssembly()) return {};
     const auto angles = rotationOf(effectiveTransform(nodeId)).toEulerAngles();
     return {cleanAngle(angles.x()), cleanAngle(angles.y()), cleanAngle(angles.z())};
 }
@@ -315,6 +319,7 @@ QVector4D ExplodeController::localPlane(const QString& nodeId, const QVector3D& 
 
 double ExplodeController::autoFactor(const QString& scopeId) const
 {
+    if (showingAssembly()) return 0.0;
     return state_.autoFactors.value(scopeId, 0.0);
 }
 
@@ -406,7 +411,7 @@ void ExplodeController::applyEdit(const State& before, const QStringList& change
 
 void ExplodeController::beginInteraction(const QStringList& nodeIds)
 {
-    showLayoutForEditing();
+    showLayoutForEditing(EditFrom::Assembly);
     if (interacting()) commitInteraction();
     QStringList nodes;
     for (const auto& nodeId : nodeIds) {
@@ -473,7 +478,7 @@ void ExplodeController::cancelInteraction()
 
 void ExplodeController::beginAutoExplode(const QString& scopeId)
 {
-    showLayoutForEditing();
+    showLayoutForEditing(EditFrom::Assembly);
     if (interacting()) commitInteraction();
     if (!scopeId.isEmpty() && !hasNode(scopeId)) return;
     interactionStart_ = state_;
@@ -577,7 +582,7 @@ void ExplodeController::translateBy(const QStringList& nodeIds, const QVector3D&
 
 void ExplodeController::setOffset(const QString& nodeId, const QVector3D& offset)
 {
-    showLayoutForEditing();
+    showLayoutForEditing(EditFrom::Assembly);
     if (!hasNode(nodeId)) return;
     if (interacting()) commitInteraction();
     const auto before = state_;
@@ -588,7 +593,7 @@ void ExplodeController::setOffset(const QString& nodeId, const QVector3D& offset
 
 void ExplodeController::setAngles(const QString& nodeId, const QVector3D& degrees)
 {
-    showLayoutForEditing();
+    showLayoutForEditing(EditFrom::Assembly);
     if (!hasNode(nodeId)) return;
     if (interacting()) commitInteraction();
     const auto before = state_;
@@ -647,11 +652,111 @@ void ExplodeController::redo()
     emit historyChanged();
 }
 
-void ExplodeController::showLayoutForEditing()
+void ExplodeController::showLayoutForEditing(const EditFrom from)
 {
-    // An edit is made to the exploded layout, so it is what has to be on screen: a view eased
-    // back to the assembly comes out again first.
+    if (from == EditFrom::Assembly && showingAssembly()) {
+        // What is on screen is the assembly, so that is what the edit starts from. Bringing
+        // the kept layout back first moved every part away from under the pointer.
+        const auto kept = snapshotOf(state_);
+        const auto summary = layoutSummary();
+        const auto before = state_;
+        state_ = {};
+        blend_ = 1.0;
+        announceStateChange(before);
+        pushUndo(before);
+        emit layoutSetAside(kept, summary);
+        return;
+    }
+    // An edit to the layout: a view eased back to the assembly comes out again first.
     if (blend_ < 1.0) setBlend(1.0);
+}
+
+QVariantMap ExplodeController::snapshotOf(const State& state)
+{
+    QVariantMap transforms;
+    for (auto it = state.transforms.cbegin(); it != state.transforms.cend(); ++it) {
+        QVariantList values;
+        values.reserve(16);
+        for (int row = 0; row < 4; ++row) {
+            for (int column = 0; column < 4; ++column) values.append(static_cast<double>((*it)(row, column)));
+        }
+        transforms.insert(it.key(), values);
+    }
+    QVariantMap factors;
+    for (auto it = state.autoFactors.cbegin(); it != state.autoFactors.cend(); ++it) factors.insert(it.key(), *it);
+    return {{QStringLiteral("transforms"), transforms}, {QStringLiteral("autoFactors"), factors}};
+}
+
+QVariantMap ExplodeController::layoutSnapshot() const
+{
+    return snapshotOf(state_);
+}
+
+bool ExplodeController::restoreLayout(const QVariantMap& snapshot)
+{
+    if (interacting()) cancelInteraction();
+    State restored;
+    const auto transforms = snapshot.value(QStringLiteral("transforms")).toMap();
+    for (auto it = transforms.cbegin(); it != transforms.cend(); ++it) {
+        if (!hasNode(it.key())) continue;
+        const auto values = it.value().toList();
+        if (values.size() != 16) continue;
+        float entries[16];
+        bool valid = true;
+        for (int index = 0; index < 16; ++index) {
+            bool ok = false;
+            const auto value = values.at(index).toDouble(&ok);
+            valid = valid && ok && std::isfinite(value);
+            entries[index] = static_cast<float>(value);
+        }
+        if (!valid) continue;
+        const QMatrix4x4 matrix(entries);
+        if (!isIdentity(matrix)) restored.transforms.insert(it.key(), matrix);
+    }
+    const auto factors = snapshot.value(QStringLiteral("autoFactors")).toMap();
+    for (auto it = factors.cbegin(); it != factors.cend(); ++it) {
+        if (!it.key().isEmpty() && !hasNode(it.key())) continue;
+        const auto factor = it.value().toDouble();
+        if (std::isfinite(factor) && factor > 0.0) restored.autoFactors.insert(it.key(), factor);
+    }
+    if (restored.transforms.isEmpty()) return false;
+    const auto before = state_;
+    state_ = restored;
+    blend_ = 0.0;
+    announceStateChange(before);
+    if (before.transforms != state_.transforms || before.autoFactors != state_.autoFactors) pushUndo(before);
+    return true;
+}
+
+bool ExplodeController::layoutMatches(const QVariantMap& snapshot) const
+{
+    const auto transforms = snapshot.value(QStringLiteral("transforms")).toMap();
+    if (transforms.size() != state_.transforms.size()) return false;
+    for (auto it = state_.transforms.cbegin(); it != state_.transforms.cend(); ++it) {
+        const auto values = transforms.value(it.key()).toList();
+        if (values.size() != 16) return false;
+        for (int index = 0; index < 16; ++index) {
+            const auto tolerance = index % 4 == 3 ? 1e-3 : 1e-5;
+            if (std::abs(values.at(index).toDouble() - static_cast<double>((*it)(index / 4, index % 4))) > tolerance) return false;
+        }
+    }
+    return true;
+}
+
+QString ExplodeController::layoutSummary() const
+{
+    int moved = 0;
+    int turned = 0;
+    for (const auto& part : partsUnder({})) {
+        const auto transform = effectiveTransform(part);
+        if (isIdentity(transform)) continue;
+        ++moved;
+        if (std::abs(rotationOf(transform).scalar()) < 0.99999F) ++turned;
+    }
+    if (moved == 0) return tr("Nothing moved");
+    const auto parts = moved == 1 ? tr("1 part moved") : tr("%1 parts moved").arg(moved);
+    if (turned == 0) return parts;
+    return QStringLiteral("%1 · %2").arg(parts, turned == 1 ? tr("1 turned") : tr("%1 turned").arg(turned));
 }
 
 void ExplodeController::setBlend(const double blend)
