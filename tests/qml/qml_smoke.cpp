@@ -1037,10 +1037,29 @@ void QmlSmokeTest::explodedViewHandlesMoveAndTurnTheSelection()
     QTRY_VERIFY_WITH_TIMEOUT(explode.blend() < 1e-3, 3000);
     QVERIFY(explode.exploded());
     QTRY_VERIFY_WITH_TIMEOUT(partNode(QStringLiteral("b"))->property("position").value<QVector3D>().length() < 1e-3F, 3000);
-    QVERIFY(!viewport->property("handlesShown").toBool());
     QVERIFY(QMetaObject::invokeMethod(viewport, "showExploded"));
     QTRY_VERIFY_WITH_TIMEOUT(explode.blend() > 0.999, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+
+    // On the assembly the handles stay: a move there starts a new layout from where the parts
+    // are assembled, and the layout kept aside is saved first rather than lost.
+    QVERIFY(QMetaObject::invokeMethod(viewport, "showAssembled"));
+    QTRY_VERIFY_WITH_TIMEOUT(explode.blend() < 1e-3, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("handlesShown").toBool(), 3000);
+    QVERIFY(controller.savedViews().explodeLayouts().isEmpty());
+    explode.translateBy({QStringLiteral("b")}, {0, 0, 3});
+    QCOMPARE(explode.blend(), 1.0);
+    QVERIFY((explode.offsetOf(QStringLiteral("b")) - QVector3D(0, 0, 3)).length() < 1e-3F);
+    QVERIFY(!explode.isMoved(QStringLiteral("a")));
+    QCOMPARE(controller.savedViews().explodeLayouts().size(), 1);
+    // The kept layout comes back from Saved layouts, easing out of the assembly.
+    const auto keptId = controller.savedViews().explodeLayouts().constFirst().toMap().value(QStringLiteral("id")).toString();
+    QVariant wentBack;
+    QVERIFY(QMetaObject::invokeMethod(viewport, "goToExplodeLayout", Q_RETURN_ARG(QVariant, wentBack), Q_ARG(QVariant, keptId)));
+    QVERIFY(wentBack.toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(explode.blend() > 0.999, 3000);
+    QVERIFY(explode.isMoved(QStringLiteral("a")));
+    QTRY_COMPARE_WITH_TIMEOUT(viewport->property("activeExplodeLayoutId").toString(), keptId, 3000);
 
     // Reset brings everything home.
     QVERIFY(QMetaObject::invokeMethod(viewport, "animateExplodeReset"));
