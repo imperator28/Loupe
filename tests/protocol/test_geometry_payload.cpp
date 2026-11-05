@@ -3,6 +3,7 @@
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolTypes.h"
 
+#include <array>
 #include <limits>
 
 class GeometryPayloadTest final : public QObject
@@ -14,6 +15,8 @@ private slots:
     void meshFaceAreaSumsTheFaceMeasures();
     void meshBoundsSpanTheVertices();
     void edgeRoundTrips();
+    void sharedMeshesAndInstancesRoundTrip();
+    void instanceBoundsFollowThePlacement();
     void rejectsOutOfRangeIndices();
     void rejectsTruncatedPayload();
     void rejectsOverlappingTopologyRanges();
@@ -38,6 +41,71 @@ void GeometryPayloadTest::meshRoundTrips()
     QCOMPARE(mesh.indices, QVector<quint32>({0, 1, 2}));
     QCOMPARE(mesh.topology.size(), 1);
     QCOMPARE(mesh.topology.front().topologyId, 3U);
+}
+
+void GeometryPayloadTest::sharedMeshesAndInstancesRoundTrip()
+{
+    loupe::protocol::MeshPayload shared{7, 3, QStringLiteral("definition"), QStringLiteral("shared-mesh-1:0"), QStringLiteral("shared-mesh-1:0"),
+                                        QStringLiteral("#2288CC"), 1,
+                                        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2},
+                                        {{3, loupe::protocol::TopologyKind::Face, 0, 3, 0.5F, 0.0F}}};
+    shared.shared = true;
+    const auto sharedBytes = loupe::protocol::encodeGeometry(shared);
+    const auto decodedShared = std::get<loupe::protocol::MeshPayload>(loupe::protocol::decodeGeometry(sharedBytes));
+    QVERIFY(decodedShared.shared);
+    QCOMPARE(decodedShared.segmentKey, QStringLiteral("shared-mesh-1:0"));
+    // A shared mesh is still a mesh to everything that reads one.
+    QCOMPARE(loupe::protocol::meshFaceArea(sharedBytes), 0.5);
+    QVERIFY(loupe::protocol::meshBounds(sharedBytes).has_value());
+
+    loupe::protocol::EdgePayload edges{8, 4, QStringLiteral("definition"), QStringLiteral("shared-edges-2"), 0,
+                                       {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F}, {0, 1},
+                                       {{4, loupe::protocol::TopologyKind::Edge, 0, 2, 1.0F, 0.0F}}};
+    edges.shared = true;
+    QVERIFY(std::get<loupe::protocol::EdgePayload>(loupe::protocol::decodeGeometry(loupe::protocol::encodeGeometry(edges))).shared);
+    edges.shared = false;
+    QVERIFY(!std::get<loupe::protocol::EdgePayload>(loupe::protocol::decodeGeometry(loupe::protocol::encodeGeometry(edges))).shared);
+
+    loupe::protocol::InstancePayload instance{7, 3, QStringLiteral("node"), QStringLiteral("node:0"), QStringLiteral("shared-mesh-1:0"),
+                                              QStringLiteral("#2288CC"), 1, false,
+                                              {0.0F, -1.0F, 0.0F, 25.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, -4.0F}};
+    const auto decodedInstance = std::get<loupe::protocol::InstancePayload>(
+        loupe::protocol::decodeGeometry(loupe::protocol::encodeGeometry(instance)));
+    QCOMPARE(decodedInstance.nodeId, QStringLiteral("node"));
+    QCOMPARE(decodedInstance.segmentKey, QStringLiteral("node:0"));
+    QCOMPARE(decodedInstance.sourceKey, QStringLiteral("shared-mesh-1:0"));
+    QCOMPARE(decodedInstance.sourceColor, QStringLiteral("#2288CC"));
+    QCOMPARE(decodedInstance.refinement, quint8{1});
+    QVERIFY(!decodedInstance.edges);
+    QCOMPARE(decodedInstance.placement, instance.placement);
+
+    instance.edges = true;
+    QVERIFY(std::get<loupe::protocol::InstancePayload>(loupe::protocol::decodeGeometry(loupe::protocol::encodeGeometry(instance))).edges);
+    instance.placement[3] = std::numeric_limits<float>::quiet_NaN();
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::encodeGeometry(instance));
+    instance.placement[3] = 0.0F;
+    instance.sourceKey.clear();
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, loupe::protocol::encodeGeometry(instance));
+}
+
+void GeometryPayloadTest::instanceBoundsFollowThePlacement()
+{
+    loupe::protocol::MeshPayload shared{7, 3, QStringLiteral("definition"), QStringLiteral("key"), QStringLiteral("key"), {}, 1,
+                                        {0.0F, 0.0F, 0.0F, 2.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2}, {}};
+    shared.shared = true;
+    // A quarter turn about Z, then 10 mm along X: x in [0, 2], y in [0, 1] becomes
+    // x in [9, 10], y in [0, 2].
+    const std::array<float, 12> placement{0.0F, -1.0F, 0.0F, 10.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F};
+    const auto bounds = loupe::protocol::meshBounds(loupe::protocol::encodeGeometry(shared), placement);
+    QVERIFY(bounds.has_value());
+    QCOMPARE(bounds->minimum[0], 9.0F);
+    QCOMPARE(bounds->maximum[0], 10.0F);
+    QCOMPARE(bounds->minimum[1], 0.0F);
+    QCOMPARE(bounds->maximum[1], 2.0F);
 }
 
 void GeometryPayloadTest::meshFaceAreaSumsTheFaceMeasures()

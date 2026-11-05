@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QQuaternion>
 #include <QVector3D>
 
 #include <cstdint>
@@ -248,6 +249,8 @@ public:
     // Zero means unknown: apply it.
     Q_INVOKABLE int meshRevision(const QString& segmentKey) const { return meshRevisionBySegment_.value(segmentKey); }
     Q_INVOKABLE int edgeRevision(const QString& nodeId) const { return edgeRevisionByNode_.value(nodeId); }
+    Q_INVOKABLE int sharedMeshRevision(const QString& sourceKey) const { return sharedMeshRevisionByKey_.value(sourceKey); }
+    Q_INVOKABLE int sharedEdgesRevision(const QString& sourceKey) const { return sharedEdgesRevisionByKey_.value(sourceKey); }
     Q_INVOKABLE void isolateActiveNode();
     Q_INVOKABLE void toggleIsolateActiveNode();
     Q_INVOKABLE void hideActiveNode();
@@ -335,6 +338,13 @@ signals:
     void renderModeChanged();
     void meshReady(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson);
     void edgeReady(const QString& nodeId, const QByteArray& edgeJson);
+    // A part's mesh segment (or edges) in its own coordinates, drawn by every copy of the part;
+    // each copy follows as an instance, placed by a rigid position and rotation.
+    void sharedMeshReady(const QString& sourceKey, const QString& sourceColor, const QByteArray& meshJson);
+    void sharedEdgesReady(const QString& sourceKey, const QByteArray& edgeJson);
+    void meshInstanceReady(const QString& nodeId, const QString& segmentKey, const QString& sourceKey,
+                           const QString& sourceColor, const QVector3D& position, const QQuaternion& rotation);
+    void edgeInstanceReady(const QString& nodeId, const QString& sourceKey, const QVector3D& position, const QQuaternion& rotation);
     // approximate is carried through rather than dropped, so the preview can say when it
     // is not the exact projection instead of implying a fidelity it does not have.
     void drawingPreviewReady(const QString& previewJson, int revision, bool approximate);
@@ -356,6 +366,14 @@ private:
     void setImportProgress(const QString& stage, double fraction);
     void appendCachedMesh(const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& payload);
     void appendCachedEdges(const QString& nodeId, const QByteArray& payload);
+    void appendCachedShared(quint8 kind, const QString& sourceKey, const QString& sourceColor, const QByteArray& payload);
+    void appendCachedInstance(quint8 kind, const QString& nodeId, const QString& segmentKey, const QString& sourceKey,
+                              const QString& sourceColor, const QVector<float>& placement);
+    void handleSharedMesh(const QString& sourceKey, const QString& sourceColor, const QByteArray& payload, bool fromCache);
+    void handleSharedEdges(const QString& sourceKey, const QByteArray& payload, bool fromCache);
+    void handleMeshInstance(const QString& nodeId, const QString& segmentKey, const QString& sourceKey,
+                            const QString& sourceColor, const QVector<float>& placement, bool fromCache);
+    void handleEdgeInstance(const QString& nodeId, const QString& sourceKey, const QVector<float>& placement, bool fromCache);
     void replayCachedGeometry(const QByteArray& archive);
     void replayGeometryChunk();
     void noteImportedColor(const QString& nodeId, const QString& color);
@@ -364,6 +382,8 @@ private:
     bool noteSegmentColor(const QString& nodeId, const QString& segmentKey, const QString& color, const QByteArray& payload);
     // Each drawn part's assembled bounds, for the exploded view.
     void notePartBounds(const QString& nodeId, const QByteArray& payload);
+    // The same for a copy of a shared mesh, as drawn under its placement.
+    void notePartBounds(const QString& nodeId, const QByteArray& sharedPayload, const QVector<float>& placement);
     void rebuildPartColorOrder();
     [[nodiscard]] QString autoPartColor(const QString& nodeId) const;
     void partColorsUpdated();
@@ -376,6 +396,8 @@ private:
         QString segmentKey;
         QString sourceColor;
         QByteArray payload;
+        QString sourceKey;
+        QVector<float> placement;
     };
     [[nodiscard]] static std::optional<QVector<GeometryReplayEntry>> decodeGeometryArchive(const QByteArray& archive);
 
@@ -433,6 +455,10 @@ private:
     QTimer geometryReplayTimer_{this};
     QHash<QString, int> meshRevisionBySegment_;
     QHash<QString, int> edgeRevisionByNode_;
+    // The shared meshes the copies of parts are drawn from, by key, for their colours and bounds.
+    QHash<QString, QByteArray> sharedMeshPayloads_;
+    QHash<QString, int> sharedMeshRevisionByKey_;
+    QHash<QString, int> sharedEdgesRevisionByKey_;
     int geometryRevisionCounter_{};
     QElapsedTimer importElapsed_;
     QString documentPath_;

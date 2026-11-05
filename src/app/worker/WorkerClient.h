@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QByteArray>
 #include <QString>
+#include <QVector>
 
 #include "protocol/ProtocolFrame.h"
 #include "protocol/ProtocolTypes.h"
@@ -38,6 +39,13 @@ signals:
                            double circularRadiusMm, int planarFaceCount);
     void meshReady(quint64 requestId, const QString& nodeId, const QString& segmentKey, const QString& sourceColor, const QByteArray& meshJson);
     void edgeReady(quint64 requestId, const QString& nodeId, const QByteArray& edgeJson);
+    // One part's mesh segment (or edges) in the part's own coordinates, shared by its copies.
+    void sharedMeshReady(quint64 requestId, const QString& sourceKey, const QString& sourceColor, const QByteArray& meshJson);
+    void sharedEdgesReady(quint64 requestId, const QString& sourceKey, const QByteArray& edgeJson);
+    // One copy of a shared segment (or edges), placed by a row-major 3x4 [R | t] in millimetres.
+    void meshInstanceReady(quint64 requestId, const QString& nodeId, const QString& segmentKey, const QString& sourceKey,
+                           const QString& sourceColor, const QVector<float>& placement);
+    void edgeInstanceReady(quint64 requestId, const QString& nodeId, const QString& sourceKey, const QVector<float>& placement);
     void importMetrics(quint64 requestId, const QString& sourceName, const QString& sourceHash, qint64 stepReadMs,
                        qint64 xcafTransferMs, qint64 snapshotBuildMs, qint64 treeReadyMs, qint64 firstGeometryMs,
                        qint64 previewReadyMs, qint64 finalReadyMs, qint64 previewTriangleCount,

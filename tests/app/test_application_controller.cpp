@@ -3,6 +3,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QSignalSpy>
+#include <QVector3D>
 #include <QStandardPaths>
 #include <QSettings>
 #include <QJsonArray>
@@ -305,15 +306,31 @@ void ApplicationControllerTest::forwardsWorkerMeshToViewer()
 {
     const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-mesh.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
     loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
-    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    QSignalSpy sharedSpy(&controller, &loupe::app::ApplicationController::sharedMeshReady);
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshInstanceReady);
 
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
 
-    QTRY_VERIFY_WITH_TIMEOUT(meshSpy.count() > 0, 10'000);
-    QVERIFY(!meshSpy.first().at(0).toString().isEmpty());
-    QVERIFY(!meshSpy.first().at(1).toString().isEmpty());
-    const auto mesh = meshSpy.first().at(3).toByteArray();
-    QVERIFY(!mesh.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
+    // Two copies of one box: its mesh is sent once per pass, and each copy is placed.
+    QCOMPARE(sharedSpy.count(), 2);
+    QVERIFY(!sharedSpy.first().at(2).toByteArray().isEmpty());
+    QCOMPARE(meshSpy.count(), 4);
+    QSet<QString> nodes;
+    QSet<QString> sources;
+    QList<QVector3D> positions;
+    for (const auto& arguments : meshSpy) {
+        QVERIFY(!arguments.at(0).toString().isEmpty());
+        QVERIFY(!arguments.at(1).toString().isEmpty());
+        nodes.insert(arguments.at(0).toString());
+        sources.insert(arguments.at(2).toString());
+        positions.append(arguments.at(4).value<QVector3D>());
+    }
+    QCOMPARE(nodes.size(), 2);
+    QCOMPARE(sources.size(), 1);
+    QCOMPARE(sources.values().first(), sharedSpy.first().at(0).toString());
+    // The copies sit 25 mm apart, as the fixture places them.
+    QVERIFY(qAbs(qAbs(positions.at(0).x() - positions.at(1).x()) - 25.0F) < 1.0e-4F);
 }
 
 void ApplicationControllerTest::replaysGeometryWithoutBlockingTheCaller()
@@ -326,7 +343,7 @@ void ApplicationControllerTest::replaysGeometryWithoutBlockingTheCaller()
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress(), 10'000);
 
-    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshInstanceReady);
     controller.replayGeometry();
 
     QCOMPARE(meshSpy.count(), 0);
@@ -635,7 +652,7 @@ void ApplicationControllerTest::reopensUnchangedStepFromLocalSnapshotCache()
     }
 
     loupe::app::ApplicationController reopened(QStringLiteral(LOUPE_WORKER_PATH), cacheDirectory.path());
-    QSignalSpy meshSpy(&reopened, &loupe::app::ApplicationController::meshReady);
+    QSignalSpy meshSpy(&reopened, &loupe::app::ApplicationController::meshInstanceReady);
     QSignalSpy snapshotSpy(&reopened, &loupe::app::ApplicationController::snapshotChanged);
     reopened.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
 
@@ -748,11 +765,11 @@ void ApplicationControllerTest::uncolouredPartsCarryNoColourAndContainersShowThe
     // back on its own, and a subassembly's swatch showed a colour none of its parts had.
     const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-uncoloured.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
     loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
-    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshInstanceReady);
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
     QVERIFY(meshSpy.count() > 0);
-    for (const auto& arguments : meshSpy) QVERIFY(arguments.at(2).toString().isEmpty());
+    for (const auto& arguments : meshSpy) QVERIFY(arguments.at(3).toString().isEmpty());
 
     const auto document = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object();
     const auto geometry = document.value(QStringLiteral("geometry")).toArray();
@@ -782,11 +799,11 @@ void ApplicationControllerTest::aMulticolouredPartsSwatchShowsTheColourOfMostOfI
     // last, so an orange part with one green face showed a green swatch.
     const auto fixture = loupe::tests::writeMostlyOrangeBoxWithAGreenFace(QStringLiteral("controller-two-colour.step").toStdString());
     loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
-    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshInstanceReady);
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
     QSet<QString> colours;
-    for (const auto& arguments : meshSpy) colours.insert(arguments.at(2).toString());
+    for (const auto& arguments : meshSpy) colours.insert(arguments.at(3).toString());
     QCOMPARE(colours, (QSet<QString>{QStringLiteral("#D95900"), QStringLiteral("#00FF00")}));
 
     const auto geometry = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object().value(QStringLiteral("geometry")).toArray();
@@ -854,7 +871,7 @@ void ApplicationControllerTest::autoPartColoursTreatOneSharedFileColourAsNone()
     const auto fixture = loupe::tests::writeTwoDefinitionAssembly(QStringLiteral("controller-uniform-colour.step").toStdString(),
                                                                   Quantity_Color(0.792, 0.820, 0.933, Quantity_TOC_sRGB));
     loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
-    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshReady);
+    QSignalSpy meshSpy(&controller, &loupe::app::ApplicationController::meshInstanceReady);
     controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress() && controller.documentState() == loupe::app::DocumentState::TreeReady, 10'000);
     const auto parts = geometryNodeIds(controller);
@@ -863,7 +880,7 @@ void ApplicationControllerTest::autoPartColoursTreatOneSharedFileColourAsNone()
     // The colour arrives as the file wrote it (sRGB), not as OCCT's linear value in hex,
     // which turned #CAD1EE into #979FDA.
     QVERIFY(meshSpy.count() > 0);
-    for (const auto& arguments : meshSpy) QCOMPARE(arguments.at(2).toString(), QStringLiteral("#CAD1EE"));
+    for (const auto& arguments : meshSpy) QCOMPARE(arguments.at(3).toString(), QStringLiteral("#CAD1EE"));
     const auto fileColor = QStringLiteral("#CAD1EE");
     QCOMPARE(controller.resolvedAppearanceColor(parts.at(0), fileColor), fileColor);
 

@@ -240,6 +240,36 @@ QString bodyColorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Lab
     return {};
 }
 
+// A placement as the row-major 3x4 [R | t] (t in millimetres) an InstancePayload carries, when it
+// is rigid. A mirrored or scaled one is not: drawn through a node it would turn the part inside
+// out or change its size, so such a copy is sent as its own mesh in assembly coordinates.
+std::optional<std::array<float, 12>> rigidPlacementMm(const gp_Trsf& placement, const double sourceToMillimeters)
+{
+    double rotation[3][3];
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column) rotation[row][column] = placement.Value(row + 1, column + 1);
+    for (int row = 0; row < 3; ++row) {
+        for (int other = 0; other < 3; ++other) {
+            double dot = 0.0;
+            for (int column = 0; column < 3; ++column) dot += rotation[row][column] * rotation[other][column];
+            if (std::abs(dot - (row == other ? 1.0 : 0.0)) > 1.0e-6) return std::nullopt;
+        }
+    }
+    const auto determinant = rotation[0][0] * (rotation[1][1] * rotation[2][2] - rotation[1][2] * rotation[2][1])
+                           - rotation[0][1] * (rotation[1][0] * rotation[2][2] - rotation[1][2] * rotation[2][0])
+                           + rotation[0][2] * (rotation[1][0] * rotation[2][1] - rotation[1][1] * rotation[2][0]);
+    if (determinant < 0.0) return std::nullopt;
+    const auto translation = placement.TranslationPart();
+    const double offsets[3]{translation.X(), translation.Y(), translation.Z()};
+    std::array<float, 12> matrix{};
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column)
+            matrix[static_cast<std::size_t>(row * 4 + column)] = static_cast<float>(rotation[row][column]);
+        matrix[static_cast<std::size_t>(row * 4 + 3)] = static_cast<float>(offsets[row] * sourceToMillimeters);
+    }
+    return matrix;
+}
+
 void prepareTessellation(const TopoDS_Shape& shape, const double sourceToMillimeters,
                          const TessellationProfile& profile)
 {
@@ -714,6 +744,11 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 // pass's tolerance, so they are sampled afresh for each.
                 FaceMeasures faceMeasures;
                 FaceColors faceColors;
+                // Keys of the shared meshes (per shape and body colour) and edges (per shape),
+                // the same in both passes, so the refined tessellation replaces the preview's.
+                std::unordered_map<TopoDS_Shape, QHash<QString, QString>> sharedMeshKeys;
+                std::unordered_map<TopoDS_Shape, QString> sharedEdgeKeys;
+                int sharedKeyCounter = 0;
 
                 // How long each body took in the preview pass. Refinement repeats the same work
                 // body by body at finer tolerance, so these weight its progress: a uniform step
@@ -728,6 +763,11 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                     QSet<QString> preparedDefinitions;
                     std::size_t nextToMesh = 0;
                     EdgeSamples edgeSamples;
+                    // The shared meshes and edges this pass has sent: each pass sends its own
+                    // tessellation once, then places it for every copy.
+                    QHash<QString, QVector<QPair<qsizetype, QString>>> sentSegments;
+                    QHash<QString, qint64> sentTriangles;
+                    QHash<QString, bool> sentEdges;
                     for (std::size_t index = 0; index < shapeCount; ++index) {
                         if (job->canceled.load()) return false;
                         QElapsedTimer bodyTimer;
@@ -750,28 +790,90 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                             } while (nextToMesh < meshOrder.size() && faces < target);
                             prepareTessellation(batch, nativeToMillimeters, profile);
                         }
-                        const auto segments = encodeMesh(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, colors,
-                                                         sessionImport.native->labels[index], sessionImport.native->definitionLabels[index],
-                                                         faceMeasures, faceColors);
-                        if (job->canceled.load()) return false;
-                        for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
-                            if (job->canceled.load()) return false;
-                            const auto& segment = segments[segmentIndex];
-                            if (segment.indices.isEmpty()) continue;
+                        const auto& placement = sessionImport.native->shapePlacements[index];
+                        const auto countTriangles = [&](const qint64 triangles) {
                             if (firstGeometryMs == 0) firstGeometryMs = elapsed.elapsed();
-                            const auto triangleCount = static_cast<qint64>(segment.indices.size() / 3);
-                            if (profile.refinement == kPreviewProfile.refinement) previewTriangleCount += triangleCount;
-                            else refinedTriangleCount += triangleCount;
-                            postGeometry(protocol::MeshPayload{requestId, requestId, nodeId, nodeId,
-                                                               QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), segment.color,
-                                                               profile.refinement, segment.vertices, segment.normals, segment.indices,
-                                                               segment.topology});
-                        }
-                        const auto edges = encodeEdges(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, profile,
-                                                       edgeSamples);
-                        if (!edges.indices.isEmpty()) {
-                            postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
-                                                               edges.vertices, edges.indices, edges.topology});
+                            if (preview) previewTriangleCount += triangles;
+                            else refinedTriangleCount += triangles;
+                        };
+                        const auto rigidPlacement = rigidPlacementMm(placement, nativeToMillimeters);
+                        if (!rigidPlacement) {
+                            // Mirrored or scaled: drawn as its own mesh, in assembly coordinates.
+                            const auto segments = encodeMesh(shape, placement, nativeToMillimeters, colors,
+                                                             sessionImport.native->labels[index], sessionImport.native->definitionLabels[index],
+                                                             faceMeasures, faceColors);
+                            if (job->canceled.load()) return false;
+                            for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
+                                if (job->canceled.load()) return false;
+                                const auto& segment = segments[segmentIndex];
+                                if (segment.indices.isEmpty()) continue;
+                                countTriangles(static_cast<qint64>(segment.indices.size() / 3));
+                                postGeometry(protocol::MeshPayload{requestId, requestId, nodeId, nodeId,
+                                                                   QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), segment.color,
+                                                                   profile.refinement, segment.vertices, segment.normals, segment.indices,
+                                                                   segment.topology});
+                            }
+                            const auto edges = encodeEdges(shape, placement, nativeToMillimeters, profile, edgeSamples);
+                            if (!edges.indices.isEmpty()) {
+                                postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
+                                                                   edges.vertices, edges.indices, edges.topology});
+                            }
+                        } else {
+                            // Every copy of a part draws one shared mesh, sent once per pass in the
+                            // part's own coordinates, and is sent only where it goes. Copies whose
+                            // body colour differs share no mesh: faces without their own colour take it.
+                            const auto bodyColor = bodyColorFor(colors, sessionImport.native->labels[index],
+                                                                sessionImport.native->definitionLabels[index]);
+                            auto& keysByColor = sharedMeshKeys[shape];
+                            auto meshKey = keysByColor.value(bodyColor);
+                            if (meshKey.isEmpty()) {
+                                meshKey = QStringLiteral("shared-mesh-%1").arg(++sharedKeyCounter);
+                                keysByColor.insert(bodyColor, meshKey);
+                            }
+                            if (!sentSegments.contains(meshKey)) {
+                                const auto segments = encodeMesh(shape, gp_Trsf(), nativeToMillimeters, colors,
+                                                                 sessionImport.native->labels[index], sessionImport.native->definitionLabels[index],
+                                                                 faceMeasures, faceColors);
+                                if (job->canceled.load()) return false;
+                                QVector<QPair<qsizetype, QString>> sent;
+                                for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
+                                    const auto& segment = segments[segmentIndex];
+                                    if (segment.indices.isEmpty()) continue;
+                                    const auto sourceKey = QStringLiteral("%1:%2").arg(meshKey).arg(segmentIndex);
+                                    protocol::MeshPayload shared{requestId, requestId, definitionId, sourceKey, sourceKey, segment.color,
+                                                                 profile.refinement, segment.vertices, segment.normals, segment.indices,
+                                                                 segment.topology};
+                                    shared.shared = true;
+                                    postGeometry(std::move(shared));
+                                    sent.append({segmentIndex, segment.color});
+                                    sentTriangles.insert(sourceKey, static_cast<qint64>(segment.indices.size() / 3));
+                                }
+                                sentSegments.insert(meshKey, sent);
+                            }
+                            for (const auto& [segmentIndex, color] : std::as_const(sentSegments[meshKey])) {
+                                if (job->canceled.load()) return false;
+                                const auto sourceKey = QStringLiteral("%1:%2").arg(meshKey).arg(segmentIndex);
+                                countTriangles(sentTriangles.value(sourceKey));
+                                postGeometry(protocol::InstancePayload{requestId, requestId, nodeId,
+                                                                       QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), sourceKey, color,
+                                                                       profile.refinement, false, *rigidPlacement});
+                            }
+                            auto& edgeKey = sharedEdgeKeys[shape];
+                            if (edgeKey.isEmpty()) edgeKey = QStringLiteral("shared-edges-%1").arg(++sharedKeyCounter);
+                            if (!sentEdges.contains(edgeKey)) {
+                                const auto edges = encodeEdges(shape, gp_Trsf(), nativeToMillimeters, profile, edgeSamples);
+                                if (!edges.indices.isEmpty()) {
+                                    protocol::EdgePayload shared{requestId, requestId, definitionId, edgeKey, profile.refinement,
+                                                                 edges.vertices, edges.indices, edges.topology};
+                                    shared.shared = true;
+                                    postGeometry(std::move(shared));
+                                }
+                                sentEdges.insert(edgeKey, !edges.indices.isEmpty());
+                            }
+                            if (sentEdges.value(edgeKey)) {
+                                postGeometry(protocol::InstancePayload{requestId, requestId, nodeId, {}, edgeKey, {},
+                                                                       profile.refinement, true, *rigidPlacement});
+                            }
                         }
                         if (preview) previewSeconds[index] = static_cast<double>(bodyTimer.nsecsElapsed()) * 1.0e-9;
                         doneWeight += weighted ? previewSeconds[index] : 1.0;

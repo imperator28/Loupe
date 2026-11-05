@@ -7,6 +7,7 @@
 #include <QLocalSocket>
 #include <QProcess>
 #include <QHash>
+#include <QSet>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryFile>
@@ -34,6 +35,7 @@ private slots:
     void validStepProducesNonEmptySnapshot();
     void validStepStreamsTriangulatedMesh();
     void everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady();
+    void copiesOfAPartShareOneMeshAndArePlacedApart();
     void reviewedPlanWritesAndValidatesStep();
     void reviewedDrawingPlanWritesAndValidatesDxf();
     void aChangedDrawingPlanIsRefusedAtTheFingerprint();
@@ -325,6 +327,78 @@ void WorkerProcessTest::everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady()
     std::sort(volumes.begin(), volumes.end());
     QVERIFY(qAbs(volumes.at(0) - 216.0) < 1.0e-6);
     QVERIFY(qAbs(volumes.at(1) - 1000.0) < 1.0e-6);
+}
+
+void WorkerProcessTest::copiesOfAPartShareOneMeshAndArePlacedApart()
+{
+    // Two copies of one box: each pass sends the box's mesh and edges once, in the box's own
+    // coordinates, then places them for each copy -- and sends no mesh of its own for either.
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("worker-instances.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 32},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+    int sharedMeshes = 0;
+    int sharedEdges = 0;
+    int ownMeshes = 0;
+    QSet<QString> sharedKeys;
+    QList<loupe::protocol::InstancePayload> meshInstances;
+    int edgeInstances = 0;
+    QElapsedTimer timer;
+    timer.start();
+    bool ready = false;
+    while (!ready && timer.elapsed() < 20'000) {
+        const auto frame = readFrame(socket, decoder);
+        if (!frame) continue;
+        if (frame->type == loupe::protocol::FrameType::Geometry) {
+            const auto geometry = loupe::protocol::decodeGeometry(frame->payload);
+            if (const auto* mesh = std::get_if<loupe::protocol::MeshPayload>(&geometry)) {
+                if (mesh->shared) {
+                    ++sharedMeshes;
+                    sharedKeys.insert(mesh->segmentKey);
+                } else {
+                    ++ownMeshes;
+                }
+            } else if (const auto* edges = std::get_if<loupe::protocol::EdgePayload>(&geometry)) {
+                if (edges->shared) ++sharedEdges;
+            } else if (const auto* instance = std::get_if<loupe::protocol::InstancePayload>(&geometry)) {
+                if (instance->edges) ++edgeInstances;
+                else meshInstances.append(*instance);
+            }
+            continue;
+        }
+        const auto event = QJsonDocument::fromJson(frame->payload).object();
+        ready = event.value(QStringLiteral("type")).toString() == QStringLiteral("progress")
+            && event.value(QStringLiteral("stage")).toString() == QStringLiteral("Ready");
+    }
+    QVERIFY(ready);
+    QCOMPARE(ownMeshes, 0);
+    QCOMPARE(sharedMeshes, 2);   // preview and refined
+    QCOMPARE(sharedKeys.size(), 1);  // the same key, so the refined mesh replaces the preview's
+    QCOMPARE(sharedEdges, 2);
+    QCOMPARE(meshInstances.size(), 4);
+    QCOMPARE(edgeInstances, 4);
+    QSet<QString> nodes;
+    QList<float> offsets;
+    for (const auto& instance : std::as_const(meshInstances)) {
+        QVERIFY(sharedKeys.contains(instance.sourceKey));
+        nodes.insert(instance.nodeId);
+        offsets.append(instance.placement[3]);
+        // A pure translation: the rotation part is the identity.
+        QCOMPARE(instance.placement[0], 1.0F);
+        QCOMPARE(instance.placement[5], 1.0F);
+        QCOMPARE(instance.placement[10], 1.0F);
+    }
+    QCOMPARE(nodes.size(), 2);
+    std::sort(offsets.begin(), offsets.end());
+    QVERIFY(qAbs((offsets.last() - offsets.first()) - 25.0F) < 1.0e-4F);
 }
 
 void WorkerProcessTest::reviewedPlanWritesAndValidatesStep()

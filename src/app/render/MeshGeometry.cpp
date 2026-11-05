@@ -484,6 +484,33 @@ void MeshGeometry::setSectionOptions(const bool capEnabled, const bool sliceOnly
                      sectionOffset_, sectionFlipped_, capEnabled, sliceOnly, sliceFill, sliceOutline, false);
 }
 
+QVariantMap MeshGeometry::boundsUnder(const QVector3D& position, const QQuaternion& rotation) const
+{
+    if (vertexData_.isEmpty()) return {};
+    const auto matrix = rotation.normalized().toRotationMatrix();
+    QVector3D minimum;
+    QVector3D maximum;
+    bool found = false;
+    for (qsizetype index = 0; index + 2 < vertexData_.size(); index += 3) {
+        const auto x = vertexData_.at(index);
+        const auto y = vertexData_.at(index + 1);
+        const auto z = vertexData_.at(index + 2);
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
+        const QVector3D point{matrix(0, 0) * x + matrix(0, 1) * y + matrix(0, 2) * z + position.x(),
+                              matrix(1, 0) * x + matrix(1, 1) * y + matrix(1, 2) * z + position.y(),
+                              matrix(2, 0) * x + matrix(2, 1) * y + matrix(2, 2) * z + position.z()};
+        if (!found) {
+            minimum = maximum = point;
+            found = true;
+            continue;
+        }
+        minimum = QVector3D{std::min(minimum.x(), point.x()), std::min(minimum.y(), point.y()), std::min(minimum.z(), point.z())};
+        maximum = QVector3D{std::max(maximum.x(), point.x()), std::max(maximum.y(), point.y()), std::max(maximum.z(), point.z())};
+    }
+    if (!found) return {};
+    return {{QStringLiteral("minimum"), minimum}, {QStringLiteral("maximum"), maximum}};
+}
+
 float MeshGeometry::minimumCoordinate(const int axis) const noexcept
 {
     if (vertexData_.isEmpty()) return std::numeric_limits<float>::quiet_NaN();

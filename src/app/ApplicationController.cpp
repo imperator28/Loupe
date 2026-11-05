@@ -26,6 +26,7 @@
 #include <QProcessEnvironment>
 #include <QThread>
 #include <QElapsedTimer>
+#include <QGenericMatrix>
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
@@ -203,6 +204,27 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         appendCachedEdges(nodeId, edgeJson);
         edgeRevisionByNode_.insert(nodeId, ++geometryRevisionCounter_);
         emit edgeReady(nodeId, edgeJson);
+    });
+    connect(&workerClient_, &worker::WorkerClient::sharedMeshReady, this,
+            [this](quint64 requestId, const QString& sourceKey, const QString& sourceColor, const QByteArray& meshJson) {
+        if (requestId != activeRequestId_ || (cacheHit_ && cachedGeometryLoaded_)) return;
+        handleSharedMesh(sourceKey, sourceColor, meshJson, false);
+    });
+    connect(&workerClient_, &worker::WorkerClient::sharedEdgesReady, this,
+            [this](quint64 requestId, const QString& sourceKey, const QByteArray& edgeJson) {
+        if (requestId != activeRequestId_ || (cacheHit_ && cachedGeometryLoaded_)) return;
+        handleSharedEdges(sourceKey, edgeJson, false);
+    });
+    connect(&workerClient_, &worker::WorkerClient::meshInstanceReady, this,
+            [this](quint64 requestId, const QString& nodeId, const QString& segmentKey, const QString& sourceKey,
+                   const QString& sourceColor, const QVector<float>& placement) {
+        if (requestId != activeRequestId_ || (cacheHit_ && cachedGeometryLoaded_)) return;
+        handleMeshInstance(nodeId, segmentKey, sourceKey, sourceColor, placement, false);
+    });
+    connect(&workerClient_, &worker::WorkerClient::edgeInstanceReady, this,
+            [this](quint64 requestId, const QString& nodeId, const QString& sourceKey, const QVector<float>& placement) {
+        if (requestId != activeRequestId_ || (cacheHit_ && cachedGeometryLoaded_)) return;
+        handleEdgeInstance(nodeId, sourceKey, placement, false);
     });
     connect(&workerClient_, &worker::WorkerClient::progress, this, [this](quint64 requestId, const QString& stage, const double fraction) {
         if (requestId != 0 && requestId == activeAssemblyExportRequestId_) {
@@ -588,6 +610,9 @@ void ApplicationController::openFile(const QUrl& file)
     geometryReplayIndex_ = 0;
     ++geometryReplayGeneration_;
     meshRevisionBySegment_.clear();
+    sharedMeshPayloads_.clear();
+    sharedMeshRevisionByKey_.clear();
+    sharedEdgesRevisionByKey_.clear();
     edgeRevisionByNode_.clear();
     cachedGeometryLoaded_ = false;
     geometryByNode_.clear();
@@ -1075,6 +1100,89 @@ void ApplicationController::appendCachedEdges(const QString& nodeId, const QByte
     stream << quint8{2} << nodeId << payload;
 }
 
+void ApplicationController::appendCachedShared(const quint8 kind, const QString& sourceKey, const QString& sourceColor,
+                                               const QByteArray& payload)
+{
+    if (geometryCacheArchive_.isEmpty()) geometryCacheArchive_.append(kGeometryCacheMagic);
+    QDataStream stream(&geometryCacheArchive_, QIODevice::Append);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << kind << sourceKey << sourceColor << payload;
+}
+
+void ApplicationController::appendCachedInstance(const quint8 kind, const QString& nodeId, const QString& segmentKey,
+                                                 const QString& sourceKey, const QString& sourceColor,
+                                                 const QVector<float>& placement)
+{
+    if (geometryCacheArchive_.isEmpty()) geometryCacheArchive_.append(kGeometryCacheMagic);
+    QDataStream stream(&geometryCacheArchive_, QIODevice::Append);
+    stream.setVersion(QDataStream::Qt_6_0);
+    stream << kind << nodeId << segmentKey << sourceKey << sourceColor << placement;
+}
+
+namespace {
+
+// A rigid placement, row-major 3x4 [R | t], as the position and rotation a node takes.
+std::pair<QVector3D, QQuaternion> nodeTransform(const QVector<float>& placement)
+{
+    if (placement.size() != 12) return {QVector3D{}, QQuaternion{}};
+    QMatrix3x3 rotation;
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column) rotation(row, column) = placement.at(row * 4 + column);
+    return {QVector3D{placement.at(3), placement.at(7), placement.at(11)}, QQuaternion::fromRotationMatrix(rotation).normalized()};
+}
+
+} // namespace
+
+void ApplicationController::handleSharedMesh(const QString& sourceKey, const QString& sourceColor, const QByteArray& payload,
+                                             const bool fromCache)
+{
+    if (!fromCache) appendCachedShared(3, sourceKey, sourceColor, payload);
+    sharedMeshPayloads_.insert(sourceKey, payload);
+    // A replay re-sends what the viewports were already given, so it keeps the revision.
+    if (!fromCache || !sharedMeshRevisionByKey_.contains(sourceKey))
+        sharedMeshRevisionByKey_.insert(sourceKey, ++geometryRevisionCounter_);
+    emit sharedMeshReady(sourceKey, sourceColor, payload);
+}
+
+void ApplicationController::handleSharedEdges(const QString& sourceKey, const QByteArray& payload, const bool fromCache)
+{
+    if (!fromCache) appendCachedShared(4, sourceKey, {}, payload);
+    if (!fromCache || !sharedEdgesRevisionByKey_.contains(sourceKey))
+        sharedEdgesRevisionByKey_.insert(sourceKey, ++geometryRevisionCounter_);
+    emit sharedEdgesReady(sourceKey, payload);
+}
+
+void ApplicationController::handleMeshInstance(const QString& nodeId, const QString& segmentKey, const QString& sourceKey,
+                                               const QString& sourceColor, const QVector<float>& placement, const bool fromCache)
+{
+    const auto payload = sharedMeshPayloads_.value(sourceKey);
+    if (payload.isEmpty() || placement.size() != 12) return;
+    if (!fromCache) appendCachedInstance(5, nodeId, segmentKey, sourceKey, sourceColor, placement);
+    if (!previewGeometryReceived_) {
+        previewGeometryReceived_ = true;
+        if (!fromCache) emit importProgressChanged();
+    }
+    markOpenMilestone(openViewMs_);
+    noteImportedColor(nodeId, sourceColor);
+    if (noteSegmentColor(nodeId, segmentKey, sourceColor, payload) && !fromCache && isNodeSelected(nodeId))
+        emit componentPropertiesChanged();
+    notePartBounds(nodeId, payload, placement);
+    if (!fromCache || !meshRevisionBySegment_.contains(segmentKey))
+        meshRevisionBySegment_.insert(segmentKey, ++geometryRevisionCounter_);
+    const auto [position, rotation] = nodeTransform(placement);
+    emit meshInstanceReady(nodeId, segmentKey, sourceKey, sourceColor, position, rotation);
+}
+
+void ApplicationController::handleEdgeInstance(const QString& nodeId, const QString& sourceKey, const QVector<float>& placement,
+                                               const bool fromCache)
+{
+    if (placement.size() != 12) return;
+    if (!fromCache) appendCachedInstance(6, nodeId, {}, sourceKey, {}, placement);
+    if (!fromCache || !edgeRevisionByNode_.contains(nodeId)) edgeRevisionByNode_.insert(nodeId, ++geometryRevisionCounter_);
+    const auto [position, rotation] = nodeTransform(placement);
+    emit edgeInstanceReady(nodeId, sourceKey, position, rotation);
+}
+
 void ApplicationController::replayCachedGeometry(const QByteArray& archive)
 {
     geometryReplayTimer_.stop();
@@ -1107,16 +1215,49 @@ std::optional<QVector<ApplicationController::GeometryReplayEntry>> ApplicationCo
     QVector<GeometryReplayEntry> entries;
     QHash<QString, qsizetype> meshIndexes;
     QHash<QString, qsizetype> edgeIndexes;
+    QHash<QString, qsizetype> sharedMeshIndexes;
+    QHash<QString, qsizetype> sharedEdgeIndexes;
+    // A later entry for the same key is the refined pass: it takes the earlier one's place,
+    // which keeps a shared mesh ahead of the copies drawn from it.
+    const auto place = [&entries](QHash<QString, qsizetype>& indexes, const QString& key, GeometryReplayEntry entry) {
+        if (const auto existing = indexes.constFind(key); existing != indexes.cend()) {
+            entries[*existing] = std::move(entry);
+        } else {
+            indexes.insert(key, entries.size());
+            entries.append(std::move(entry));
+        }
+    };
     while (!stream.atEnd()) {
         quint8 kind{};
         QString nodeId;
         stream >> kind >> nodeId;
+        if (kind == 3 || kind == 4) {
+            // nodeId is the shared key.
+            QString sourceColor;
+            QByteArray payload;
+            stream >> sourceColor >> payload;
+            if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || payload.isEmpty()) return std::nullopt;
+            GeometryReplayEntry entry{kind, {}, {}, sourceColor, payload, nodeId, {}};
+            place(kind == 3 ? sharedMeshIndexes : sharedEdgeIndexes, nodeId, std::move(entry));
+            continue;
+        }
+        if (kind == 5 || kind == 6) {
+            QString segmentKey, sourceKey, sourceColor;
+            QVector<float> placement;
+            stream >> segmentKey >> sourceKey >> sourceColor >> placement;
+            if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || sourceKey.isEmpty() || placement.size() != 12
+                || (kind == 5 && segmentKey.isEmpty())) return std::nullopt;
+            GeometryReplayEntry entry{kind, nodeId, segmentKey, sourceColor, {}, sourceKey, placement};
+            if (kind == 5) place(meshIndexes, segmentKey, std::move(entry));
+            else place(edgeIndexes, nodeId, std::move(entry));
+            continue;
+        }
         if (kind == 1) {
             QString segmentKey, sourceColor;
             QByteArray payload;
             stream >> segmentKey >> sourceColor >> payload;
             if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || segmentKey.isEmpty() || payload.isEmpty()) return std::nullopt;
-            GeometryReplayEntry entry{kind, nodeId, segmentKey, sourceColor, payload};
+            GeometryReplayEntry entry{kind, nodeId, segmentKey, sourceColor, payload, {}, {}};
             if (const auto existing = meshIndexes.constFind(segmentKey); existing != meshIndexes.cend()) {
                 entries[*existing] = std::move(entry);
             } else {
@@ -1127,7 +1268,7 @@ std::optional<QVector<ApplicationController::GeometryReplayEntry>> ApplicationCo
             QByteArray payload;
             stream >> payload;
             if (stream.status() != QDataStream::Ok || nodeId.isEmpty() || payload.isEmpty()) return std::nullopt;
-            GeometryReplayEntry entry{kind, nodeId, {}, {}, payload};
+            GeometryReplayEntry entry{kind, nodeId, {}, {}, payload, {}, {}};
             if (const auto existing = edgeIndexes.constFind(nodeId); existing != edgeIndexes.cend()) {
                 entries[*existing] = std::move(entry);
             } else {
@@ -1172,10 +1313,18 @@ void ApplicationController::replayGeometryChunk()
             if (!meshRevisionBySegment_.contains(entry.segmentKey))
                 meshRevisionBySegment_.insert(entry.segmentKey, ++geometryRevisionCounter_);
             emit meshReady(entry.nodeId, entry.segmentKey, entry.sourceColor, entry.payload);
-        } else {
+        } else if (entry.kind == 2) {
             if (!edgeRevisionByNode_.contains(entry.nodeId))
                 edgeRevisionByNode_.insert(entry.nodeId, ++geometryRevisionCounter_);
             emit edgeReady(entry.nodeId, entry.payload);
+        } else if (entry.kind == 3) {
+            handleSharedMesh(entry.sourceKey, entry.sourceColor, entry.payload, true);
+        } else if (entry.kind == 4) {
+            handleSharedEdges(entry.sourceKey, entry.payload, true);
+        } else if (entry.kind == 5) {
+            handleMeshInstance(entry.nodeId, entry.segmentKey, entry.sourceKey, entry.sourceColor, entry.placement, true);
+        } else if (entry.kind == 6) {
+            handleEdgeInstance(entry.nodeId, entry.sourceKey, entry.placement, true);
         }
         // A handler may have opened another file or restarted the replay.
         if (generation != geometryReplayGeneration_) return;
@@ -1788,6 +1937,17 @@ QString ApplicationController::nodeDisplayName(const QString& nodeId) const
 void ApplicationController::notePartBounds(const QString& nodeId, const QByteArray& payload)
 {
     const auto bounds = protocol::meshBounds(payload);
+    if (!bounds) return;
+    explodeController_.includePartBounds(nodeId, {bounds->minimum[0], bounds->minimum[1], bounds->minimum[2]},
+                                         {bounds->maximum[0], bounds->maximum[1], bounds->maximum[2]});
+}
+
+void ApplicationController::notePartBounds(const QString& nodeId, const QByteArray& sharedPayload, const QVector<float>& placement)
+{
+    if (placement.size() != 12) return;
+    std::array<float, 12> matrix{};
+    std::copy(placement.cbegin(), placement.cend(), matrix.begin());
+    const auto bounds = protocol::meshBounds(sharedPayload, matrix);
     if (!bounds) return;
     explodeController_.includePartBounds(nodeId, {bounds->minimum[0], bounds->minimum[1], bounds->minimum[2]},
                                          {bounds->maximum[0], bounds->maximum[1], bounds->maximum[2]});

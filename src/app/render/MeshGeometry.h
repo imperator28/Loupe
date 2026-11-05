@@ -3,6 +3,7 @@
 #include <QQuick3DGeometry>
 #include <QSharedPointer>
 #include <QVector>
+#include <QQuaternion>
 #include <QVector3D>
 #include <QVariantMap>
 
@@ -54,6 +55,9 @@ public:
     [[nodiscard]] int triangleCount() const noexcept { return static_cast<int>(indexData_.size() / 3); }
     [[nodiscard]] int sectionCapTriangleCount() const noexcept { return sectionCapTriangleCount_; }
     [[nodiscard]] bool sectionBusy() const noexcept { return pendingSectionBuilds_ > 0; }
+    // The exact bounds of the vertices as drawn under a node's rigid position and rotation
+    // ({minimum, maximum}), or empty when there are none: a shared mesh's bounds for one copy.
+    Q_INVOKABLE [[nodiscard]] QVariantMap boundsUnder(const QVector3D& position, const QQuaternion& rotation) const;
     Q_INVOKABLE [[nodiscard]] float minimumCoordinate(int axis) const noexcept;
     Q_INVOKABLE [[nodiscard]] float maximumCoordinate(int axis) const noexcept;
 

@@ -65,6 +65,20 @@ Item {
     // Keyed nodeId -> segmentKey -> entry, so a display change walks parts, not segments.
     property var pendingMeshesByNode: ({})
     property var pendingEdgesByNode: ({})
+    // Copies of a part draw one shared mesh, kept here by its key (as a payload until a copy
+    // first needs it); each copy is a model of its own, placed by its part node. Edges are clipped
+    // per part, so each copy takes its own copy of the shared edges.
+    property var sharedGeometryByKey: ({})
+    property var sharedPayloadByKey: ({})
+    property var sharedEdgeGeometryByKey: ({})
+    property var sharedEdgePayloadByKey: ({})
+    property var sharedMeshRevisionByKey: ({})
+    property var sharedEdgesRevisionByKey: ({})
+    // Segment keys whose geometry is shared, and the copies' segment keys by shared key.
+    property var sharedSegment: ({})
+    property var instanceSegmentsByKey: ({})
+    // Where each copy of a shared mesh goes: { position, rotation } in assembly coordinates.
+    property var placementByNode: ({})
     readonly property bool lazyMaterialization: requireDisplayFilter
     property string hoveredNodeId: ""
     property int renderMode: 0
@@ -773,8 +787,14 @@ Item {
 
     function placePart(nodeId) {
         const moved = explodedLayoutEnabled && explode
-        const position = moved ? explode.displayedPosition(nodeId) : Qt.vector3d(0, 0, 0)
-        const rotation = moved ? explode.displayedRotation(nodeId) : Qt.quaternion(1, 0, 0, 0)
+        let position = moved ? explode.displayedPosition(nodeId) : Qt.vector3d(0, 0, 0)
+        let rotation = moved ? explode.displayedRotation(nodeId) : Qt.quaternion(1, 0, 0, 0)
+        // A copy of a shared mesh is drawn through its placement, and then any exploded move.
+        const placement = placementByNode[nodeId]
+        if (placement) {
+            position = position.plus(rotation.times(placement.position))
+            rotation = rotation.times(placement.rotation)
+        }
         for (const node of [partNodeByNode[nodeId], xrayPartNodeByNode[nodeId]]) {
             if (!node) continue
             node.position = position
@@ -793,6 +813,14 @@ Item {
     // A world section plane in the part's own coordinates, as (normal, offset): the cap and
     // edge clip of a moved part are built against it, so they land on the part as drawn.
     function sectionPlaneFor(nodeId, normal, offset) {
+        // A copy's geometry is in its part's own frame: the plane is taken into it through the
+        // node the copy is drawn by, which carries the placement and any exploded move.
+        const node = placementByNode[nodeId] ? partNodeByNode[nodeId] : null
+        if (node) {
+            const local = node.mapDirectionFromNode(sceneRoot, normal).normalized()
+            const point = node.mapPositionFromNode(sceneRoot, normal.times(offset))
+            return Qt.vector4d(local.x, local.y, local.z, local.dotProduct(point))
+        }
         if (explodedLayoutEnabled && explode && explode.isMoved(nodeId)) return explode.localPlane(nodeId, normal, offset)
         return Qt.vector4d(normal.x, normal.y, normal.z, offset)
     }
@@ -898,6 +926,25 @@ Item {
         Qt.callLater(fitVisibleGeometry)
     }
 
+    // A segment's bounds in assembly coordinates, or null when it has none: a copy of a shared
+    // mesh is measured as placed, everything else as its geometry stands.
+    function segmentBounds(segmentKey) {
+        const geometry = geometryByNode[segmentKey]
+        if (!geometry) return null
+        if (sharedSegment[segmentKey]) {
+            const model = modelByNode[segmentKey]
+            const placement = model ? placementByNode[model.nodeId] : null
+            if (!placement) return null
+            const bounds = geometry.boundsUnder(placement.position, placement.rotation)
+            return bounds.minimum !== undefined ? bounds : null
+        }
+        const minimum = Qt.vector3d(geometry.minimumCoordinate(0), geometry.minimumCoordinate(1), geometry.minimumCoordinate(2))
+        const maximum = Qt.vector3d(geometry.maximumCoordinate(0), geometry.maximumCoordinate(1), geometry.maximumCoordinate(2))
+        if (!isFinite(minimum.x) || !isFinite(minimum.y) || !isFinite(minimum.z)
+                || !isFinite(maximum.x) || !isFinite(maximum.y) || !isFinite(maximum.z)) return null
+        return { minimum: minimum, maximum: maximum }
+    }
+
     // The bounds of everything currently drawn, or null when nothing is.
     function visibleGeometryBounds() {
         const exploded = explodedBounds([])
@@ -906,13 +953,10 @@ Item {
         let maximum = Qt.vector3d(0, 0, 0)
         let found = false
         for (let id in geometryByNode) {
-            const geometry = geometryByNode[id]
-            const low = Qt.vector3d(geometry.minimumCoordinate(0), geometry.minimumCoordinate(1),
-                                    geometry.minimumCoordinate(2))
-            const high = Qt.vector3d(geometry.maximumCoordinate(0), geometry.maximumCoordinate(1),
-                                     geometry.maximumCoordinate(2))
-            if (!isFinite(low.x) || !isFinite(low.y) || !isFinite(low.z)
-                    || !isFinite(high.x) || !isFinite(high.y) || !isFinite(high.z)) continue
+            const bounds = segmentBounds(id)
+            if (!bounds) continue
+            const low = bounds.minimum
+            const high = bounds.maximum
             if (!found) {
                 minimum = low
                 maximum = high
@@ -942,11 +986,10 @@ Item {
         let maximum = Qt.vector3d(0, 0, 0)
         let hasVisibleGeometry = false
         for (let id in geometryByNode) {
-            const geometry = geometryByNode[id]
-            const currentMinimum = Qt.vector3d(geometry.minimumCoordinate(0), geometry.minimumCoordinate(1), geometry.minimumCoordinate(2))
-            const currentMaximum = Qt.vector3d(geometry.maximumCoordinate(0), geometry.maximumCoordinate(1), geometry.maximumCoordinate(2))
-            if (!isFinite(currentMinimum.x) || !isFinite(currentMinimum.y) || !isFinite(currentMinimum.z)
-                    || !isFinite(currentMaximum.x) || !isFinite(currentMaximum.y) || !isFinite(currentMaximum.z)) continue
+            const bounds = segmentBounds(id)
+            if (!bounds) continue
+            const currentMinimum = bounds.minimum
+            const currentMaximum = bounds.maximum
             if (!hasVisibleGeometry) {
                 minimum = currentMinimum
                 maximum = currentMaximum
@@ -981,9 +1024,11 @@ Item {
         return { from: minimum - baseOffset - padding, to: maximum - baseOffset + padding }
     }
 
-    function includeGeometryBounds(nodeId, geometry) {
-        const minimum = Qt.vector3d(geometry.minimumCoordinate(0), geometry.minimumCoordinate(1), geometry.minimumCoordinate(2))
-        const maximum = Qt.vector3d(geometry.maximumCoordinate(0), geometry.maximumCoordinate(1), geometry.maximumCoordinate(2))
+    function includeGeometryBounds(nodeId, segmentKey) {
+        const bounds = segmentBounds(segmentKey)
+        if (!bounds) return
+        const minimum = bounds.minimum
+        const maximum = bounds.maximum
         const existing = boundsByNode[nodeId]
         boundsByNode[nodeId] = existing ? {
             minimum: Qt.vector3d(Math.min(existing.minimum.x, minimum.x), Math.min(existing.minimum.y, minimum.y), Math.min(existing.minimum.z, minimum.z)),
@@ -1008,7 +1053,9 @@ Item {
         sectionFinalizeTotal = 0
         clearMeasurementHighlights()
         for (let id in modelByNode) modelByNode[id].destroy()
-        for (let id in geometryByNode) geometryByNode[id].destroy()
+        for (let id in geometryByNode) if (!sharedSegment[id]) geometryByNode[id].destroy()
+        for (let key in sharedGeometryByKey) sharedGeometryByKey[key].destroy()
+        for (let key in sharedEdgeGeometryByKey) sharedEdgeGeometryByKey[key].destroy()
         for (let id in edgeModelByNode) edgeModelByNode[id].destroy()
         for (let id in edgeGeometryByNode) edgeGeometryByNode[id].destroy()
         for (let id in sectionOverlayModelByNode) sectionOverlayModelByNode[id].destroy()
@@ -1030,6 +1077,15 @@ Item {
         edgeRevisionByNode = ({})
         pendingMeshesByNode = ({})
         pendingEdgesByNode = ({})
+        sharedGeometryByKey = ({})
+        sharedPayloadByKey = ({})
+        sharedEdgeGeometryByKey = ({})
+        sharedEdgePayloadByKey = ({})
+        sharedMeshRevisionByKey = ({})
+        sharedEdgesRevisionByKey = ({})
+        sharedSegment = ({})
+        instanceSegmentsByKey = ({})
+        placementByNode = ({})
         hasSceneBounds = false
         sectionWasEnabled = false
         sectionWasInteracting = false
@@ -1308,7 +1364,7 @@ Item {
         geometryByNode[segmentKey] = geometry
         modelByNode[segmentKey] = model
         xrayModelBySegment[segmentKey] = xrayModel
-        includeGeometryBounds(nodeId, geometry)
+        includeGeometryBounds(nodeId, segmentKey)
         // Only the new model's own state. Re-walking every model here made a replay of N
         // segments cost N^2, which is most of what entering a workspace used to spend.
         const section = !presentationOnly && controller ? controller.section : null
@@ -1346,6 +1402,156 @@ Item {
         scheduleSectionForNewGeometry()
     }
 
+    // A part's shared mesh, made from its payload when a copy first needs it.
+    function sharedGeometry(sourceKey) {
+        let geometry = sharedGeometryByKey[sourceKey]
+        if (geometry) return geometry
+        const payload = sharedPayloadByKey[sourceKey]
+        if (!payload) return null
+        geometry = geometryComponent.createObject(sceneRoot)
+        if (!geometry.appendWorkerMesh(payload)) {
+            geometry.destroy()
+            return null
+        }
+        sharedGeometryByKey[sourceKey] = geometry
+        delete sharedPayloadByKey[sourceKey]
+        return geometry
+    }
+
+    function appendSharedMesh(sourceKey, sourceColor, meshJson) {
+        const revision = controller ? controller.sharedMeshRevision(sourceKey) : 0
+        if (revision > 0 && sharedMeshRevisionByKey[sourceKey] === revision) return
+        sharedMeshRevisionByKey[sourceKey] = revision
+        const geometry = sharedGeometryByKey[sourceKey]
+        if (!geometry) {
+            sharedPayloadByKey[sourceKey] = meshJson
+            return
+        }
+        // The refined tessellation: every copy draws it at once.
+        if (!geometry.replaceWorkerMesh(meshJson)) return
+        for (const segmentKey of instanceSegmentsByKey[sourceKey] || []) {
+            const overlay = sectionOverlayGeometryByNode[segmentKey]
+            if (overlay) overlay.copySectionOverlayFrom(geometry)
+        }
+        scheduleSectionForNewGeometry()
+    }
+
+    function notePlacement(nodeId, position, rotation) {
+        placementByNode[nodeId] = { position: position, rotation: rotation }
+        if (partNodeByNode[nodeId] || xrayPartNodeByNode[nodeId]) placePart(nodeId)
+    }
+
+    function appendMeshInstance(nodeId, segmentKey, sourceKey, sourceColor, position, rotation) {
+        const revision = controller ? controller.meshRevision(segmentKey) : 0
+        if (revision > 0 && meshRevisionBySegment[segmentKey] === revision) return
+        meshRevisionBySegment[segmentKey] = revision
+        notePlacement(nodeId, position, rotation)
+        if (lazyMaterialization && !geometryByNode[segmentKey] && !nodeVisibleInPreview(nodeId)) {
+            let pending = pendingMeshesByNode[nodeId]
+            if (!pending) {
+                pending = {}
+                pendingMeshesByNode[nodeId] = pending
+            }
+            pending[segmentKey] = { sourceKey: sourceKey, sourceColor: sourceColor }
+            return
+        }
+        buildMeshInstance(nodeId, segmentKey, sourceKey, sourceColor)
+    }
+
+    function buildMeshInstance(nodeId, segmentKey, sourceKey, sourceColor) {
+        const existing = modelByNode[segmentKey]
+        if (existing) {
+            // The refined pass: the shared mesh it draws was already replaced.
+            existing.importColor = sourceColor
+            existing.sourceColor = root.displayColor(nodeId, existing.importColor)
+            return
+        }
+        const geometry = sharedGeometry(sourceKey)
+        if (!geometry) return
+        const model = modelComponent.createObject(partNode(nodeId), { "geometry": geometry, "nodeId": nodeId, "importColor": sourceColor,
+                                                    "sourceColor": root.displayColor(nodeId, sourceColor) })
+        const xrayModel = componentXrayModel.createObject(xrayPartNode(nodeId), {
+            "geometry": geometry,
+            "nodeId": nodeId,
+            "visible": root.externalHighlightNodeId.length > 0
+                    && root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId)
+        })
+        geometryByNode[segmentKey] = geometry
+        sharedSegment[segmentKey] = true
+        let copies = instanceSegmentsByKey[sourceKey]
+        if (!copies) {
+            copies = []
+            instanceSegmentsByKey[sourceKey] = copies
+        }
+        copies.push(segmentKey)
+        modelByNode[segmentKey] = model
+        xrayModelBySegment[segmentKey] = xrayModel
+        includeGeometryBounds(nodeId, segmentKey)
+        const section = !presentationOnly && controller ? controller.section : null
+        applySolidState(model, sliceOnlyFinalState(section))
+        scheduleSectionForNewGeometry()
+    }
+
+    // A part's shared edges, made from their payload when a copy first needs them. Not drawn
+    // themselves: each copy draws its own copy, clipped against its own section plane.
+    function sharedEdgeGeometry(sourceKey) {
+        let geometry = sharedEdgeGeometryByKey[sourceKey]
+        if (geometry) return geometry
+        const payload = sharedEdgePayloadByKey[sourceKey]
+        if (!payload) return null
+        geometry = edgeGeometryComponent.createObject(sceneRoot)
+        if (!geometry.replaceWorkerEdges(payload)) {
+            geometry.destroy()
+            return null
+        }
+        sharedEdgeGeometryByKey[sourceKey] = geometry
+        delete sharedEdgePayloadByKey[sourceKey]
+        return geometry
+    }
+
+    function appendSharedEdges(sourceKey, edgeJson) {
+        const revision = controller ? controller.sharedEdgesRevision(sourceKey) : 0
+        if (revision > 0 && sharedEdgesRevisionByKey[sourceKey] === revision) return
+        sharedEdgesRevisionByKey[sourceKey] = revision
+        const geometry = sharedEdgeGeometryByKey[sourceKey]
+        // The copies take the refined edges as their instances arrive.
+        if (geometry) geometry.replaceWorkerEdges(edgeJson)
+        else sharedEdgePayloadByKey[sourceKey] = edgeJson
+    }
+
+    function appendEdgeInstance(nodeId, sourceKey, position, rotation) {
+        const revision = controller ? controller.edgeRevision(nodeId) : 0
+        if (revision > 0 && edgeRevisionByNode[nodeId] === revision) return
+        edgeRevisionByNode[nodeId] = revision
+        notePlacement(nodeId, position, rotation)
+        if (lazyMaterialization && !edgeGeometryByNode[nodeId] && !nodeVisibleInPreview(nodeId)) {
+            pendingEdgesByNode[nodeId] = { sourceKey: sourceKey }
+            return
+        }
+        buildEdgeInstance(nodeId, sourceKey)
+    }
+
+    function buildEdgeInstance(nodeId, sourceKey) {
+        const shared = sharedEdgeGeometry(sourceKey)
+        if (!shared) return
+        if (edgeGeometryByNode[nodeId]) {
+            edgeGeometryByNode[nodeId].copyEdgesFrom(shared)
+            scheduleSectionForNewGeometry()
+            return
+        }
+        const geometry = edgeGeometryComponent.createObject(sceneRoot)
+        if (!geometry.copyEdgesFrom(shared)) {
+            geometry.destroy()
+            return
+        }
+        const model = edgeModelComponent.createObject(partNode(nodeId), { "geometry": geometry, "nodeId": nodeId })
+        edgeGeometryByNode[nodeId] = geometry
+        edgeModelByNode[nodeId] = model
+        const section = !presentationOnly && controller ? controller.section : null
+        applyEdgeState(model, section, sliceOnlyFinalState(section))
+        scheduleSectionForNewGeometry()
+    }
+
     // Builds the parked parts the display filter now shows. Called before the filter's
     // fit, so the fit finds the bounds it needs.
     function materializePending() {
@@ -1353,14 +1559,18 @@ Item {
             if (lazyMaterialization && !nodeVisibleInPreview(nodeId)) continue
             const pending = pendingMeshesByNode[nodeId]
             delete pendingMeshesByNode[nodeId]
-            for (let segmentKey in pending)
-                buildMesh(nodeId, segmentKey, pending[segmentKey].sourceColor, pending[segmentKey].meshJson)
+            for (let segmentKey in pending) {
+                const entry = pending[segmentKey]
+                if (entry.sourceKey !== undefined) buildMeshInstance(nodeId, segmentKey, entry.sourceKey, entry.sourceColor)
+                else buildMesh(nodeId, segmentKey, entry.sourceColor, entry.meshJson)
+            }
         }
         for (let nodeId in pendingEdgesByNode) {
             if (lazyMaterialization && !nodeVisibleInPreview(nodeId)) continue
-            const edgeJson = pendingEdgesByNode[nodeId]
+            const pending = pendingEdgesByNode[nodeId]
             delete pendingEdgesByNode[nodeId]
-            buildEdges(nodeId, edgeJson)
+            if (pending.sourceKey !== undefined) buildEdgeInstance(nodeId, pending.sourceKey)
+            else buildEdges(nodeId, pending)
         }
     }
 
@@ -1385,23 +1595,25 @@ Item {
         const nodeId = hit.objectHit.nodeId
         let sourceGeometry = null
         let info = null
+        // The part's geometry (faces and edges alike) is in its own frame -- a copy of a shared
+        // mesh, an exploded part -- so the hit is taken into it, as facePickFromHit does.
+        const local = hit.objectHit.mapPositionFromScene(hit.scenePosition)
         if (mode === 1 || mode === 3) {
             sourceGeometry = edgeGeometryByNode[nodeId]
             if (sourceGeometry) {
                 const tolerance = Math.max(root.sceneDiagonal * 0.001, root.sectionWorldPerPixel * 10)
-                info = sourceGeometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y,
-                                                      hit.scenePosition.z, tolerance)
+                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z, tolerance)
                 if (info && mode === 3 && info.radiusMm <= 0) info = null
             }
             if (!info && mode === 3 && hit.objectHit.geometry) {
                 sourceGeometry = hit.objectHit.geometry
-                info = sourceGeometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z)
+                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z)
                 if (info && info.radiusMm <= 0) info = null
             }
         } else if (mode === 2 || mode === 4 || mode === 5) {
             sourceGeometry = hit.objectHit.geometry
             if (sourceGeometry)
-                info = sourceGeometry.topologyAtPoint(hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z)
+                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z)
         }
         if (!info || !info.topologyId) return null
         return {
@@ -1411,9 +1623,19 @@ Item {
             measureMm: info.measureMm,
             radiusMm: info.radiusMm,
             sourceGeometry: sourceGeometry,
+            placementNode: hit.objectHit.parent,
             point: hit.scenePosition,
             normal: hit.sceneNormal
         }
+    }
+
+    // A highlight copies the picked face or edge out of its part's geometry, in that geometry's
+    // frame, so it is drawn where the part is: placed as the part's node is.
+    function placementPosition(pick) {
+        return pick && pick.placementNode ? pick.placementNode.position : Qt.vector3d(0, 0, 0)
+    }
+    function placementRotation(pick) {
+        return pick && pick.placementNode ? pick.placementNode.rotation : Qt.quaternion(1, 0, 0, 0)
     }
 
     function showHoverTopology(pick) {
@@ -1421,10 +1643,15 @@ Item {
         hoverFaceHighlight.clearTopology()
         hoverEdgeGeometry.clearEdges()
         if (!pick) return
-        if (pick.entityKind === "face")
+        if (pick.entityKind === "face") {
+            hoverFaceHighlight.position = placementPosition(pick)
+            hoverFaceHighlight.rotation = placementRotation(pick)
             hoverFaceHighlight.setTopology(pick.sourceGeometry, pick.topologyId)
-        else if (pick.entityKind === "edge")
+        } else if (pick.entityKind === "edge") {
+            hoverEdgeModel.position = placementPosition(pick)
+            hoverEdgeModel.rotation = placementRotation(pick)
             hoverEdgeGeometry.copyTopologyFrom(pick.sourceGeometry, pick.topologyId)
+        }
     }
 
     function clearMeasurementHighlights() {
@@ -1479,6 +1706,7 @@ Item {
             radiusMm: info.radiusMm,
             sourceGeometry: geometry,
             sourceModel: hit.objectHit,
+            placementNode: hit.objectHit.parent,
             point: hit.scenePosition,
             normal: hit.sceneNormal
         }
@@ -1560,6 +1788,13 @@ Item {
         // An empty map means the face could not be resolved; emitting it would hand the
         // listener a default frame that reads as a valid view.
         if (!frame || frame.topologyId === undefined) return
+        // A copy of a shared mesh describes its face in the part's own frame; the listener
+        // works in assembly coordinates, so the frame is placed (and not exploded).
+        const placement = placementByNode[pick.nodeId]
+        if (placement) {
+            frame.normal = placement.rotation.times(frame.normal)
+            frame.centroid = placement.rotation.times(frame.centroid).plus(placement.position)
+        }
         root.faceFrameSelected(frame)
     }
 
@@ -1821,6 +2056,7 @@ Item {
             id: sceneRoot
 
             Model {
+                id: hoverEdgeModel
                 visible: root.hoverTopology && root.hoverTopology.entityKind === "edge"
                 geometry: CadEdgeGeometry { id: hoverEdgeGeometry }
                 materials: PrincipledMaterial {
@@ -1835,6 +2071,8 @@ Item {
                 delegate: Model {
                     required property var modelData
                     visible: modelData.entityKind === "edge"
+                    position: root.placementPosition(modelData)
+                    rotation: root.placementRotation(modelData)
                     geometry: CadEdgeGeometry {
                         Component.onCompleted: copyTopologyFrom(modelData.sourceGeometry, modelData.topologyId)
                     }
@@ -1955,6 +2193,8 @@ Item {
             delegate: MeasurementFaceHighlight {
                 required property var modelData
                 active: modelData.entityKind === "face"
+                position: root.placementPosition(modelData)
+                rotation: root.placementRotation(modelData)
                 fillColor: viewportVisualTheme.selectionColor
                 boundaryColor: viewportVisualTheme.selectionEdgeColor
                 fillAlpha: 0.58
@@ -2716,6 +2956,14 @@ Item {
         function onSnapshotChanged() { root.clearMeshes() }
         function onMeshReady(nodeId, segmentKey, sourceColor, meshJson) { root.appendMesh(nodeId, segmentKey, sourceColor, meshJson) }
         function onEdgeReady(nodeId, edgeJson) { root.appendEdges(nodeId, edgeJson) }
+        function onSharedMeshReady(sourceKey, sourceColor, meshJson) { root.appendSharedMesh(sourceKey, sourceColor, meshJson) }
+        function onSharedEdgesReady(sourceKey, edgeJson) { root.appendSharedEdges(sourceKey, edgeJson) }
+        function onMeshInstanceReady(nodeId, segmentKey, sourceKey, sourceColor, position, rotation) {
+            root.appendMeshInstance(nodeId, segmentKey, sourceKey, sourceColor, position, rotation)
+        }
+        function onEdgeInstanceReady(nodeId, sourceKey, position, rotation) {
+            root.appendEdgeInstance(nodeId, sourceKey, position, rotation)
+        }
         function onFitRequested() { root.fitSelection() }
         function onViewNormalToFaceRequested() {
             if (root.visible && root.contextActionsEnabled && root.componentContextActionsEnabled) root.viewNormalToFace()
