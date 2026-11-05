@@ -10,6 +10,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#include <utility>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -219,10 +221,13 @@ void UpdateControllerTest::theWindowsSwapLeavesAResultWhenTheFilesCannotBeReplac
     const auto system = QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:/Windows"))).filePath(QStringLiteral("System32"));
     QVERIFY(QFile::copy(QDir(system).filePath(QStringLiteral("whoami.exe")), base.filePath(QStringLiteral("old/Loupe.exe"))));
     QVERIFY(QFile::copy(QDir(system).filePath(QStringLiteral("hostname.exe")), base.filePath(QStringLiteral("new/Loupe.exe"))));
-    for (const auto* name : {"old/part.dll", "new/part.dll"}) {
+    // Different sizes: robocopy skips a file whose size and time match, and two files
+    // written within one clock tick share a time -- the copy then never touches the lock.
+    for (const auto& [name, content] : {std::pair{"old/part.dll", QByteArrayLiteral("old")},
+                                        std::pair{"new/part.dll", QByteArrayLiteral("the new version")}}) {
         QFile part(base.filePath(QString::fromLatin1(name)));
         QVERIFY(part.open(QIODevice::WriteOnly));
-        part.write(QByteArray(name));
+        part.write(content);
     }
     // Shared with nothing: robocopy cannot write it.
     const auto lockedPath = QDir::toNativeSeparators(base.filePath(QStringLiteral("old/part.dll"))).toStdWString();

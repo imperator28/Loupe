@@ -516,7 +516,7 @@ target_compile_definitions(loupe-update-controller-tests PRIVATE LOUPE_VERSION="
     LOUPE_SOURCE_DIR="${PROJECT_SOURCE_DIR}" LOUPE_PROJECT_VERSION="${PROJECT_VERSION}")
 loupe_enable_warnings(loupe-update-controller-tests)
 
-add_test(NAME update-controller COMMAND loupe-update-controller-tests)
+add_test(NAME update-controller COMMAND loupe-update-controller-tests -o update-controller.log,txt -o -,txt)
 set_tests_properties(update-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=${_loupe_qpa_platform};QT_PLUGIN_PATH=${_loupe_qt_runtime_root}/plugins"
     ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${_loupe_qt_runtime_bin}"
