@@ -62,6 +62,7 @@ UpdateController::UpdateController(QObject* parent)
     const auto current = parseVersion(currentVersion_);
     const bool runningABeta = current && !current->prerelease.isEmpty();
     includePrereleases_ = QSettings().value(QString::fromLatin1(kIncludePrereleasesKey), runningABeta).toBool();
+    readInstallResult();
     progressTimer_.setInterval(200);
     connect(&progressTimer_, &QTimer::timeout, this, [this] {
         const auto size = QFileInfo(packagePath_).size();
@@ -219,32 +220,57 @@ QString UpdateController::assetSuffixForThisBuild()
 #endif
 }
 
-QString UpdateController::installScript()
+QString UpdateController::windowsInstallScript()
 {
-#if defined(Q_OS_WIN)
-    // Waits for Loupe to exit, copies the new version over the old one (a few tries, while
-    // Windows lets go of the files), and starts it. Settings live elsewhere and stay.
-    return QStringLiteral(R"PS(param([int]$ProcessId, [string]$Old, [string]$New, [string]$Log)
+    // Waits for Loupe and its import workers to exit, copies the new version over the old one
+    // (a few tries, while Windows lets go of the files), and starts it. Settings live elsewhere
+    // and stay. A folder only an administrator may change (C:\Program Files) refuses the
+    // copy however often it is tried: Windows is then asked, once, to run the copy as an
+    // administrator -- Loupe itself still starts as the user. When the copy still fails, the
+    // result file says so, and the old version, started again, tells the user why it is still
+    // the old version rather than offering the same update as if nothing had happened.
+    return QStringLiteral(R"PS(param([int]$ProcessId, [string]$Old, [string]$New, [string]$Log, [string]$Result, [string]$Version)
 Start-Transcript -Path $Log -Append | Out-Null
 try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch {}
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Old, [StringComparison]::OrdinalIgnoreCase) } |
+    ForEach-Object { try { $_.WaitForExit(10000) | Out-Null } catch {} }
 Start-Sleep -Milliseconds 400
-$copied = $false
-for ($attempt = 0; $attempt -lt 10 -and -not $copied; $attempt++) {
-    robocopy $New $Old /E /R:2 /W:1 /NFL /NDL /NJH /NJS | Out-Null
-    if ($LASTEXITCODE -lt 8) { $copied = $true } else { Start-Sleep -Seconds 1 }
+$code = 16
+for ($attempt = 0; $attempt -lt 5; $attempt++) {
+    robocopy $New $Old /E /R:2 /W:1 /NFL /NDL /NJH /NP | Out-Host
+    $code = $LASTEXITCODE
+    if ($code -lt 8) { break }
+    Start-Sleep -Seconds 1
+}
+if ($code -ge 8 -and -not $env:LOUPE_UPDATE_NO_ELEVATION) {
+    "Copying into $Old failed ($code); asking Windows to run it as an administrator."
+    try {
+        $copy = Start-Process -FilePath 'robocopy.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
+            -ArgumentList @("`"$New`"", "`"$Old`"", '/E', '/R:2', '/W:1', '/NFL', '/NDL', '/NJH', '/NP')
+        $code = $copy.ExitCode
+    } catch { "Not run as an administrator: $_" }
+}
+if ($code -ge 8) {
+    Set-Content -Path $Result -Value @($Version, $Old, $code) -Encoding UTF8
+} else {
+    Remove-Item -Path $Result -ErrorAction SilentlyContinue
 }
 Start-Process -FilePath (Join-Path $Old 'Loupe.exe')
 Stop-Transcript | Out-Null
 )PS");
-#else
+}
+
+QString UpdateController::unixInstallScript()
+{
     // Waits for Loupe to exit, moves the old app aside, copies the new one into its place,
-    // and opens it; if the copy fails, the old app goes back.
+    // and opens it; if the copy fails, the old app goes back, and the result file says why.
     return QStringLiteral(R"SH(#!/bin/bash
-pid="$1"; old="$2"; new="$3"; log="$4"
+pid="$1"; old="$2"; new="$3"; log="$4"; result="$5"; version="$6"
 exec >>"$log" 2>&1
 for attempt in $(seq 1 300); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
 backup="${old%.app}.previous.app"
 rm -rf "$backup"
+rm -f "$result"
 if mv "$old" "$backup"; then
     if ditto "$new" "$old"; then
         xattr -dr com.apple.quarantine "$old" 2>/dev/null
@@ -252,11 +278,61 @@ if mv "$old" "$backup"; then
     else
         rm -rf "$old"
         mv "$backup" "$old"
+        printf '%s\n%s\n%s\n' "$version" "$old" "copy" > "$result"
     fi
+else
+    printf '%s\n%s\n%s\n' "$version" "$old" "move" > "$result"
 fi
 open "$old"
 )SH");
+}
+
+QString UpdateController::installScript()
+{
+#if defined(Q_OS_WIN)
+    return windowsInstallScript();
+#else
+    return unixInstallScript();
 #endif
+}
+
+QString UpdateController::installResultPath() const
+{
+    return QDir(workDirectory()).filePath(QStringLiteral("install-result.txt"));
+}
+
+void UpdateController::readInstallResult()
+{
+    // Written by the install script when it could not put the new version in place.
+    QFile file(installResultPath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+    // Windows PowerShell writes UTF-8 with a byte-order mark.
+    const auto lines = QString::fromUtf8(file.readAll()).remove(QChar(0xFEFF)).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    file.close();
+    QFile::remove(installResultPath());
+    if (lines.size() < 2) return;
+    failedInstallVersion_ = lines.at(0).trimmed();
+    failedInstallFolder_ = lines.at(1).trimmed();
+}
+
+void UpdateController::offerRelease()
+{
+    // The update found is the one that could not be installed last time: say why, rather
+    // than offer it again as if it had never been tried.
+    if (release_ && !failedInstallVersion_.isEmpty() && release_->version == failedInstallVersion_) {
+        failedInstallVersion_.clear();
+#if defined(Q_OS_WIN)
+        setState(State::Failed, tr("Loupe %1 was downloaded but could not replace the copy in %2: Windows did not allow the change. "
+                                   "Allow it when Windows asks, move Loupe to a folder of your own, or install it from the release page.")
+                                    .arg(release_->version, QDir::toNativeSeparators(failedInstallFolder_)));
+#else
+        setState(State::Failed, tr("Loupe %1 was downloaded but could not replace the copy in %2. "
+                                   "Move Loupe to a folder of your own, or install it from the release page.")
+                                    .arg(release_->version, failedInstallFolder_));
+#endif
+        return;
+    }
+    setState(State::Available);
 }
 
 bool UpdateController::supported() const noexcept
@@ -329,7 +405,7 @@ void UpdateController::checkForUpdates(const bool userInitiated)
         const auto json = file.readAll();
         QMetaObject::invokeMethod(this, [this, json] {
             release_ = newestRelease(json, currentVersion_, includePrereleases_, assetSuffixForThisBuild());
-            if (release_) setState(State::Available);
+            if (release_) offerRelease();
             else setState(State::UpToDate, tr("Loupe %1 is the latest version.").arg(currentVersion_));
         }, Qt::QueuedConnection);
         return;
@@ -356,7 +432,7 @@ void UpdateController::finishCheck(const int exitCode, const QProcess::ExitStatu
         return;
     }
     release_ = newestRelease(json, currentVersion_, includePrereleases_, assetSuffixForThisBuild());
-    if (release_) setState(State::Available);
+    if (release_) offerRelease();
     else setState(State::UpToDate, tr("Loupe %1 is the latest version.").arg(currentVersion_));
 }
 
@@ -462,15 +538,16 @@ void UpdateController::installAndRestart()
         fail(tr("Move Loupe into Applications (or any folder) and open it from there, then update."));
         return;
     }
+    // Not on Windows: there this reads only the read-only attribute, never the folder's
+    // permissions, so a folder only an administrator may change (C:\Program Files) passed it
+    // and the copy then failed. The install script asks Windows for an administrator copy.
     const auto writableDirectory = QFileInfo(target).absolutePath();
-#else
-    const auto writableDirectory = target;
-#endif
     if (!QFileInfo(writableDirectory).isWritable()) {
         fail(tr("Loupe cannot write to the folder it is in (%1). Download the update from the release page instead.")
                  .arg(QDir::toNativeSeparators(writableDirectory)));
         return;
     }
+#endif
     const auto extracted = QDir(workDirectory()).filePath(QStringLiteral("extracted"));
     QDir(extracted).removeRecursively();
     QDir().mkpath(extracted);
@@ -533,15 +610,17 @@ void UpdateController::finishSelfCheck(const int exitCode, const QProcess::ExitS
     script.close();
     const auto log = QDir(workDirectory()).filePath(QStringLiteral("install.log"));
     const auto pid = QString::number(QCoreApplication::applicationPid());
+    const auto version = release_ ? release_->version : QString{};
     bool started = false;
 #if defined(Q_OS_WIN)
     started = QProcess::startDetached(QStringLiteral("powershell.exe"),
                                       {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
                                        QStringLiteral("-WindowStyle"), QStringLiteral("Hidden"), QStringLiteral("-File"), scriptPath,
                                        pid, QDir::toNativeSeparators(installPath()), QDir::toNativeSeparators(newInstallPath_),
-                                       QDir::toNativeSeparators(log)});
+                                       QDir::toNativeSeparators(log), QDir::toNativeSeparators(installResultPath()), version});
 #else
-    started = QProcess::startDetached(QStringLiteral("/bin/bash"), {scriptPath, pid, installPath(), newInstallPath_, log});
+    started = QProcess::startDetached(QStringLiteral("/bin/bash"), {scriptPath, pid, installPath(), newInstallPath_, log,
+                                                                    installResultPath(), version});
 #endif
     if (!started) {
         fail(tr("Could not start the update."));

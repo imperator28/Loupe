@@ -31,6 +31,27 @@
   brought the old layout back, so the assembled positions could not be edited from.
   Moving a part on the assembly now starts a new layout; the old one is saved first.
 
+## v0.1.6-beta.2
+
+A testing build that fixes in-app updates on Windows when Loupe is installed in
+`C:\Program Files`. Published as a pre-release; everything in v0.1.6-beta.1 is included.
+
+### Fixed
+
+- **Updating a copy in Program Files** (Windows): the update downloaded and Loupe
+  restarted, but it was still the old version, with no error, because Windows refused the
+  copy into a folder only an administrator may change. The update now asks for
+  administrator permission when it needs it, through the usual Windows prompt, and Loupe
+  starts again as you.
+- **An update that could not be installed says so**: if the copy still fails (the prompt
+  was declined, or a file was held open), the old version says which version could not be
+  installed, into which folder, and what to do, instead of offering the same update as if
+  it had never been tried. macOS does the same.
+
+Coming from 0.1.5 installed in Program Files: 0.1.5 still runs its old update, so install
+this beta once by hand (unzip it over the Loupe folder, or run Loupe as an administrator
+for this update). Later updates work in place.
+
 ## v0.1.6-beta.1
 
 A testing build of faster opening and of drawing repeated parts once, with a fix for

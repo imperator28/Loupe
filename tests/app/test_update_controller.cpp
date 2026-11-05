@@ -6,6 +6,15 @@
 #include <QCoreApplication>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QProcessEnvironment>
+#include <QProcess>
+#include <QStandardPaths>
+
+#include <utility>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 #include "app/platform/UpdateController.h"
 #include "app/platform/TempHygiene.h"
@@ -22,6 +31,11 @@ private slots:
     void betasAreOfferedOnlyWhenAskedFor();
     void aCheckAgainstAReleaseListReportsWhatItFound();
     void theBuildKnowsItsBetaLabel();
+    void aSwapThatCannotCopyAsksForAnAdministratorAndSaysSo();
+    void anUpdateThatCouldNotBeInstalledSaysWhyInsteadOfOfferingItAgain();
+#ifdef Q_OS_WIN
+    void theWindowsSwapLeavesAResultWhenTheFilesCannotBeReplaced();
+#endif
     void whatsNewIsReadForTheReleaseAndShownOncePerRelease();
     void everyReleaseShipsWhatsNewWithIconsThatExist();
     void launchSweepsTheTempFilesOfLoupesThatAreGone();
@@ -147,6 +161,105 @@ void UpdateControllerTest::theBuildKnowsItsBetaLabel()
     QVERIFY(script.contains(QStringLiteral("mv \"$backup\" \"$old\"")));
 #endif
 }
+
+void UpdateControllerTest::aSwapThatCannotCopyAsksForAnAdministratorAndSaysSo()
+{
+    // A folder only an administrator may change (C:\Program Files) refused the copy every
+    // time, and the old version was started again as if the update had worked.
+    const auto windows = UpdateController::windowsInstallScript();
+    QVERIFY(windows.contains(QStringLiteral("-Verb RunAs")));
+    QVERIFY(windows.contains(QStringLiteral("Set-Content -Path $Result")));
+    // Loupe itself starts again as the user, from the non-elevated script.
+    QVERIFY(windows.contains(QStringLiteral("Start-Process -FilePath (Join-Path $Old 'Loupe.exe')")));
+    QVERIFY(!windows.contains(QStringLiteral("-Verb RunAs -FilePath (Join-Path")));
+    const auto unix = UpdateController::unixInstallScript();
+    QVERIFY(unix.contains(QStringLiteral("> \"$result\"")));
+}
+
+void UpdateControllerTest::anUpdateThatCouldNotBeInstalledSaysWhyInsteadOfOfferingItAgain()
+{
+    if (UpdateController::assetSuffixForThisBuild().isEmpty()) QSKIP("No update packages for this platform");
+    // What the install script leaves when it could not put 0.1.6 in place.
+    const QString work = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QStringLiteral("loupe-update"));
+    QDir().mkpath(work);
+    const auto resultPath = QDir(work).filePath(QStringLiteral("install-result.txt"));
+    {
+        QFile result(resultPath);
+        QVERIFY(result.open(QIODevice::WriteOnly | QIODevice::Text));
+        // As Windows PowerShell writes it: UTF-8 with a byte-order mark.
+        result.write("\xEF\xBB\xBF" "0.1.6\nC:\\Program Files\\Loupe\n16\n");
+    }
+    QTemporaryDir directory;
+    const auto listPath = directory.filePath(QStringLiteral("releases.json"));
+    {
+        QFile list(listPath);
+        QVERIFY(list.open(QIODevice::WriteOnly));
+        list.write(releases());
+    }
+    UpdateController updates;
+    QVERIFY(!QFile::exists(resultPath)); // read once, at launch
+    updates.setIncludePrereleases(false);
+    updates.setReleasesUrl(QUrl::fromLocalFile(listPath).toString());
+    updates.checkForUpdates(false);
+    QTRY_COMPARE(updates.state(), UpdateController::State::Failed);
+    QVERIFY2(updates.message().contains(QStringLiteral("Program Files")), qPrintable(updates.message()));
+    QCOMPARE(updates.availableVersion(), QStringLiteral("0.1.6"));
+    // Once said, the next check offers it again, to try once more.
+    updates.checkForUpdates(true);
+    QTRY_COMPARE(updates.state(), UpdateController::State::Available);
+}
+
+#ifdef Q_OS_WIN
+void UpdateControllerTest::theWindowsSwapLeavesAResultWhenTheFilesCannotBeReplaced()
+{
+    // The real script, against an install whose file is held open so it cannot be replaced,
+    // as Program Files refuses a user: the copy fails, a result says so, and the old start runs.
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QDir base(root.path());
+    QVERIFY(base.mkpath(QStringLiteral("old")) && base.mkpath(QStringLiteral("new")));
+    const auto system = QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:/Windows"))).filePath(QStringLiteral("System32"));
+    QVERIFY(QFile::copy(QDir(system).filePath(QStringLiteral("whoami.exe")), base.filePath(QStringLiteral("old/Loupe.exe"))));
+    QVERIFY(QFile::copy(QDir(system).filePath(QStringLiteral("hostname.exe")), base.filePath(QStringLiteral("new/Loupe.exe"))));
+    // Different sizes: robocopy skips a file whose size and time match, and two files
+    // written within one clock tick share a time -- the copy then never touches the lock.
+    for (const auto& [name, content] : {std::pair{"old/part.dll", QByteArrayLiteral("old")},
+                                        std::pair{"new/part.dll", QByteArrayLiteral("the new version")}}) {
+        QFile part(base.filePath(QString::fromLatin1(name)));
+        QVERIFY(part.open(QIODevice::WriteOnly));
+        part.write(content);
+    }
+    // Shared with nothing: robocopy cannot write it.
+    const auto lockedPath = QDir::toNativeSeparators(base.filePath(QStringLiteral("old/part.dll"))).toStdWString();
+    const HANDLE locked = CreateFileW(lockedPath.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    QVERIFY(locked != INVALID_HANDLE_VALUE);
+
+    const auto scriptPath = base.filePath(QStringLiteral("install.ps1"));
+    {
+        QFile script(scriptPath);
+        QVERIFY(script.open(QIODevice::WriteOnly));
+        script.write(UpdateController::windowsInstallScript().toUtf8());
+    }
+    const auto resultPath = base.filePath(QStringLiteral("result.txt"));
+    QProcess powershell;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("LOUPE_UPDATE_NO_ELEVATION"), QStringLiteral("1"));
+    powershell.setProcessEnvironment(environment);
+    powershell.start(QStringLiteral("powershell.exe"),
+                     {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"), QStringLiteral("-File"),
+                      QDir::toNativeSeparators(scriptPath), QStringLiteral("0"), QDir::toNativeSeparators(base.filePath(QStringLiteral("old"))),
+                      QDir::toNativeSeparators(base.filePath(QStringLiteral("new"))), QDir::toNativeSeparators(base.filePath(QStringLiteral("install.log"))),
+                      QDir::toNativeSeparators(resultPath), QStringLiteral("9.9.9")});
+    QVERIFY(powershell.waitForFinished(180000));
+    CloseHandle(locked);
+    QFile result(resultPath);
+    QVERIFY2(result.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(QString::fromLocal8Bit(powershell.readAll())));
+    const auto lines = QString::fromUtf8(result.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QVERIFY(lines.size() >= 3);
+    QCOMPARE(lines.at(0).trimmed().remove(QChar(0xFEFF)), QStringLiteral("9.9.9"));
+    QVERIFY(lines.at(2).trimmed().toInt() >= 8);
+}
+#endif
 
 void UpdateControllerTest::whatsNewIsReadForTheReleaseAndShownOncePerRelease()
 {

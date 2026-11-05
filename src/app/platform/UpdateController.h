@@ -82,6 +82,9 @@ public:
     [[nodiscard]] static QString assetSuffixForThisBuild();
     // The script that swaps the new version in, for this platform.
     [[nodiscard]] static QString installScript();
+    // Both platforms' scripts, whichever this build is for, so either can be checked anywhere.
+    [[nodiscard]] static QString windowsInstallScript();
+    [[nodiscard]] static QString unixInstallScript();
 
     [[nodiscard]] QString currentVersion() const { return currentVersion_; }
     [[nodiscard]] bool supported() const noexcept;
@@ -148,6 +151,9 @@ private:
     [[nodiscard]] QString workDirectory() const;
     [[nodiscard]] QString findNewInstall() const;
     void stopProcess();
+    [[nodiscard]] QString installResultPath() const;
+    void readInstallResult();
+    void offerRelease();
 
     QString currentVersion_;
     QString releasesUrl_;
@@ -162,6 +168,9 @@ private:
     qint64 bytesReceived_{};
     QString packagePath_;
     QString newInstallPath_;
+    // An update the install script could not put in place, from its result file.
+    QString failedInstallVersion_;
+    QString failedInstallFolder_;
     QPointer<QProcess> process_;
     QTimer progressTimer_;
 };
