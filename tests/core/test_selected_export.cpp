@@ -4,6 +4,7 @@
 #include "core/export/ExportPlan.h"
 #include "core/export/StepExporter.h"
 #include "core/export/StlExporter.h"
+#include "core/domain/StableId.h"
 #include "core/import/StepImporter.h"
 #include "core/import/StepImporterTestSupport.h"
 #include "core/export/AtomicExportFile.h"
@@ -15,7 +16,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string_view>
+#include <vector>
 
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Builder.hxx>
@@ -342,6 +345,56 @@ TEST_CASE("in-memory XCAF traversal composes nested assembly locations", "[impor
     const auto occurrence = std::ranges::find_if(snapshot.nodes, [](const auto& node) { return node.kind == NodeKind::Occurrence; });
     REQUIRE(occurrence != snapshot.nodes.end());
     REQUIRE(occurrence->placement.columnMajor[12] == Catch::Approx(30.0));
+}
+
+TEST_CASE("a sub-assembly used twice gives each copy's parts their own ids and placements", "[import][nested]")
+{
+    // Both copies bring in the same component labels. They used to share ids, so the second
+    // copy's parts collapsed into the first's: one copy shown, and the tree's ids duplicated.
+    occ::handle<TDocStd_Document> document;
+    XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", document);
+    const auto shapes = XCAFDoc_DocumentTool::ShapeTool(document->Main());
+    const auto definition = shapes->AddShape(BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape(), false);
+    BRep_Builder builder;
+    TopoDS_Compound empty;
+    builder.MakeCompound(empty);
+    const auto subassembly = shapes->AddShape(empty, true);
+    gp_Trsf child; child.SetTranslation(gp_Vec(10.0, 0.0, 0.0));
+    shapes->AddComponent(subassembly, definition, TopLoc_Location(child));
+    TopoDS_Compound rootShape;
+    builder.MakeCompound(rootShape);
+    const auto root = shapes->AddShape(rootShape, true);
+    gp_Trsf first; first.SetTranslation(gp_Vec(100.0, 0.0, 0.0));
+    gp_Trsf second; second.SetTranslation(gp_Vec(200.0, 0.0, 0.0));
+    shapes->AddComponent(root, subassembly, TopLoc_Location(first));
+    shapes->AddComponent(root, subassembly, TopLoc_Location(second));
+    shapes->UpdateAssemblies();
+
+    const auto snapshot = loupe::import::detail::snapshotForTesting(document, root);
+    std::set<std::string> ids;
+    for (const auto& node : snapshot.nodes) ids.insert(node.id);
+    REQUIRE(ids.size() == snapshot.nodes.size());
+    std::vector<double> occurrenceX;
+    for (const auto& node : snapshot.nodes) {
+        if (node.kind == NodeKind::Occurrence) occurrenceX.push_back(node.placement.columnMajor[12]);
+    }
+    std::ranges::sort(occurrenceX);
+    REQUIRE(occurrenceX.size() == 2);
+    REQUIRE(occurrenceX[0] == Catch::Approx(110.0));
+    REQUIRE(occurrenceX[1] == Catch::Approx(210.0));
+
+    // The first copy keeps the id it always had (from its label alone), which saved views and
+    // settings name; the second is named by its parent as well.
+    std::vector<std::string> occurrenceIds;
+    std::string label;
+    for (const auto& node : snapshot.nodes) {
+        if (node.kind != NodeKind::Occurrence) continue;
+        occurrenceIds.push_back(node.id);
+        label = node.hierarchyPath;
+    }
+    REQUIRE(occurrenceIds.size() == 2);
+    REQUIRE(occurrenceIds[0] == loupe::domain::stableId(snapshot.sourceHash, label, "occurrence"));
+    REQUIRE(occurrenceIds[1] != occurrenceIds[0]);
 }
 
 TEST_CASE("atomic export replacement uses unique partials and cleans them", "[export][atomic]")

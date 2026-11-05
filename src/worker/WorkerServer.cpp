@@ -18,6 +18,10 @@
 #include "protocol/ProtocolFrame.h"
 #include "protocol/ProtocolTypes.h"
 
+#ifdef LOUPE_WORKER_MIMALLOC
+#include <mimalloc.h>
+#endif
+
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QDir>
@@ -27,10 +31,13 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QElapsedTimer>
 
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepGProp.hxx>
@@ -59,16 +66,36 @@
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
 #include <Quantity_ColorRGBA.hxx>
+#include <TopoDS_Compound.hxx>
 
+#include <atomic>
+#include <cstdlib>
 #include <exception>
 #include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
 #include <type_traits>
+#include <unordered_map>
+#include <vector>
 
 namespace loupe::worker {
 namespace {
+
+// The allocator malloc actually goes to, for the import metrics: a build that links mimalloc
+// but whose override did not take (a DLL loaded too late, a static link that kept the system
+// malloc) reports it, rather than benchmarking the system allocator under mimalloc's name.
+QString activeAllocator()
+{
+#ifdef LOUPE_WORKER_MIMALLOC
+    void* probe = std::malloc(64);
+    const bool fromMimalloc = mi_is_in_heap_region(probe);
+    std::free(probe);
+    return fromMimalloc ? QStringLiteral("mimalloc") : QStringLiteral("system (mimalloc not in effect)");
+#else
+    return QStringLiteral("system");
+#endif
+}
 
 std::optional<loupe::units::UnitOverride> toUnitOverride(const QString& unit, const double factor, const QString& reason)
 {
@@ -201,22 +228,66 @@ QString colorString(const Quantity_ColorRGBA& color)
     return (QStringLiteral("#") + channel(red) + channel(green) + channel(blue)).toUpper();
 }
 
-QString colorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Label& occurrence,
-                 const TDF_Label& definition, const TopoDS_Face& face)
+// A face's own colour, if it has one. Finding it searches the document's colour table for the
+// face, which made colours most of the cost of encoding an assembly of repeated parts; the answer
+// is the same for every copy of the face, so each is looked up once. Empty: no colour of its own.
+using FaceColors = std::unordered_map<TopoDS_Shape, QString>;
+
+QString faceColorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TopoDS_Face& face, FaceColors& faceColors)
+{
+    if (const auto found = faceColors.find(face); found != faceColors.end()) return found->second;
+    Quantity_ColorRGBA color;
+    QString value;
+    if (colors && (colors->GetColor(face, XCAFDoc_ColorSurf, color) || colors->GetColor(face, XCAFDoc_ColorGen, color)))
+        value = colorString(color);
+    faceColors.emplace(face, value);
+    return value;
+}
+
+// A body's colour where its face has none: the occurrence's, else its definition's. No colour,
+// rather than a stand-in one. A placeholder was indistinguishable from a part genuinely coloured
+// that way, so the app could neither show its own neutral fallback (which the inspector swatch
+// did, so the two disagreed) nor tell which parts to auto-colour.
+QString bodyColorFor(const occ::handle<XCAFDoc_ColorTool>& colors, const TDF_Label& occurrence, const TDF_Label& definition)
 {
     Quantity_ColorRGBA color;
-    if (colors && (colors->GetColor(face, XCAFDoc_ColorSurf, color)
-                   || colors->GetColor(face, XCAFDoc_ColorGen, color)
-                   || XCAFDoc_ColorTool::GetColor(occurrence, XCAFDoc_ColorSurf, color)
+    if (colors && (XCAFDoc_ColorTool::GetColor(occurrence, XCAFDoc_ColorSurf, color)
                    || XCAFDoc_ColorTool::GetColor(occurrence, XCAFDoc_ColorGen, color)
                    || XCAFDoc_ColorTool::GetColor(definition, XCAFDoc_ColorSurf, color)
                    || XCAFDoc_ColorTool::GetColor(definition, XCAFDoc_ColorGen, color))) {
         return colorString(color);
     }
-    // No colour, rather than a stand-in one. A placeholder was indistinguishable from a part
-    // genuinely coloured that way, so the app could neither show its own neutral fallback
-    // (which the inspector swatch did, so the two disagreed) nor tell which parts to auto-colour.
     return {};
+}
+
+// A placement as the row-major 3x4 [R | t] (t in millimetres) an InstancePayload carries, when it
+// is rigid. A mirrored or scaled one is not: drawn through a node it would turn the part inside
+// out or change its size, so such a copy is sent as its own mesh in assembly coordinates.
+std::optional<std::array<float, 12>> rigidPlacementMm(const gp_Trsf& placement, const double sourceToMillimeters)
+{
+    double rotation[3][3];
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 3; ++column) rotation[row][column] = placement.Value(row + 1, column + 1);
+    for (int row = 0; row < 3; ++row) {
+        for (int other = 0; other < 3; ++other) {
+            double dot = 0.0;
+            for (int column = 0; column < 3; ++column) dot += rotation[row][column] * rotation[other][column];
+            if (std::abs(dot - (row == other ? 1.0 : 0.0)) > 1.0e-6) return std::nullopt;
+        }
+    }
+    const auto determinant = rotation[0][0] * (rotation[1][1] * rotation[2][2] - rotation[1][2] * rotation[2][1])
+                           - rotation[0][1] * (rotation[1][0] * rotation[2][2] - rotation[1][2] * rotation[2][0])
+                           + rotation[0][2] * (rotation[1][0] * rotation[2][1] - rotation[1][1] * rotation[2][0]);
+    if (determinant < 0.0) return std::nullopt;
+    const auto translation = placement.TranslationPart();
+    const double offsets[3]{translation.X(), translation.Y(), translation.Z()};
+    std::array<float, 12> matrix{};
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column)
+            matrix[static_cast<std::size_t>(row * 4 + column)] = static_cast<float>(rotation[row][column]);
+        matrix[static_cast<std::size_t>(row * 4 + 3)] = static_cast<float>(offsets[row] * sourceToMillimeters);
+    }
+    return matrix;
 }
 
 void prepareTessellation(const TopoDS_Shape& shape, const double sourceToMillimeters,
@@ -237,11 +308,39 @@ float sanitizeMeasure(const double value)
     return (std::isfinite(value) && value > 0.0) ? static_cast<float>(value) : 0.0F;
 }
 
+// A face's area and radius, which the exact integration makes the costliest part of encoding a
+// mesh. They depend only on the B-rep, so they are worked out once per face and reused by every
+// copy of a part and by both tessellation passes.
+struct FaceMeasure final {
+    float areaMm2{};
+    float radiusMm{};
+};
+using FaceMeasures = std::unordered_map<TopoDS_Shape, FaceMeasure>;
+
+FaceMeasure measureFace(const TopoDS_Face& face, const double sourceToMillimeters)
+{
+    GProp_GProps properties;
+    BRepGProp::SurfaceProperties(face, properties);
+    float radiusMm = 0.0F;
+    try {
+        const BRepAdaptor_Surface surface(face);
+        if (surface.GetType() == GeomAbs_Cylinder) {
+            radiusMm = static_cast<float>(surface.Cylinder().Radius() * sourceToMillimeters);
+        } else if (surface.GetType() == GeomAbs_Sphere) {
+            radiusMm = static_cast<float>(surface.Sphere().Radius() * sourceToMillimeters);
+        }
+    } catch (const Standard_Failure&) {
+    }
+    return {sanitizeMeasure(properties.Mass() * sourceToMillimeters * sourceToMillimeters), sanitizeMeasure(radiusMm)};
+}
+
 QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters,
                                 const occ::handle<XCAFDoc_ColorTool>& colors,
-                                const TDF_Label& occurrence, const TDF_Label& definition)
+                                const TDF_Label& occurrence, const TDF_Label& definition, FaceMeasures& faceMeasures,
+                                FaceColors& faceColors)
 {
     QHash<QString, int> segmentIndexes;
+    std::optional<QString> bodyColor;
     QVector<MeshSegment> segments;
     TopTools_IndexedMapOfShape faceMap;
     TopExp::MapShapes(shape, TopAbs_FACE, faceMap);
@@ -250,7 +349,11 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placem
         TopLoc_Location location;
         const auto triangulation = BRep_Tool::Triangulation(face, location);
         if (triangulation.IsNull()) continue;
-        const auto color = colorFor(colors, occurrence, definition, face);
+        auto color = faceColorFor(colors, face, faceColors);
+        if (color.isEmpty()) {
+            if (!bodyColor) bodyColor = bodyColorFor(colors, occurrence, definition);
+            color = *bodyColor;
+        }
         const auto segmentIndex = segmentIndexes.value(color, -1);
         if (segmentIndex < 0) {
             segmentIndexes.insert(color, segments.size());
@@ -259,7 +362,8 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placem
         auto& segment = segments[segmentIndexes.value(color)];
         const int vertexOffset = segment.vertices.size() / 3;
         const auto transform = placement.Multiplied(location.Transformation());
-        BRepLib_ToolTriangulatedShape::ComputeNormals(face, triangulation);
+        // Copies of a part share its triangulation, so its normals are computed once.
+        if (!triangulation->HasNormals()) BRepLib_ToolTriangulatedShape::ComputeNormals(face, triangulation);
         const auto firstIndex = static_cast<quint32>(segment.indices.size());
         for (int node = 1; node <= triangulation->NbNodes(); ++node) {
             const auto point = triangulation->Node(node).Transformed(transform);
@@ -283,65 +387,80 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placem
             segment.indices.append(static_cast<quint32>(vertexOffset + second - 1));
             segment.indices.append(static_cast<quint32>(vertexOffset + third - 1));
         }
-        GProp_GProps properties;
-        BRepGProp::SurfaceProperties(face, properties);
-        float radiusMm = 0.0F;
-        try {
-            const BRepAdaptor_Surface surface(face);
-            if (surface.GetType() == GeomAbs_Cylinder) {
-                radiusMm = static_cast<float>(surface.Cylinder().Radius() * sourceToMillimeters);
-            } else if (surface.GetType() == GeomAbs_Sphere) {
-                radiusMm = static_cast<float>(surface.Sphere().Radius() * sourceToMillimeters);
-            }
-        } catch (const Standard_Failure&) {
-        }
+        auto measure = faceMeasures.find(faceMap(faceIndex));
+        if (measure == faceMeasures.end()) measure = faceMeasures.emplace(faceMap(faceIndex), measureFace(face, sourceToMillimeters)).first;
         segment.topology.append({static_cast<quint32>(faceIndex), protocol::TopologyKind::Face,
                                  firstIndex, static_cast<quint32>(segment.indices.size()) - firstIndex,
-                                 sanitizeMeasure(properties.Mass() * sourceToMillimeters * sourceToMillimeters),
-                                 sanitizeMeasure(radiusMm)});
+                                 measure->second.areaMm2, measure->second.radiusMm});
     }
     return segments;
 }
 
-EdgePayload encodeEdges(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters, const TessellationProfile& profile)
+// An edge's polyline in its part's own coordinates, with its length and radius. Every copy of a
+// part draws the same polyline, placed differently, so within one tessellation pass it is
+// sampled once. Empty points mark an edge that draws nothing (degenerate, or unreadable).
+struct EdgeSample final {
+    std::vector<gp_Pnt> points;
+    float lengthMm{};
+    float radiusMm{};
+};
+using EdgeSamples = std::unordered_map<TopoDS_Shape, EdgeSample>;
+
+EdgeSample sampleEdge(const TopoDS_Edge& edge, const double sourceToMillimeters, const double linearDeflection,
+                      const TessellationProfile& profile)
+{
+    EdgeSample sample;
+    if (BRep_Tool::Degenerated(edge)) return sample;
+    try {
+        const BRepAdaptor_Curve curve(edge);
+        const auto first = curve.FirstParameter();
+        const auto last = curve.LastParameter();
+        if (!std::isfinite(first) || !std::isfinite(last) || qFuzzyCompare(first, last)) return sample;
+        const GCPnts_TangentialDeflection points(curve, first, last, profile.angularDeflectionRadians, linearDeflection, 2);
+        if (points.NbPoints() < 2) return sample;
+        GProp_GProps properties;
+        BRepGProp::LinearProperties(edge, properties);
+        sample.lengthMm = sanitizeMeasure(properties.Mass() * sourceToMillimeters);
+        sample.radiusMm = curve.GetType() == GeomAbs_Circle
+            ? sanitizeMeasure(curve.Circle().Radius() * sourceToMillimeters) : 0.0F;
+        sample.points.reserve(static_cast<std::size_t>(points.NbPoints()));
+        for (int pointIndex = 1; pointIndex <= points.NbPoints(); ++pointIndex) sample.points.push_back(points.Value(pointIndex));
+    } catch (const Standard_Failure&) {
+        sample.points.clear();
+    }
+    return sample;
+}
+
+EdgePayload encodeEdges(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters,
+                        const TessellationProfile& profile, EdgeSamples& edgeSamples)
 {
     EdgePayload payload;
     TopTools_IndexedMapOfShape edgeMap;
     TopExp::MapShapes(shape, TopAbs_EDGE, edgeMap);
     const auto linearDeflection = std::clamp(profile.linearDeflectionMm / std::max(sourceToMillimeters, 1.0e-9), 1.0e-5, 1.0);
     for (int edgeIndex = 1; edgeIndex <= edgeMap.Extent(); ++edgeIndex) {
-        const auto edge = TopoDS::Edge(edgeMap(edgeIndex));
-        if (BRep_Tool::Degenerated(edge)) continue;
-        try {
-            const BRepAdaptor_Curve curve(edge);
-            const auto first = curve.FirstParameter();
-            const auto last = curve.LastParameter();
-            if (!std::isfinite(first) || !std::isfinite(last) || qFuzzyCompare(first, last)) continue;
-            const GCPnts_TangentialDeflection points(curve, first, last, profile.angularDeflectionRadians, linearDeflection, 2);
-            if (points.NbPoints() < 2) continue;
-            const auto firstVertex = payload.vertices.size() / 3;
-            const auto firstIndex = static_cast<quint32>(payload.indices.size());
-            for (int pointIndex = 1; pointIndex <= points.NbPoints(); ++pointIndex) {
-                const auto point = points.Value(pointIndex).Transformed(placement);
-                payload.vertices.append(static_cast<float>(point.X() * sourceToMillimeters));
-                payload.vertices.append(static_cast<float>(point.Y() * sourceToMillimeters));
-                payload.vertices.append(static_cast<float>(point.Z() * sourceToMillimeters));
-                if (pointIndex > 1) {
-                    payload.indices.append(static_cast<quint32>(firstVertex + pointIndex - 2));
-                    payload.indices.append(static_cast<quint32>(firstVertex + pointIndex - 1));
-                }
-            }
-            GProp_GProps properties;
-            BRepGProp::LinearProperties(edge, properties);
-            const auto radiusMm = curve.GetType() == GeomAbs_Circle
-                ? static_cast<float>(curve.Circle().Radius() * sourceToMillimeters) : 0.0F;
-            payload.topology.append({static_cast<quint32>(edgeIndex), protocol::TopologyKind::Edge,
-                                     firstIndex, static_cast<quint32>(payload.indices.size()) - firstIndex,
-                                     sanitizeMeasure(properties.Mass() * sourceToMillimeters),
-                                     sanitizeMeasure(radiusMm)});
-        } catch (const Standard_Failure&) {
-            continue;
+        auto sample = edgeSamples.find(edgeMap(edgeIndex));
+        if (sample == edgeSamples.end()) {
+            sample = edgeSamples.emplace(edgeMap(edgeIndex),
+                                         sampleEdge(TopoDS::Edge(edgeMap(edgeIndex)), sourceToMillimeters, linearDeflection, profile)).first;
         }
+        const auto& points = sample->second.points;
+        if (points.size() < 2) continue;
+        const auto firstVertex = static_cast<quint32>(payload.vertices.size() / 3);
+        const auto firstIndex = static_cast<quint32>(payload.indices.size());
+        for (quint32 pointIndex = 0; pointIndex < points.size(); ++pointIndex) {
+            const auto point = points[pointIndex].Transformed(placement);
+            payload.vertices.append(static_cast<float>(point.X() * sourceToMillimeters));
+            payload.vertices.append(static_cast<float>(point.Y() * sourceToMillimeters));
+            payload.vertices.append(static_cast<float>(point.Z() * sourceToMillimeters));
+            if (pointIndex > 0) {
+                payload.indices.append(firstVertex + pointIndex - 1);
+                payload.indices.append(firstVertex + pointIndex);
+            }
+        }
+        payload.topology.append({static_cast<quint32>(edgeIndex), protocol::TopologyKind::Edge,
+                                 firstIndex, static_cast<quint32>(payload.indices.size()) - firstIndex,
+                                 sample->second.lengthMm, sample->second.radiusMm});
     }
     return payload;
 }
@@ -524,23 +643,25 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
             };
             try {
                 // Each stage's share of the bar is its typical share of the time, measured on
-                // a 200-part 21 MB assembly and a 12-part 1.5 MB one (within a few percent of
-                // each other): parse ~10%, translate ~21%, preview ~17%, refine ~50%. The bar
-                // once gave translation 45% and refinement 19%, so the remaining-time estimate
-                // started at half the truth and then crept up the whole way.
+                // a 12-part 1.5 MB assembly and a 29-part demo stage (within a few percent of
+                // each other): parse ~10%, translate ~32%, preview ~24%, refine ~33%. A bar that
+                // misjudges a stage skews the remaining-time estimate: it once gave translation
+                // 45% and refinement 19%, so the estimate started at half the truth and crept up.
+                // Refinement was ~50% until mass properties moved off it and parts were meshed
+                // across all cores; assemblies of many repeated parts still mesh for longer.
                 progress(QStringLiteral("Reading STEP file"), 0.01);
                 if (job->canceled.load()) { finish(); return; }
                 auto imported = import::StepImporter{}.read(path.toStdString(), [&progress](const double fraction) {
-                    progress(QStringLiteral("Translating XCAF assembly"), 0.10 + 0.21 * fraction);
+                    progress(QStringLiteral("Translating XCAF assembly"), 0.10 + 0.32 * fraction);
                 });
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Building assembly tree and colors"), 0.31);
+                progress(QStringLiteral("Building assembly tree and colors"), 0.42);
                 const auto unitDecision = loupe::units::decide(imported.unitEvidence, toUnitOverride(unit, factor, reason));
                 auto documentSession = std::make_shared<DocumentSession>(DocumentSession{std::move(imported), unitDecision});
                 const auto& sessionImport = documentSession->imported;
                 const auto snapshot = encodeSnapshot(sessionImport, unitDecision);
                 if (job->canceled.load()) { finish(); return; }
-                progress(QStringLiteral("Preparing viewport geometry"), 0.32);
+                progress(QStringLiteral("Preparing viewport geometry"), 0.43);
                 post({{QStringLiteral("type"), QStringLiteral("snapshotReady")}, {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                       {QStringLiteral("snapshotBase64"), QString::fromLatin1(snapshot.toBase64())}});
                 treeReadyMs = elapsed.elapsed();
@@ -553,6 +674,102 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                 // OCCT's normalised native coordinates back to those numbers first.
                 const auto nativeToMillimeters = unitDecision.sourceToMillimeters
                     * loupe::exporting::detail::nativeUnitRebase(sessionImport);
+                // Mass properties (volume, area, bounds) and the topology summary, worked out once
+                // per distinct shape -- every copy of a part has the same ones -- on a background
+                // thread while the viewport geometry is meshed and streamed. They run on copies:
+                // meshing writes triangulations and polygons into the shapes' edges and faces,
+                // which the integration reads, so sharing them across threads would race. A copy
+                // that shares the geometry costs a few percent of the integration.
+                std::vector<TopoDS_Shape> analysisShapes;
+                std::vector<TopoDS_Shape> analysisSources;
+                std::vector<std::vector<QString>> analysisNodeIds;
+                {
+                    std::unordered_map<TopoDS_Shape, std::size_t> analysisIndexByShape;
+                    for (std::size_t index = 0; index < shapeCount; ++index) {
+                        const auto& shape = sessionImport.native->shapes[index];
+                        auto found = analysisIndexByShape.find(shape);
+                        if (found == analysisIndexByShape.end()) {
+                            found = analysisIndexByShape.emplace(shape, analysisShapes.size()).first;
+                            TopoDS_Shape copy;
+                            try {
+                                copy = BRepBuilderAPI_Copy(shape, false, false).Shape();
+                            } catch (const Standard_Failure&) {
+                            }
+                            analysisShapes.push_back(copy);
+                            analysisSources.push_back(shape);
+                            analysisNodeIds.emplace_back();
+                        }
+                        analysisNodeIds[found->second].push_back(QString::fromStdString(sessionImport.native->shapeNodeIds[index]));
+                    }
+                }
+                struct ShapeMetadata final {
+                    inspection::GeometryAnalysis analysis;
+                    inspection::TopologyAnalysis topology;
+                };
+                std::vector<ShapeMetadata> analysisResults(analysisShapes.size());
+                // Its own pool, not OCCT's: an OCCT parallel loop takes every thread of the pool
+                // it runs on, so sharing one with the mesher would leave the mesher a single core.
+                // Declared after what its tasks read, so its destructor waits for them -- on every
+                // way out of this scope, cancellation and errors included -- before those go.
+                QThreadPool analysisPool;
+                analysisPool.setMaxThreadCount(std::max(1, QThread::idealThreadCount()));
+                // Raised when this scope is left early -- an error, not only a cancel -- so the
+                // queued analyses are skipped rather than run for a result no one will read.
+                // Declared after the pool, so it is raised before the pool waits.
+                std::atomic<bool> abandonAnalysis{false};
+                struct RaiseOnExit final {
+                    std::atomic<bool>& flag;
+                    ~RaiseOnExit() { flag.store(true); }
+                } raiseAbandonOnExit{abandonAnalysis};
+                for (std::size_t shapeIndex = 0; shapeIndex < analysisShapes.size(); ++shapeIndex) {
+                    analysisPool.start([&analysisShapes, &analysisResults, &abandonAnalysis, job, nativeToMillimeters, shapeIndex] {
+                        const auto& shape = analysisShapes[shapeIndex];
+                        if (shape.IsNull() || job->canceled.load() || abandonAnalysis.load()) return;
+                        try {
+                            auto& result = analysisResults[shapeIndex];
+                            result.analysis = inspection::analyze(shape, nativeToMillimeters);
+                            result.topology = inspection::analyzeTopology(shape, nativeToMillimeters);
+                        } catch (const Standard_Failure&) {
+                        }
+                    });
+                }
+
+                // Distinct part shapes in the order the bodies first need them, so meshing can run
+                // ahead in batches. One mesher call over many parts spreads their faces across
+                // every core; a call per part left small parts on one core while the rest idled.
+                // Batches, not one call for everything, keep the first geometry and the progress
+                // bar arriving early on a large assembly.
+                struct MeshItem final {
+                    QString definitionId;
+                    TopoDS_Shape shape;
+                    int faceCount{};
+                };
+                std::vector<MeshItem> meshOrder;
+                int totalFaceCount = 0;
+                {
+                    QSet<QString> seen;
+                    for (std::size_t index = 0; index < shapeCount; ++index) {
+                        const auto definitionId = QString::fromStdString(sessionImport.native->definitionIds[index]);
+                        if (seen.contains(definitionId)) continue;
+                        seen.insert(definitionId);
+                        auto definitionShape = XCAFDoc_ShapeTool::GetShape(sessionImport.native->definitionLabels[index]);
+                        TopTools_IndexedMapOfShape faces;
+                        TopExp::MapShapes(definitionShape, TopAbs_FACE, faces);
+                        totalFaceCount += faces.Extent();
+                        meshOrder.push_back({definitionId, std::move(definitionShape), faces.Extent()});
+                    }
+                }
+                const int batchFaceCount = std::max(256, totalFaceCount / 8);
+                // Face areas are exact, so they hold for both passes; edge polylines depend on the
+                // pass's tolerance, so they are sampled afresh for each.
+                FaceMeasures faceMeasures;
+                FaceColors faceColors;
+                // Keys of the shared meshes (per shape and body colour) and edges (per shape),
+                // the same in both passes, so the refined tessellation replaces the preview's.
+                std::unordered_map<TopoDS_Shape, QHash<QString, QString>> sharedMeshKeys;
+                std::unordered_map<TopoDS_Shape, QString> sharedEdgeKeys;
+                int sharedKeyCounter = 0;
+
                 // How long each body took in the preview pass. Refinement repeats the same work
                 // body by body at finer tolerance, so these weight its progress: a uniform step
                 // per body let one large part stall the bar while the estimate climbed.
@@ -564,6 +781,13 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                     const bool weighted = !preview && totalWeight > 0.0;
                     double doneWeight = 0.0;
                     QSet<QString> preparedDefinitions;
+                    std::size_t nextToMesh = 0;
+                    EdgeSamples edgeSamples;
+                    // The shared meshes and edges this pass has sent: each pass sends its own
+                    // tessellation once, then places it for every copy.
+                    QHash<QString, QVector<QPair<qsizetype, QString>>> sentSegments;
+                    QHash<QString, qint64> sentTriangles;
+                    QHash<QString, bool> sentEdges;
                     for (std::size_t index = 0; index < shapeCount; ++index) {
                         if (job->canceled.load()) return false;
                         QElapsedTimer bodyTimer;
@@ -571,47 +795,104 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                         const auto& shape = sessionImport.native->shapes[index];
                         const auto nodeId = QString::fromStdString(sessionImport.native->shapeNodeIds[index]);
                         const auto definitionId = QString::fromStdString(sessionImport.native->definitionIds[index]);
-                        if (!preparedDefinitions.contains(definitionId)) {
-                            const auto definitionShape = XCAFDoc_ShapeTool::GetShape(sessionImport.native->definitionLabels[index]);
-                            prepareTessellation(definitionShape, nativeToMillimeters, profile);
-                            preparedDefinitions.insert(definitionId);
+                        while (!preparedDefinitions.contains(definitionId) && nextToMesh < meshOrder.size()) {
+                            BRep_Builder builder;
+                            TopoDS_Compound batch;
+                            builder.MakeCompound(batch);
+                            // The first batch is the first part alone, so geometry appears as soon as before.
+                            const int target = nextToMesh == 0 ? 1 : batchFaceCount;
+                            int faces = 0;
+                            do {
+                                const auto& item = meshOrder[nextToMesh++];
+                                builder.Add(batch, item.shape);
+                                preparedDefinitions.insert(item.definitionId);
+                                faces += item.faceCount;
+                            } while (nextToMesh < meshOrder.size() && faces < target);
+                            prepareTessellation(batch, nativeToMillimeters, profile);
                         }
-                        const auto segments = encodeMesh(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, colors,
-                                                         sessionImport.native->labels[index], sessionImport.native->definitionLabels[index]);
-                        if (job->canceled.load()) return false;
-                        for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
-                            if (job->canceled.load()) return false;
-                            const auto& segment = segments[segmentIndex];
-                            if (segment.indices.isEmpty()) continue;
+                        const auto& placement = sessionImport.native->shapePlacements[index];
+                        const auto countTriangles = [&](const qint64 triangles) {
                             if (firstGeometryMs == 0) firstGeometryMs = elapsed.elapsed();
-                            const auto triangleCount = static_cast<qint64>(segment.indices.size() / 3);
-                            if (profile.refinement == kPreviewProfile.refinement) previewTriangleCount += triangleCount;
-                            else refinedTriangleCount += triangleCount;
-                            postGeometry(protocol::MeshPayload{requestId, requestId, nodeId, nodeId,
-                                                               QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), segment.color,
-                                                               profile.refinement, segment.vertices, segment.normals, segment.indices,
-                                                               segment.topology});
-                        }
-                        const auto edges = encodeEdges(shape, sessionImport.native->shapePlacements[index], nativeToMillimeters, profile);
-                        if (!edges.indices.isEmpty()) {
-                            postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
-                                                               edges.vertices, edges.indices, edges.topology});
-                        }
-                        if (profile.refinement == kRefinedProfile.refinement) {
-                            const auto analysis = inspection::analyze(shape, nativeToMillimeters);
-                            const auto topology = inspection::analyzeTopology(shape, nativeToMillimeters);
-                            if (analysis.valid) {
-                                post({{QStringLiteral("type"), QStringLiteral("componentMetadata")},
-                                      {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
-                                      {QStringLiteral("nodeId"), nodeId},
-                                      {QStringLiteral("surfaceAreaMm2"), analysis.surfaceAreaMm2},
-                                      {QStringLiteral("volumeMm3"), analysis.volumeMm3},
-                                      {QStringLiteral("boundsMm"), QJsonObject{{QStringLiteral("width"), analysis.boundsMm.width},
-                                                                              {QStringLiteral("height"), analysis.boundsMm.height},
-                                                                              {QStringLiteral("depth"), analysis.boundsMm.depth}}},
-                                      {QStringLiteral("longestEdgeMm"), topology.longestEdgeMm},
-                                      {QStringLiteral("circularRadiusMm"), topology.circularRadiusMm},
-                                      {QStringLiteral("planarFaceCount"), topology.planarFaceCount}});
+                            if (preview) previewTriangleCount += triangles;
+                            else refinedTriangleCount += triangles;
+                        };
+                        const auto rigidPlacement = rigidPlacementMm(placement, nativeToMillimeters);
+                        if (!rigidPlacement) {
+                            // Mirrored or scaled: drawn as its own mesh, in assembly coordinates.
+                            const auto segments = encodeMesh(shape, placement, nativeToMillimeters, colors,
+                                                             sessionImport.native->labels[index], sessionImport.native->definitionLabels[index],
+                                                             faceMeasures, faceColors);
+                            if (job->canceled.load()) return false;
+                            for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
+                                if (job->canceled.load()) return false;
+                                const auto& segment = segments[segmentIndex];
+                                if (segment.indices.isEmpty()) continue;
+                                countTriangles(static_cast<qint64>(segment.indices.size() / 3));
+                                postGeometry(protocol::MeshPayload{requestId, requestId, nodeId, nodeId,
+                                                                   QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), segment.color,
+                                                                   profile.refinement, segment.vertices, segment.normals, segment.indices,
+                                                                   segment.topology});
+                            }
+                            const auto edges = encodeEdges(shape, placement, nativeToMillimeters, profile, edgeSamples);
+                            if (!edges.indices.isEmpty()) {
+                                postGeometry(protocol::EdgePayload{requestId, requestId, nodeId, nodeId, profile.refinement,
+                                                                   edges.vertices, edges.indices, edges.topology});
+                            }
+                        } else {
+                            // Every copy of a part draws one shared mesh, sent once per pass in the
+                            // part's own coordinates, and is sent only where it goes. Copies whose
+                            // body colour differs share no mesh: faces without their own colour take it.
+                            const auto bodyColor = bodyColorFor(colors, sessionImport.native->labels[index],
+                                                                sessionImport.native->definitionLabels[index]);
+                            auto& keysByColor = sharedMeshKeys[shape];
+                            auto meshKey = keysByColor.value(bodyColor);
+                            if (meshKey.isEmpty()) {
+                                meshKey = QStringLiteral("shared-mesh-%1").arg(++sharedKeyCounter);
+                                keysByColor.insert(bodyColor, meshKey);
+                            }
+                            if (!sentSegments.contains(meshKey)) {
+                                const auto segments = encodeMesh(shape, gp_Trsf(), nativeToMillimeters, colors,
+                                                                 sessionImport.native->labels[index], sessionImport.native->definitionLabels[index],
+                                                                 faceMeasures, faceColors);
+                                if (job->canceled.load()) return false;
+                                QVector<QPair<qsizetype, QString>> sent;
+                                for (qsizetype segmentIndex = 0; segmentIndex < segments.size(); ++segmentIndex) {
+                                    const auto& segment = segments[segmentIndex];
+                                    if (segment.indices.isEmpty()) continue;
+                                    const auto sourceKey = QStringLiteral("%1:%2").arg(meshKey).arg(segmentIndex);
+                                    protocol::MeshPayload shared{requestId, requestId, definitionId, sourceKey, sourceKey, segment.color,
+                                                                 profile.refinement, segment.vertices, segment.normals, segment.indices,
+                                                                 segment.topology};
+                                    shared.shared = true;
+                                    postGeometry(std::move(shared));
+                                    sent.append({segmentIndex, segment.color});
+                                    sentTriangles.insert(sourceKey, static_cast<qint64>(segment.indices.size() / 3));
+                                }
+                                sentSegments.insert(meshKey, sent);
+                            }
+                            for (const auto& [segmentIndex, color] : std::as_const(sentSegments[meshKey])) {
+                                if (job->canceled.load()) return false;
+                                const auto sourceKey = QStringLiteral("%1:%2").arg(meshKey).arg(segmentIndex);
+                                countTriangles(sentTriangles.value(sourceKey));
+                                postGeometry(protocol::InstancePayload{requestId, requestId, nodeId,
+                                                                       QStringLiteral("%1:%2").arg(nodeId).arg(segmentIndex), sourceKey, color,
+                                                                       profile.refinement, false, *rigidPlacement});
+                            }
+                            auto& edgeKey = sharedEdgeKeys[shape];
+                            if (edgeKey.isEmpty()) edgeKey = QStringLiteral("shared-edges-%1").arg(++sharedKeyCounter);
+                            if (!sentEdges.contains(edgeKey)) {
+                                const auto edges = encodeEdges(shape, gp_Trsf(), nativeToMillimeters, profile, edgeSamples);
+                                if (!edges.indices.isEmpty()) {
+                                    protocol::EdgePayload shared{requestId, requestId, definitionId, edgeKey, profile.refinement,
+                                                                 edges.vertices, edges.indices, edges.topology};
+                                    shared.shared = true;
+                                    postGeometry(std::move(shared));
+                                }
+                                sentEdges.insert(edgeKey, !edges.indices.isEmpty());
+                            }
+                            if (sentEdges.value(edgeKey)) {
+                                postGeometry(protocol::InstancePayload{requestId, requestId, nodeId, {}, edgeKey, {},
+                                                                       profile.refinement, true, *rigidPlacement});
                             }
                         }
                         if (preview) previewSeconds[index] = static_cast<double>(bodyTimer.nsecsElapsed()) * 1.0e-9;
@@ -622,10 +903,35 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                     }
                     return true;
                 };
-                if (!sendProfile(kPreviewProfile, 0.32, 0.48)) { finish(); return; }
+                if (!sendProfile(kPreviewProfile, 0.43, 0.67)) { finish(); return; }
                 previewReadyMs = elapsed.elapsed();
-                progress(QStringLiteral("Preview ready - refining geometry"), 0.48);
-                if (!sendProfile(kRefinedProfile, 0.48, 0.99)) { finish(); return; }
+                progress(QStringLiteral("Preview ready - refining geometry"), 0.67);
+                if (!sendProfile(kRefinedProfile, 0.67, 0.99)) { finish(); return; }
+                // Usually done by now; it ran alongside both passes.
+                analysisPool.waitForDone();
+                if (job->canceled.load()) { finish(); return; }
+                for (std::size_t shapeIndex = 0; shapeIndex < analysisShapes.size(); ++shapeIndex) {
+                    auto result = analysisResults[shapeIndex];
+                    if (!result.analysis.valid) continue;
+                    // Bounds from the meshed original, not the copy: OCCT bounds a meshed shape by
+                    // its triangulation, which is what the viewport shows and what these always were.
+                    const auto bounds = inspection::measureBounds(analysisSources[shapeIndex], nativeToMillimeters);
+                    if (!bounds) continue;
+                    result.analysis.boundsMm = *bounds;
+                    for (const auto& nodeId : analysisNodeIds[shapeIndex]) {
+                        post({{QStringLiteral("type"), QStringLiteral("componentMetadata")},
+                              {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
+                              {QStringLiteral("nodeId"), nodeId},
+                              {QStringLiteral("surfaceAreaMm2"), result.analysis.surfaceAreaMm2},
+                              {QStringLiteral("volumeMm3"), result.analysis.volumeMm3},
+                              {QStringLiteral("boundsMm"), QJsonObject{{QStringLiteral("width"), result.analysis.boundsMm.width},
+                                                                      {QStringLiteral("height"), result.analysis.boundsMm.height},
+                                                                      {QStringLiteral("depth"), result.analysis.boundsMm.depth}}},
+                              {QStringLiteral("longestEdgeMm"), result.topology.longestEdgeMm},
+                              {QStringLiteral("circularRadiusMm"), result.topology.circularRadiusMm},
+                              {QStringLiteral("planarFaceCount"), result.topology.planarFaceCount}});
+                    }
+                }
                 if (!job->canceled.load()) {
                     retain(documentSession);
                     post({{QStringLiteral("type"), QStringLiteral("importMetrics")},
@@ -641,7 +947,8 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                           {QStringLiteral("finalReadyMs"), elapsed.elapsed()},
                           {QStringLiteral("previewTriangleCount"), previewTriangleCount},
                           {QStringLiteral("refinedTriangleCount"), refinedTriangleCount},
-                          {QStringLiteral("bodyCount"), static_cast<int>(shapeCount)}});
+                          {QStringLiteral("bodyCount"), static_cast<int>(shapeCount)},
+                          {QStringLiteral("allocator"), activeAllocator()}});
                     finish(QJsonObject{{QStringLiteral("type"), QStringLiteral("progress")},
                                        {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                                        {QStringLiteral("stage"), QStringLiteral("Ready")},

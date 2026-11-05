@@ -2,6 +2,9 @@
 
 #include <QCoreApplication>
 #include <QUuid>
+#ifdef LOUPE_WORKER_MIMALLOC
+#include <mimalloc.h>
+#endif
 
 // --- Crash diagnostics -------------------------------------------------------
 // The worker runs as a child process; a hard crash (WER exception 0xC0000409,
@@ -119,6 +122,11 @@ void onAbort(int)
 
 int main(int argc, char* argv[])
 {
+#ifdef LOUPE_WORKER_MIMALLOC
+    // Keeps mimalloc linked and, on Windows, its DLL loaded with the worker, which is what makes
+    // its malloc replacement take effect (see src/worker/CMakeLists.txt).
+    static_cast<void>(mi_version());
+#endif
     std::set_terminate(onTerminate);
     std::signal(SIGABRT, onAbort);
 

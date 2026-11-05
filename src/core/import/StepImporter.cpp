@@ -32,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -142,6 +143,28 @@ gp_Trsf composedLocation(const TDF_Label& label, const gp_Trsf& parent)
     return parent.Multiplied(XCAFDoc_ShapeTool::GetLocation(label).Transformation());
 }
 
+// A node's id: from its label, and unique. A sub-assembly used more than once brings the same
+// component labels in each time; the first copy keeps the label's id (what saved views and
+// settings name), and every other copy is named by its parent as well, so each copy is a node
+// of its own. All copies used to share the first one's ids and collapsed into it: one copy
+// shown, the others' geometry drawn over it.
+class NodeIds final {
+public:
+    explicit NodeIds(const std::string& hash) : hash_(hash) {}
+    [[nodiscard]] std::string make(const std::string& entry, const std::string& kind, const std::optional<std::string>& parentId)
+    {
+        auto id = domain::stableId(hash_, entry, kind);
+        if (used_.insert(id).second) return id;
+        id = domain::stableId(hash_, (parentId ? *parentId : std::string{}) + "/" + entry, kind);
+        used_.insert(id);
+        return id;
+    }
+
+private:
+    const std::string& hash_;
+    std::unordered_set<std::string> used_;
+};
+
 void addDefinition(const TDF_Label& label, const std::string& hash, ImportResult& result,
                    std::unordered_map<std::string, std::string>& definitions)
 {
@@ -155,7 +178,7 @@ void addDefinition(const TDF_Label& label, const std::string& hash, ImportResult
 
 void visit(const TDF_Label& label, const std::optional<std::string>& parentId, const std::string& hash,
            const occ::handle<XCAFDoc_ShapeTool>& shapes, ImportResult& result,
-           std::unordered_map<std::string, std::string>& definitions, const gp_Trsf& parentLocation)
+           std::unordered_map<std::string, std::string>& definitions, const gp_Trsf& parentLocation, NodeIds& ids)
 {
     const auto entry = labelEntry(label);
     if (XCAFDoc_ShapeTool::IsExternRef(label)) {
@@ -167,12 +190,12 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     if (XCAFDoc_ShapeTool::IsAssembly(referred)) {
         const gp_Trsf location = composedLocation(label, parentLocation);
         const bool root = !component && !parentId;
-        const auto id = domain::stableId(hash, entry, root ? "root" : "subassembly");
+        const auto id = ids.make(entry, root ? "root" : "subassembly", parentId);
         result.snapshot.nodes.push_back({id, root ? NodeKind::Root : NodeKind::Subassembly, displayName(label, referred, "assembly"), entry, parentId, std::nullopt, transformFor(location)});
         if (root) result.snapshot.rootIds.push_back(id);
         NCollection_Sequence<TDF_Label> components;
         XCAFDoc_ShapeTool::GetComponents(referred, components);
-        for (int i = 1; i <= components.Length(); ++i) visit(components.Value(i), id, hash, shapes, result, definitions, location);
+        for (int i = 1; i <= components.Length(); ++i) visit(components.Value(i), id, hash, shapes, result, definitions, location, ids);
         return;
     }
 
@@ -180,7 +203,7 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     const auto location = composedLocation(label, parentLocation);
     addDefinition(definition, hash, result, definitions);
     const auto definitionId = definitions.at(labelEntry(definition));
-    const auto id = domain::stableId(hash, entry, component ? "occurrence" : "body");
+    const auto id = ids.make(entry, component ? "occurrence" : "body", parentId);
     const auto nodeIndex = result.snapshot.nodes.size();
     result.snapshot.nodes.push_back({id, component ? NodeKind::Occurrence : NodeKind::Body,
                                      displayName(label, definition, component ? "occurrence" : "body"), entry, parentId, definitionId,
@@ -204,7 +227,7 @@ void visit(const TDF_Label& label, const std::optional<std::string>& parentId, c
     if (solidCount > 1) {
         int solidIndex = 0;
         for (TopExp_Explorer explorer(wholeShape, TopAbs_SOLID); explorer.More(); explorer.Next(), ++solidIndex) {
-            const auto bodyId = domain::stableId(hash, entry, "body-solid:" + std::to_string(solidIndex));
+            const auto bodyId = ids.make(entry, "body-solid:" + std::to_string(solidIndex), id);
             // Each split body is a physically distinct solid, not a repeated
             // instance of a shared part, so its snapshot definitionId must be
             // its own -- reusing the container's here would make Inspect's
@@ -304,11 +327,12 @@ ImportResult StepImporter::read(const std::filesystem::path& file, const Transfe
     NCollection_Sequence<TDF_Label> freeShapes;
     shapes->GetFreeShapes(freeShapes);
     std::unordered_map<std::string, std::string> definitions;
+    NodeIds ids(result.snapshot.sourceHash);
     bool hasAssembly = false;
     const gp_Trsf identity;
     for (int i = 1; i <= freeShapes.Length(); ++i) {
         hasAssembly = hasAssembly || XCAFDoc_ShapeTool::IsAssembly(freeShapes.Value(i));
-        visit(freeShapes.Value(i), std::nullopt, result.snapshot.sourceHash, shapes, result, definitions, identity);
+        visit(freeShapes.Value(i), std::nullopt, result.snapshot.sourceHash, shapes, result, definitions, identity, ids);
     }
     Bnd_Box bounds;
     const auto mutableNative = std::const_pointer_cast<NativeDocument>(result.native);
@@ -344,9 +368,10 @@ domain::AssemblySnapshot detail::snapshotForTesting(const occ::handle<TDocStd_Do
     NCollection_Sequence<TDF_Label> freeShapes;
     shapes->GetFreeShapes(freeShapes);
     std::unordered_map<std::string, std::string> definitions;
+    NodeIds ids(result.snapshot.sourceHash);
     const gp_Trsf identity;
     for (int index = 1; index <= freeShapes.Length(); ++index) {
-        visit(freeShapes.Value(index), std::nullopt, result.snapshot.sourceHash, shapes, result, definitions, identity);
+        visit(freeShapes.Value(index), std::nullopt, result.snapshot.sourceHash, shapes, result, definitions, identity, ids);
     }
     return result.snapshot;
 }
@@ -361,9 +386,10 @@ domain::AssemblySnapshot detail::snapshotForTesting(const occ::handle<TDocStd_Do
     result.snapshot.stage = domain::LoadStage::TreeReady;
     result.snapshot.classification = domain::InputClass::StructuredAssembly;
     std::unordered_map<std::string, std::string> definitions;
+    NodeIds ids(result.snapshot.sourceHash);
     const auto shapes = XCAFDoc_DocumentTool::ShapeTool(document->Main());
     const gp_Trsf identity;
-    visit(root, std::nullopt, result.snapshot.sourceHash, shapes, result, definitions, identity);
+    visit(root, std::nullopt, result.snapshot.sourceHash, shapes, result, definitions, identity, ids);
     return result.snapshot;
 }
 

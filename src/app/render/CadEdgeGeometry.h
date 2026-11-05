@@ -16,6 +16,9 @@ public:
     explicit CadEdgeGeometry(QQuick3DObject* parent = nullptr);
 
     Q_INVOKABLE bool replaceWorkerEdges(const QByteArray& edgeJson);
+    // Takes another edge geometry's edges as its own (the shared edges of a part, for one of its
+    // copies), keeping this one's section so it is re-clipped against the new edges.
+    Q_INVOKABLE bool copyEdgesFrom(QObject* source);
     Q_INVOKABLE void clearEdges();
     Q_INVOKABLE QVariantMap topologyAtPoint(double x, double y, double z, double tolerance) const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);

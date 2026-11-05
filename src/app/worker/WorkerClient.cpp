@@ -91,9 +91,15 @@ void WorkerClient::readEvents()
                 std::visit([this, &frame](const auto& value) {
                     using Value = std::decay_t<decltype(value)>;
                     if constexpr (std::is_same_v<Value, protocol::MeshPayload>) {
-                        emit meshReady(value.requestId, value.nodeId, value.segmentKey, value.sourceColor, frame->payload);
+                        if (value.shared) emit sharedMeshReady(value.requestId, value.segmentKey, value.sourceColor, frame->payload);
+                        else emit meshReady(value.requestId, value.nodeId, value.segmentKey, value.sourceColor, frame->payload);
+                    } else if constexpr (std::is_same_v<Value, protocol::EdgePayload>) {
+                        if (value.shared) emit sharedEdgesReady(value.requestId, value.nodeId, frame->payload);
+                        else emit edgeReady(value.requestId, value.nodeId, frame->payload);
                     } else {
-                        emit edgeReady(value.requestId, value.nodeId, frame->payload);
+                        const QVector<float> placement(value.placement.cbegin(), value.placement.cend());
+                        if (value.edges) emit edgeInstanceReady(value.requestId, value.nodeId, value.sourceKey, placement);
+                        else emit meshInstanceReady(value.requestId, value.nodeId, value.segmentKey, value.sourceKey, value.sourceColor, placement);
                     }
                 }, payload);
                 continue;

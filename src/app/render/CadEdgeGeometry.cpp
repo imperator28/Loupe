@@ -62,6 +62,18 @@ bool CadEdgeGeometry::replaceWorkerEdges(const QByteArray& edgeJson)
     return true;
 }
 
+bool CadEdgeGeometry::copyEdgesFrom(QObject* source)
+{
+    const auto* edges = qobject_cast<const CadEdgeGeometry*>(source);
+    if (!edges || edges->sourceIndexData_.isEmpty()) return false;
+    // Implicitly shared: the copies hold one set of edge data until one of them changes it.
+    sourceVertexData_ = edges->sourceVertexData_;
+    sourceIndexData_ = edges->sourceIndexData_;
+    sourceTopology_ = edges->sourceTopology_;
+    rebuildDisplayLines();
+    return true;
+}
+
 void CadEdgeGeometry::clearEdges()
 {
     sourceVertexData_.clear();

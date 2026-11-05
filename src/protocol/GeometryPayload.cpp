@@ -24,7 +24,16 @@ constexpr quint32 kMaximumTopologyRanges = 2 * 1000 * 1000;
 enum class GeometryType : quint8 {
     Mesh = 1,
     Edges = 2,
+    SharedMesh = 3,
+    SharedEdges = 4,
+    MeshInstance = 5,
+    EdgeInstance = 6,
 };
+
+[[nodiscard]] bool isMeshType(const quint8 type) noexcept
+{
+    return type == static_cast<quint8>(GeometryType::Mesh) || type == static_cast<quint8>(GeometryType::SharedMesh);
+}
 
 class Writer final {
 public:
@@ -225,23 +234,49 @@ void readData(Reader& reader, Payload& payload, const quint32 vertexCount, const
 
 } // namespace
 
+void validatePlacement(const std::array<float, 12>& placement)
+{
+    for (const auto value : placement) {
+        if (!std::isfinite(value)) throw ProtocolError("Geometry instance placement is not finite");
+    }
+}
+
 QByteArray encodeGeometry(const GeometryPayload& payload)
 {
     return std::visit([](const auto& value) {
-        validate(value);
-        if constexpr (std::is_same_v<std::decay_t<decltype(value)>, MeshPayload>) {
-            if (value.normals.size() != value.vertices.size()) {
-                throw ProtocolError("Mesh normals do not match vertices");
-            }
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<Value, InstancePayload>) {
+            validatePlacement(value.placement);
+            if (value.nodeId.isEmpty() || value.sourceKey.isEmpty()) throw ProtocolError("Geometry instance names no node or source");
             Writer writer;
-            writeHeader(writer, GeometryType::Mesh, value);
-            writeData(writer, value);
+            writer.u32(kMagic);
+            writer.u16(kVersion);
+            writer.u8(static_cast<quint8>(value.edges ? GeometryType::EdgeInstance : GeometryType::MeshInstance));
+            writer.u8(value.refinement);
+            writer.u64(value.requestId);
+            writer.u64(value.documentGeneration);
+            writer.string(value.nodeId);
+            writer.string(value.segmentKey);
+            writer.string(value.sourceKey);
+            writer.string(value.sourceColor);
+            for (const auto entry : value.placement) writer.number(entry);
             return writer.take();
         } else {
-            Writer writer;
-            writeHeader(writer, GeometryType::Edges, value);
-            writeData(writer, value);
-            return writer.take();
+            validate(value);
+            if constexpr (std::is_same_v<Value, MeshPayload>) {
+                if (value.normals.size() != value.vertices.size()) {
+                    throw ProtocolError("Mesh normals do not match vertices");
+                }
+                Writer writer;
+                writeHeader(writer, value.shared ? GeometryType::SharedMesh : GeometryType::Mesh, value);
+                writeData(writer, value);
+                return writer.take();
+            } else {
+                Writer writer;
+                writeHeader(writer, value.shared ? GeometryType::SharedEdges : GeometryType::Edges, value);
+                writeData(writer, value);
+                return writer.take();
+            }
         }
     }, payload);
 }
@@ -256,6 +291,22 @@ GeometryPayload decodeGeometry(const QByteArray& bytes)
     const auto refinement = reader.u8();
     const auto requestId = reader.u64();
     const auto documentGeneration = reader.u64();
+    if (type == static_cast<quint8>(GeometryType::MeshInstance) || type == static_cast<quint8>(GeometryType::EdgeInstance)) {
+        InstancePayload payload;
+        payload.requestId = requestId;
+        payload.documentGeneration = documentGeneration;
+        payload.refinement = refinement;
+        payload.edges = type == static_cast<quint8>(GeometryType::EdgeInstance);
+        payload.nodeId = reader.string();
+        payload.segmentKey = reader.string();
+        payload.sourceKey = reader.string();
+        payload.sourceColor = reader.string();
+        for (auto& entry : payload.placement) entry = reader.number();
+        reader.ensureRemaining();
+        validatePlacement(payload.placement);
+        if (payload.nodeId.isEmpty() || payload.sourceKey.isEmpty()) throw ProtocolError("Geometry instance names no node or source");
+        return payload;
+    }
     const auto definitionId = reader.string();
     const auto nodeId = reader.string();
     const auto segmentKey = reader.string();
@@ -263,17 +314,19 @@ GeometryPayload decodeGeometry(const QByteArray& bytes)
     const auto vertexCount = reader.u32();
     const auto indexCount = reader.u32();
     const auto topologyCount = reader.u32();
-    if (type == static_cast<quint8>(GeometryType::Mesh)) {
+    if (isMeshType(type)) {
         MeshPayload payload{requestId, documentGeneration, definitionId, nodeId, segmentKey, sourceColor, refinement, {}, {}, {}, {}};
+        payload.shared = type == static_cast<quint8>(GeometryType::SharedMesh);
         readData(reader, payload, vertexCount, indexCount, topologyCount);
         reader.ensureRemaining();
         return payload;
     }
-    if (type == static_cast<quint8>(GeometryType::Edges)) {
+    if (type == static_cast<quint8>(GeometryType::Edges) || type == static_cast<quint8>(GeometryType::SharedEdges)) {
         if (!segmentKey.isEmpty() || !sourceColor.isEmpty()) {
             throw ProtocolError("Edge payload metadata is invalid");
         }
         EdgePayload payload{requestId, documentGeneration, definitionId, nodeId, refinement, {}, {}, {}};
+        payload.shared = type == static_cast<quint8>(GeometryType::SharedEdges);
         readData(reader, payload, vertexCount, indexCount, topologyCount);
         reader.ensureRemaining();
         return payload;
@@ -286,7 +339,7 @@ double meshFaceArea(const QByteArray& bytes) noexcept
     try {
         Reader reader(bytes);
         if (reader.u32() != kMagic || reader.u16() != kVersion) return 0.0;
-        if (reader.u8() != static_cast<quint8>(GeometryType::Mesh)) return 0.0;
+        if (!isMeshType(reader.u8())) return 0.0;
         static_cast<void>(reader.u8());
         static_cast<void>(reader.u64());
         static_cast<void>(reader.u64());
@@ -311,12 +364,14 @@ double meshFaceArea(const QByteArray& bytes) noexcept
     }
 }
 
-std::optional<MeshBounds> meshBounds(const QByteArray& bytes) noexcept
+namespace {
+
+std::optional<MeshBounds> boundsOf(const QByteArray& bytes, const std::array<float, 12>* placement) noexcept
 {
     try {
         Reader reader(bytes);
         if (reader.u32() != kMagic || reader.u16() != kVersion) return std::nullopt;
-        if (reader.u8() != static_cast<quint8>(GeometryType::Mesh)) return std::nullopt;
+        if (!isMeshType(reader.u8())) return std::nullopt;
         static_cast<void>(reader.u8());
         static_cast<void>(reader.u64());
         static_cast<void>(reader.u64());
@@ -330,7 +385,13 @@ std::optional<MeshBounds> meshBounds(const QByteArray& bytes) noexcept
         for (quint32 vertex = 0; vertex < vertexCount; ++vertex) {
             std::array<float, 3> point{reader.number(), reader.number(), reader.number()};
             if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2])) continue;
-            for (int axis = 0; axis < 3; ++axis) {
+            if (placement) {
+                const auto& m = *placement;
+                point = {m[0] * point[0] + m[1] * point[1] + m[2] * point[2] + m[3],
+                         m[4] * point[0] + m[5] * point[1] + m[6] * point[2] + m[7],
+                         m[8] * point[0] + m[9] * point[1] + m[10] * point[2] + m[11]};
+            }
+            for (std::size_t axis = 0; axis < 3; ++axis) {
                 bounds.minimum[axis] = found ? std::min(bounds.minimum[axis], point[axis]) : point[axis];
                 bounds.maximum[axis] = found ? std::max(bounds.maximum[axis], point[axis]) : point[axis];
             }
@@ -341,6 +402,18 @@ std::optional<MeshBounds> meshBounds(const QByteArray& bytes) noexcept
     } catch (...) {
         return std::nullopt;
     }
+}
+
+} // namespace
+
+std::optional<MeshBounds> meshBounds(const QByteArray& bytes) noexcept
+{
+    return boundsOf(bytes, nullptr);
+}
+
+std::optional<MeshBounds> meshBounds(const QByteArray& bytes, const std::array<float, 12>& placement) noexcept
+{
+    return boundsOf(bytes, &placement);
 }
 
 } // namespace loupe::protocol
