@@ -18,6 +18,10 @@
 #include "protocol/ProtocolFrame.h"
 #include "protocol/ProtocolTypes.h"
 
+#ifdef LOUPE_WORKER_MIMALLOC
+#include <mimalloc.h>
+#endif
+
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QDir>
@@ -65,6 +69,7 @@
 #include <TopoDS_Compound.hxx>
 
 #include <atomic>
+#include <cstdlib>
 #include <exception>
 #include <algorithm>
 #include <cmath>
@@ -76,6 +81,21 @@
 
 namespace loupe::worker {
 namespace {
+
+// The allocator malloc actually goes to, for the import metrics: a build that links mimalloc
+// but whose override did not take (a DLL loaded too late, a static link that kept the system
+// malloc) reports it, rather than benchmarking the system allocator under mimalloc's name.
+QString activeAllocator()
+{
+#ifdef LOUPE_WORKER_MIMALLOC
+    void* probe = std::malloc(64);
+    const bool fromMimalloc = mi_is_in_heap_region(probe);
+    std::free(probe);
+    return fromMimalloc ? QStringLiteral("mimalloc") : QStringLiteral("system (mimalloc not in effect)");
+#else
+    return QStringLiteral("system");
+#endif
+}
 
 std::optional<loupe::units::UnitOverride> toUnitOverride(const QString& unit, const double factor, const QString& reason)
 {
@@ -927,7 +947,8 @@ void WorkerServer::open(const std::uint64_t requestId, const QString& path, cons
                           {QStringLiteral("finalReadyMs"), elapsed.elapsed()},
                           {QStringLiteral("previewTriangleCount"), previewTriangleCount},
                           {QStringLiteral("refinedTriangleCount"), refinedTriangleCount},
-                          {QStringLiteral("bodyCount"), static_cast<int>(shapeCount)}});
+                          {QStringLiteral("bodyCount"), static_cast<int>(shapeCount)},
+                          {QStringLiteral("allocator"), activeAllocator()}});
                     finish(QJsonObject{{QStringLiteral("type"), QStringLiteral("progress")},
                                        {QStringLiteral("requestId"), static_cast<qint64>(requestId)},
                                        {QStringLiteral("stage"), QStringLiteral("Ready")},

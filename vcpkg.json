@@ -3,6 +3,13 @@
   "version-string": "0.1.5",
   "dependencies": [
     "catch2",
+    {
+      "name": "mimalloc",
+      "features": [
+        "override"
+      ],
+      "platform": "osx | windows"
+    },
     "nlohmann-json",
     "opencascade",
     {

@@ -216,6 +216,13 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
     QVERIFY(metrics.value(QStringLiteral("previewTriangleCount")).toInteger() > 0);
     QVERIFY(metrics.value(QStringLiteral("refinedTriangleCount")).toInteger() > 0);
     QVERIFY(metrics.value(QStringLiteral("bodyCount")).toInt() > 0);
+    // The allocator malloc goes to: a build linking mimalloc whose override did not take
+    // (a DLL loaded too late, a static link keeping the system malloc) fails here.
+#ifdef LOUPE_EXPECT_WORKER_MIMALLOC
+    QCOMPARE(metrics.value(QStringLiteral("allocator")).toString(), QStringLiteral("mimalloc"));
+#else
+    QCOMPARE(metrics.value(QStringLiteral("allocator")).toString(), QStringLiteral("system"));
+#endif
     QVERIFY(worker.state() == QProcess::Running);
 }
 

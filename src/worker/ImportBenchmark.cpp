@@ -17,8 +17,9 @@ namespace {
 constexpr int kConnectTimeoutMs = 5'000;
 constexpr int kImportTimeoutMs = 10 * 60 * 1'000;
 
-QString workerPath()
+QString workerPath(const QString& requested)
 {
+    if (!requested.isEmpty()) return requested;
     auto name = QStringLiteral("loupe-worker");
 #ifdef Q_OS_WIN
     name += QStringLiteral(".exe");
@@ -38,14 +39,14 @@ bool sendOpen(QLocalSocket& socket, const QString& path)
     return socket.waitForBytesWritten(kConnectTimeoutMs);
 }
 
-std::optional<QJsonObject> benchmarkFile(const QString& sourcePath)
+std::optional<QJsonObject> benchmarkFile(const QString& sourcePath, const QString& worker)
 {
     const auto socketName = QStringLiteral("/tmp/loupe-benchmark-%1-%2")
         .arg(QCoreApplication::applicationPid())
         .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
-    QProcess worker;
-    worker.start(workerPath(), {QStringLiteral("--server-name"), socketName});
-    if (!worker.waitForStarted(kConnectTimeoutMs)) return std::nullopt;
+    QProcess process;
+    process.start(workerPath(worker), {QStringLiteral("--server-name"), socketName});
+    if (!process.waitForStarted(kConnectTimeoutMs)) return std::nullopt;
 
     QLocalSocket socket;
     QElapsedTimer connectTimer;
@@ -56,8 +57,8 @@ std::optional<QJsonObject> benchmarkFile(const QString& sourcePath)
         socket.abort();
     }
     if (socket.state() != QLocalSocket::ConnectedState || !sendOpen(socket, QFileInfo(sourcePath).absoluteFilePath())) {
-        worker.kill();
-        worker.waitForFinished(1'000);
+        process.kill();
+        process.waitForFinished(1'000);
         return std::nullopt;
     }
 
@@ -81,10 +82,10 @@ std::optional<QJsonObject> benchmarkFile(const QString& sourcePath)
         if (result) break;
     }
     socket.disconnectFromServer();
-    worker.terminate();
-    if (!worker.waitForFinished(1'000)) {
-        worker.kill();
-        worker.waitForFinished(1'000);
+    process.terminate();
+    if (!process.waitForFinished(1'000)) {
+        process.kill();
+        process.waitForFinished(1'000);
     }
     return result;
 }
@@ -133,6 +134,10 @@ int main(int argc, char* argv[])
         QStringLiteral("budget-file"), QStringLiteral("Fail when a case exceeds limits from JSON."),
         QStringLiteral("path")};
     parser.addOption(budgetFileOption);
+    const QCommandLineOption workerOption{
+        QStringLiteral("worker"), QStringLiteral("The worker to benchmark (default: loupe-worker beside this tool)."),
+        QStringLiteral("path")};
+    parser.addOption(workerOption);
     parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("STEP files to benchmark."),
                                  QStringLiteral("[files...]"));
     parser.process(application);
@@ -142,7 +147,7 @@ int main(int argc, char* argv[])
     if (!budgets) return 2;
     bool budgetsPassed = true;
     for (const auto& path : paths) {
-        auto result = benchmarkFile(path);
+        auto result = benchmarkFile(path, parser.value(workerOption));
         if (!result) return 1;
         budgetsPassed = applyBudget(*result, path, *budgets) && budgetsPassed;
         const auto line = QJsonDocument(*result).toJson(QJsonDocument::Compact);

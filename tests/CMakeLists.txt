@@ -88,6 +88,18 @@ add_dependencies(loupe-worker-process-tests loupe-worker)
 loupe_enable_warnings(loupe-worker-process-tests)
 
 add_test(NAME worker-process COMMAND loupe-worker-process-tests)
+# Whether the worker should report mimalloc as its allocator (src/worker/CMakeLists.txt).
+get_property(loupe_worker_uses_mimalloc GLOBAL PROPERTY LOUPE_WORKER_USES_MIMALLOC)
+if (loupe_worker_uses_mimalloc)
+    target_compile_definitions(loupe-worker-process-tests PRIVATE LOUPE_EXPECT_WORKER_MIMALLOC=1)
+endif()
+
+# Benchmark assemblies, generated rather than stored: the website's demo stage, and a grid of
+# copies of it (scripts/benchmark/compare-allocators.py).
+add_executable(loupe-demo-stage "${PROJECT_SOURCE_DIR}/scripts/website/linear-stage.cpp")
+target_link_libraries(loupe-demo-stage PRIVATE TKDESTEP TKXCAF TKFillet TKBool TKBO TKPrim TKTopAlgo TKBRep)
+add_executable(loupe-stage-grid "${PROJECT_SOURCE_DIR}/scripts/benchmark/stage-grid.cpp")
+target_link_libraries(loupe-stage-grid PRIVATE TKDESTEP TKXCAF TKBRep)
 
 add_executable(loupe-application-controller-tests
     app/test_application_controller.cpp

@@ -43,3 +43,8 @@ fi
 # Whatever path was taken, the app cannot start without these.
 test -f "$dest/platforms/qwindows.dll" || { echo "::error::platforms/qwindows.dll missing from the package"; exit 1; }
 test -f "$dest/loupe-worker.exe" || { echo "::error::loupe-worker.exe missing from the package"; exit 1; }
+# The worker's mimalloc replaces malloc only through its redirect DLL; without it beside
+# mimalloc.dll the worker would not even start.
+if [[ -f "$dest/mimalloc.dll" && ! -f "$dest/mimalloc-redirect.dll" ]]; then
+  echo "::error::mimalloc-redirect.dll missing beside mimalloc.dll in the package"; exit 1
+fi

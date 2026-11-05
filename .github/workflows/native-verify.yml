@@ -153,6 +153,33 @@ jobs:
             exit 1
           }
 
+      - name: Benchmark the worker's allocator
+        # mimalloc against the system allocator on this platform's runner: the same worker built
+        # twice, each opening the demo stage and a grid of 24 copies of it. Reported only; a
+        # worker whose override did not take already fails the tests above.
+        continue-on-error: true
+        shell: bash
+        run: |
+          build="build/${{ matrix.configure_preset }}"
+          find_exe() { find "$build" -type f \( -name "$1" -o -name "$1.exe" \) -not -path "*CMakeFiles*" | head -1; }
+          system_worker=$(find_exe loupe-worker-system-allocator)
+          if [[ -z "$system_worker" ]]; then
+            echo "This build has no mimalloc worker to compare."
+            exit 0
+          fi
+          mkdir -p benchmark
+          "$(find_exe loupe-demo-stage)" benchmark/stage.step
+          "$(find_exe loupe-stage-grid)" benchmark/stage.step benchmark/grid.step 24
+          python=$(command -v python3 || command -v python)
+          {
+            echo '### Import worker allocator (${{ matrix.name }})'
+            echo '```'
+            "$python" scripts/benchmark/compare-allocators.py --benchmark "$(find_exe loupe-import-benchmark)" \
+              --worker mimalloc="$(find_exe loupe-worker)" --worker system="$system_worker" \
+              --runs 7 benchmark/stage.step benchmark/grid.step
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Show QML smoke log
         if: failure()
         shell: bash
