@@ -24,8 +24,6 @@
 #include <QJsonObject>
 #include <QLocale>
 #include <QProcessEnvironment>
-#include <QThread>
-#include <QElapsedTimer>
 #include <QGenericMatrix>
 #include <QTimer>
 #include <QUrl>
@@ -62,9 +60,6 @@ constexpr auto kGeometryCacheMagic = "LGC1";
     return loupe::app::render::partPaletteStyleFromName(mode);
 }
 constexpr auto kWorkerConnectionAttempts = 4'800;
-// How long opening a file waits for the importer it launched to listen before going on with
-// the asynchronous retries. It usually listens within 30-60 ms.
-constexpr qint64 kWorkerFirstConnectMs = 150;
 
 QString defaultWorkerExecutable()
 {
@@ -120,9 +115,9 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     workerEnvironment.remove(QStringLiteral("XPC_FLAGS"));
     workerProcess_.setProcessEnvironment(workerEnvironment);
     workerProcess_.setProcessChannelMode(QProcess::ForwardedChannels);
-    // Connecting is started by openFile() itself, as soon as the importer runs; see there.
     connect(&workerProcess_, &QProcess::started, this, [this] {
         setImportProgress(tr("Starting STEP importer"), 0.005);
+        connectWorker();
     });
     connect(&workerProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
         if (stoppingWorker_) {
@@ -671,9 +666,7 @@ void ApplicationController::openFile(const QUrl& file)
             replayCachedGeometry(geometryCacheArchive_);
         }
     }
-    // The importer is launched before the "opening" state is announced: the interface's
-    // response to it takes a few hundred milliseconds on the main thread, and launching
-    // after it left the importer idle that long before it was given the file.
+    emit documentStateChanged();
     auto launchWorker = workerExecutable_;
 #ifdef Q_OS_MACOS
     const auto applicationDirectory = QDir(QCoreApplication::applicationDirPath()).canonicalPath();
@@ -698,24 +691,6 @@ void ApplicationController::openFile(const QUrl& file)
     if (workerIsBundled) launchWorker = stagedWorkerPath_;
 #endif
     workerProcess_.start(launchWorker, {QStringLiteral("--server-name"), serverName_});
-    // Give the importer its file the moment it listens, a few tens of milliseconds after it
-    // starts. Waiting for the started signal and then a retry timer left it idle until the
-    // interface had answered the "opening" state below, a few hundred milliseconds on the main
-    // thread. The wait is short and bounded; a slower start (a first launch under Rosetta, a
-    // scan of a new binary) carries on with the usual retries.
-    if (workerProcess_.waitForStarted(1'000)) {
-        QElapsedTimer listening;
-        listening.start();
-        while (listening.elapsed() < kWorkerFirstConnectMs && workerProcess_.state() == QProcess::Running) {
-            if (workerClient_.connectToServer(serverName_, 10)) {
-                activeRequestId_ = workerClient_.openFile(pendingPath_, pendingUnitOverride_);
-                break;
-            }
-            QThread::msleep(5);
-        }
-        if (activeRequestId_ == 0 && workerProcess_.state() == QProcess::Running) connectWorker();
-    }
-    emit documentStateChanged();
 }
 
 void ApplicationController::cancelImport()
