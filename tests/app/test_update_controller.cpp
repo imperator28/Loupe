@@ -40,7 +40,8 @@ QByteArray releases()
     return QByteArrayLiteral(R"([
         {"tag_name":"v0.1.6","draft":false,"prerelease":false,"body":"Final notes","html_url":"https://example/v0.1.6",
          "assets":[{"name":"loupe-v0.1.6-windows-x64.zip","browser_download_url":"https://example/win.zip","size":100},
-                   {"name":"loupe-v0.1.6-macos-arm64.zip","browser_download_url":"https://example/mac.zip","size":200}]},
+                   {"name":"loupe-v0.1.6-macos-arm64.zip","browser_download_url":"https://example/mac.zip","size":200},
+                   {"name":"loupe-v0.1.6-macos-x64.zip","browser_download_url":"https://example/mac-intel.zip","size":250}]},
         {"tag_name":"v0.1.7-beta.1","draft":false,"prerelease":true,"body":"Beta notes","html_url":"https://example/beta",
          "assets":[{"name":"loupe-v0.1.7-beta.1-windows-x64.zip","browser_download_url":"https://example/beta-win.zip","size":300}]},
         {"tag_name":"v0.2.0","draft":true,"prerelease":false,"body":"","html_url":"",
@@ -88,6 +89,8 @@ void UpdateControllerTest::theNewestNewerReleaseForThisPlatformIsOffered()
     // The macOS package for a Mac, and nothing for a platform no release builds for.
     QCOMPARE(UpdateController::newestRelease(releases(), QStringLiteral("0.1.5"), false, QStringLiteral("macos-arm64.zip"))->assetUrl,
              QStringLiteral("https://example/mac.zip"));
+    QCOMPARE(UpdateController::newestRelease(releases(), QStringLiteral("0.1.5"), false, QStringLiteral("macos-x64.zip"))->assetUrl,
+             QStringLiteral("https://example/mac-intel.zip"));
     QVERIFY(!UpdateController::newestRelease(releases(), QStringLiteral("0.1.5"), false, QStringLiteral("linux.zip")).has_value());
     // Already the newest: nothing to offer. Drafts never count.
     QVERIFY(!UpdateController::newestRelease(releases(), QStringLiteral("0.1.6"), false, QStringLiteral("windows-x64.zip")).has_value());
