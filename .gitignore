@@ -37,3 +37,6 @@ dist/
 
 # Compiled macOS helper app (built from scripts/macos/unblock-loupe.applescript)
 scripts/macos/*.app/
+
+# Python bytecode (scripts/)
+__pycache__/
