@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe — STEP inspector</title>
+<meta name="description" content="Loupe is a free desktop STEP inspector for engineers: review an assembly, measure and section it, then export only the parts a vendor needs, as 3D files or 2D drawings.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta property="og:title" content="Loupe — STEP inspector">
+<meta property="og:description" content="Open a STEP file, understand the assembly, measure and section it, then export only the parts you need.">
+<meta property="og:image" content="https://imperator28.github.io/Loupe/img/og.jpg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="icon.svg" alt="" width="28" height="28">Loupe</a>
+    <nav aria-label="Project">
+      <a href="features.html">Features</a>
+      <a href="https://github.com/imperator28/Loupe">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <h1>Open a STEP file. Send only the parts that matter.</h1>
+      <p class="lede">Loupe is a free desktop STEP inspector for engineers. Review an assembly, measure and section it, then export just the parts a vendor or prototype shop needs, as 3D files or as 2D drawings a cutter can run.</p>
+
+      <div class="downloads" id="downloads">
+        <a class="dl" data-asset="macos-arm64" href="https://github.com/imperator28/Loupe/releases/latest">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.9-3-.9c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.7ZM14.1 5.8c.6-.8 1.1-1.8 1-2.8-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.7-1 2.7 1 .1 2-.5 2.7-1.3Z"/></svg>
+          macOS <span class="sub">Apple Silicon</span>
+        </a>
+        <a class="dl" data-asset="macos-x64" href="https://github.com/imperator28/Loupe/releases/latest">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.9-3-.9c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.7ZM14.1 5.8c.6-.8 1.1-1.8 1-2.8-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.7-1 2.7 1 .1 2-.5 2.7-1.3Z"/></svg>
+          macOS <span class="sub">Intel</span>
+        </a>
+        <a class="dl" data-asset="windows-x64" href="https://github.com/imperator28/Loupe/releases/latest">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 5.5 10.4 4.5v7H3v-6Zm0 13 7.4 1v-7H3v6Zm8.3 1.1L21 21v-8.4h-9.7v7Zm0-15.2v7.1H21V3l-9.7 1.4Z"/></svg>
+          Windows 11 <span class="sub">x64</span>
+        </a>
+      </div>
+      <p class="meta"><span id="version">Latest release</span> · Free and open source (Apache 2.0) · <a id="notes" href="https://github.com/imperator28/Loupe/releases/latest">Release notes</a></p>
+    </div>
+  </section>
+
+  <section class="shot" aria-label="Screenshot">
+    <div class="wrap">
+      <figure>
+        <picture>
+          <source srcset="img/hero-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/hero-light.webp" width="1800" height="1125" alt="Loupe's Inspect workspace: an assembly tree on the left, a motorised linear stage in the centre with the toolbar beneath it, and document properties on the right.">
+        </picture>
+      </figure>
+    </div>
+  </section>
+
+  <section id="workspaces">
+    <div class="wrap">
+      <h2 class="section-title">Three workspaces, one file</h2>
+      <div class="workspaces">
+        <div class="ws">
+          <h3>Inspect</h3>
+          <p>Understand an assembly quickly, without a full CAD seat.</p>
+          <ul>
+            <li>Search, isolate, hide or ghost any part</li>
+            <li>Measure edges, faces, radii, angles and volume</li>
+            <li>Section on any axis or face, with capped cuts</li>
+            <li>Exploded views, saved views, mass by material</li>
+          </ul>
+        </div>
+        <div class="ws">
+          <h3>Export</h3>
+          <p>Pick parts into an export bucket and write each as its own file.</p>
+          <ul>
+            <li>Separate STEP or STL files, named your way</li>
+            <li>Strip parts and re-save the rest as one STEP</li>
+            <li>Every output validated and written atomically</li>
+          </ul>
+        </div>
+        <div class="ws">
+          <h3>Drawing <span class="tag">newer</span></h3>
+          <p>Project a part to a 2D drawing at true 1:1 scale, for cutting or quotes.</p>
+          <ul>
+            <li>DXF, SVG or PDF output</li>
+            <li>Cut, Silhouette and Technical modes</li>
+            <li>True arcs and circles, not faceted curves</li>
+          </ul>
+        </div>
+      </div>
+      <p class="more"><a href="features.html">See Loupe in action →</a></p>
+    </div>
+  </section>
+
+  <section class="install" id="install">
+    <div class="wrap">
+      <div class="panel">
+        <h2>Opening it the first time</h2>
+        <p>Loupe isn't code-signed yet, so your system will warn you the first time you open it. Unzip the download, then:</p>
+        <div class="steps">
+          <div>
+            <h3>macOS</h3>
+            <p>If macOS says Loupe “is damaged”, it's blocking an unsigned download. In System Settings → Privacy &amp; Security, click <strong>Open Anyway</strong>, or run the <em>Open Loupe (first run)</em> helper that comes in the zip.</p>
+            <p>From Terminal: <code>xattr -dr com.apple.quarantine Loupe.app</code></p>
+          </div>
+          <div>
+            <h3>Windows 11</h3>
+            <p>Run <code>Loupe.exe</code>. If SmartScreen warns about an unrecognized publisher, choose <strong>More info → Run anyway</strong>. Keep the unzipped folder together, since Loupe loads its runtime from it.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Loupe is open source under the Apache License 2.0.</span>
+    <span><a href="https://github.com/imperator28/Loupe">Source</a> · <a href="https://github.com/imperator28/Loupe/blob/master/CHANGELOG.md">Changelog</a> · <a href="https://github.com/imperator28/Loupe/issues">Report an issue</a></span>
+  </div>
+</footer>
+
+<script>
+  // Point each button straight at its zip in the latest release. Without the API (offline,
+  // rate-limited), the buttons keep linking to the release page, which lists every zip.
+  (function () {
+    var buttons = document.querySelectorAll('.dl');
+
+    // Make the visitor's platform the primary button. Browsers don't tell Apple Silicon from
+    // Intel reliably, so a Mac gets Apple Silicon, which every Mac since 2020 runs.
+    var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+    var mine = /win/i.test(ua) ? 'windows-x64' : /mac/i.test(ua) ? 'macos-arm64' : 'macos-arm64';
+    buttons.forEach(function (b) { if (b.dataset.asset === mine) b.classList.add('primary'); });
+
+    fetch('https://api.github.com/repos/imperator28/Loupe/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (release) {
+        buttons.forEach(function (b) {
+          var suffix = '-' + b.dataset.asset + '.zip';
+          var asset = (release.assets || []).find(function (a) { return a.name.slice(-suffix.length) === suffix; });
+          if (asset) b.href = asset.browser_download_url;
+        });
+        if (release.tag_name) document.getElementById('version').textContent = 'Loupe ' + release.tag_name;
+        if (release.html_url) document.getElementById('notes').href = release.html_url;
+      })
+      .catch(function () {});
+  })();
+</script>
+</body>
+</html>

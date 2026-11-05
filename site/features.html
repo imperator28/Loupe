@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe features</title>
+<meta name="description" content="What Loupe does: explore STEP assemblies, measure, look inside with sections, explode them, export only the parts you need, and make true-scale 2D drawings.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="icon.svg" alt="" width="28" height="28">Loupe</a>
+    <nav aria-label="Project">
+      <a href="features.html" aria-current="page">Features</a>
+      <a href="https://github.com/imperator28/Loupe">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-head">
+    <div class="wrap">
+      <h1>What you can do with Loupe</h1>
+      <p>Open a STEP file someone sent you, understand it, and pass on exactly what the next person needs.</p>
+    </div>
+  </section>
+
+  <div class="wrap showcase">
+    <article class="show">
+      <div class="show-text">
+        <h2>See how it's put together</h2>
+        <p>The whole assembly in a tree you can search. Select a part to isolate it, hide what's in the way, or ghost everything else.</p>
+      </div>
+      <figure class="show-shot">
+        <picture>
+          <source srcset="img/explore-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/explore-light.webp" width="1800" height="1205" loading="lazy" alt="The carriage selected in the assembly tree and highlighted, with every other part see-through.">
+        </picture>
+      </figure>
+    </article>
+
+    <article class="show">
+      <div class="show-text">
+        <h2>Measure anything</h2>
+        <p>Click edges and faces for distances, radii, angles, area and volume. Loupe highlights what you're about to pick.</p>
+      </div>
+      <figure class="show-shot">
+        <picture>
+          <source srcset="img/measure-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/measure-light.webp" width="1482" height="1263" loading="lazy" alt="A hole in the top plate picked, with the Measure window reading radius 10 mm, diameter 20 mm.">
+        </picture>
+      </figure>
+    </article>
+
+    <article class="show">
+      <div class="show-text">
+        <h2>Look inside</h2>
+        <p>Cut the model on any axis or face and slide the cut through it, to see bores, bushings and wall thickness.</p>
+      </div>
+      <figure class="show-shot">
+        <picture>
+          <source srcset="img/section-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/section-light.webp" width="1482" height="1263" loading="lazy" alt="A section cut across the carriage, showing the bushings around the guide rods.">
+        </picture>
+      </figure>
+    </article>
+
+    <article class="show">
+      <div class="show-text">
+        <h2>Pull it apart</h2>
+        <p>Explode the assembly with one slider, or drag parts out by hand. Save the layout as STEP, STL or a drawing.</p>
+      </div>
+      <figure class="show-shot">
+        <picture>
+          <source srcset="img/explode-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/explode-light.webp" width="1482" height="1263" loading="lazy" alt="The linear stage in an exploded view: plates, rods, bearings, screws and motor spread apart.">
+        </picture>
+      </figure>
+    </article>
+
+    <article class="show">
+      <div class="show-text">
+        <h2>Send only the parts that matter</h2>
+        <p>Tick the parts a vendor needs and export each as its own STEP or STL file, named your way. Or strip parts out and save the rest as one assembly.</p>
+      </div>
+      <figure class="show-shot">
+        <picture>
+          <source srcset="img/export-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/export-light.webp" width="1800" height="1206" loading="lazy" alt="The Export workspace: the top plate highlighted in the assembly, its standalone preview, and five parts in the export list.">
+        </picture>
+      </figure>
+    </article>
+
+    <article class="show">
+      <div class="show-text">
+        <h2>Drawings for the cutter <span class="tag">newer</span></h2>
+        <p>Turn a part into a true 1:1 DXF, SVG or PDF with real arcs and circles, for laser, waterjet or a quote. Check each one before you cut.</p>
+      </div>
+      <figure class="show-shot">
+        <picture>
+          <source srcset="img/drawing-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="img/drawing-light.webp" width="1800" height="1206" loading="lazy" alt="The Drawing workspace: the top plate viewed from above, with a 90 by 90 mm 2D preview showing its outline and five holes.">
+        </picture>
+      </figure>
+    </article>
+  </div>
+
+  <section class="cta">
+    <div class="wrap">
+      <h2>Try it on your own files</h2>
+      <p>Free for macOS and Windows. Your files stay on your computer.</p>
+      <div class="downloads">
+        <a class="dl primary" href="./#downloads">Download Loupe</a>
+        <a class="dl" href="https://github.com/imperator28/Loupe#inspection-tools">Full feature list</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Loupe is open source under the Apache License 2.0. Screenshots show a demo model made for this page.</span>
+    <span><a href="https://github.com/imperator28/Loupe">Source</a> · <a href="https://github.com/imperator28/Loupe/blob/master/CHANGELOG.md">Changelog</a> · <a href="https://github.com/imperator28/Loupe/issues">Report an issue</a></span>
+  </div>
+</footer>
+</body>
+</html>
