@@ -289,6 +289,12 @@ else()
         target_link_libraries(loupe-qml-smoke-tests PRIVATE shell32)
     endif()
 endif()
+if (MSVC)
+    # Debug info in a separate .pdb, so a crash in these tests names the functions on its
+    # stack: QTest's crash handler symbolicates through it. Without, it shows system frames only.
+    target_compile_options(loupe-qml-smoke-tests PRIVATE /Zi)
+    target_link_options(loupe-qml-smoke-tests PRIVATE /DEBUG)
+endif()
 target_link_libraries(loupe-qml-smoke-tests PRIVATE loupe::core loupe::materials loupe::protocol PNG::PNG Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Quick3D Qt6::Network Qt6::Sql Qt6::Test)
 if(NOT QT6_IS_SHARED_LIBS_BUILD)
     target_link_libraries(loupe-qml-smoke-tests PRIVATE
