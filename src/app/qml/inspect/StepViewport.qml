@@ -285,13 +285,15 @@ Item {
         const node = handlePivot && revision >= 0 ? partNodeByNode[handlePivot.nodeId] : null
         return node ? node.mapPositionToScene(handlePivot.local) : Qt.vector3d(0, 0, 0)
     }
-    readonly property vector3d handleCentre: handlePivot && partNodeByNode[handlePivot.nodeId]
-            ? handlePivotPoint
-            : handleBounds
-            ? Qt.vector3d((handleBounds.minimum.x + handleBounds.maximum.x) * 0.5,
-                          (handleBounds.minimum.y + handleBounds.maximum.y) * 0.5,
-                          (handleBounds.minimum.z + handleBounds.maximum.z) * 0.5)
-            : Qt.vector3d(0, 0, 0)
+    // Without a picked pivot, the selection's own centre as it has been moved: a point fixed
+    // to the parts. Their bounding box's centre shifts as they turn, so turning about it made
+    // every turn after the first carry the parts off a little further.
+    readonly property vector3d handleCentre: {
+        const revision = explode ? explode.revision : -1
+        if (handlePivot && partNodeByNode[handlePivot.nodeId]) return handlePivotPoint
+        if (!handleBounds || revision < 0) return Qt.vector3d(0, 0, 0)
+        return explode.movedCentre(handleNodeIds)
+    }
     // The handle's orientation: the world's, or the picked face's.
     readonly property quaternion handleFrame: {
         const revision = explode ? explode.revision : -1
@@ -528,14 +530,19 @@ Item {
     function beginHandleDrag(hit, x, y) {
         const layout = handleLayout()
         if (!layout || !explode) return false
-        const axis = handleAxis(hit.axis)
-        const drag = { kind: hit.kind, axis: hit.axis, startX: x, startY: y, centre: handleCentre,
+        // Copied, not referenced: a vector3d read from a property stays tied to it, and the
+        // handle's centre and frame move with the parts as they turn. Turning about a pivot
+        // that followed each step flung the parts off, further the further the drag went.
+        const copy = function(vector) { return Qt.vector3d(vector.x, vector.y, vector.z) }
+        const axis = copy(handleAxis(hit.axis))
+        const centre = copy(handleCentre)
+        const drag = { kind: hit.kind, axis: hit.axis, axisVector: axis, startX: x, startY: y, centre: centre,
                        centreScreen: layout.centre, value: 0 }
         if (hit.kind === "free") {
             // In the plane of the screen through the handle, at the scale it is drawn at.
-            drag.right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
-            drag.up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
-            drag.worldPerPixel = worldPerPixelAt(handleCentre)
+            drag.right = copy(navigation.orientation.times(Qt.vector3d(1, 0, 0)))
+            drag.up = copy(navigation.orientation.times(Qt.vector3d(0, 1, 0)))
+            drag.worldPerPixel = worldPerPixelAt(centre)
         } else if (hit.kind === "move") {
             drag.axisX = layout.tips[hit.axis].x - layout.centre.x
             drag.axisY = layout.tips[hit.axis].y - layout.centre.y
@@ -562,11 +569,25 @@ Item {
                 }
                 const grabbed = layout.ringPoints[hit.axis][nearest]
                 const radius = handleLength * 0.72
-                const tangent = axis.crossProduct(grabbed.minus(handleCentre)).normalized()
+                const tangent = axis.crossProduct(grabbed.minus(centre)).normalized()
                 const ahead = screenPoint(grabbed.plus(tangent.times(radius * 0.2)))
                 const here = screenPoint(grabbed)
                 drag.tangentX = ahead.x - here.x
                 drag.tangentY = ahead.y - here.y
+                // Grabbed where the ring runs straight at the eye, its tangent is a few pixels
+                // long, and a pixel of drag was many degrees of turn. Keep a fifth of a radian
+                // at least a sixth of the ring's on-screen radius away.
+                const pixels = Math.hypot(drag.tangentX, drag.tangentY)
+                const minimum = Math.max(6, Math.hypot(here.x - layout.centre.x, here.y - layout.centre.y) / 6)
+                if (pixels < 1e-3) {
+                    drag.tangentX = -(here.y - layout.centre.y)
+                    drag.tangentY = here.x - layout.centre.x
+                }
+                const length = Math.max(1e-3, Math.hypot(drag.tangentX, drag.tangentY))
+                if (length < minimum) {
+                    drag.tangentX *= minimum / length
+                    drag.tangentY *= minimum / length
+                }
             }
         }
         explode.beginInteraction(handleNodeIds)
@@ -591,7 +612,7 @@ Item {
             handleReadoutPosition = Qt.point(x, y)
             return
         }
-        const axis = handleAxis(drag.axis)
+        const axis = drag.axisVector
         if (drag.kind === "move") {
             const travel = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.axisX, drag.axisY, drag.millimetres)
             const snapped = explode.snapTranslation(travel, free)
@@ -601,9 +622,13 @@ Item {
         } else {
             let degrees = 0
             if (drag.mode === "angle") {
-                const angle = handleMath.screenAngle(x, y, drag.centreScreen)
-                drag.turned += handleMath.angleStep(drag.lastAngle, angle)
-                drag.lastAngle = angle
+                // Over the centre the pointer's angle is noise, and crossing it flips by half
+                // a turn: hold the angle there until the pointer is clear again.
+                if (Math.hypot(x - drag.centreScreen.x, y - drag.centreScreen.y) > 8) {
+                    const angle = handleMath.screenAngle(x, y, drag.centreScreen)
+                    drag.turned += handleMath.angleStep(drag.lastAngle, angle)
+                    drag.lastAngle = angle
+                }
                 degrees = drag.sign * drag.turned
             } else {
                 degrees = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.tangentX, drag.tangentY, 0.2) * 180 / Math.PI

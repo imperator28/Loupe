@@ -244,6 +244,22 @@ QVector3D ExplodeController::assembledCentre(const QString& nodeId) const
     return bounds.valid ? bounds.centre() : QVector3D{};
 }
 
+QVector3D ExplodeController::movedCentre(const QStringList& nodeIds) const
+{
+    QVector3D sum;
+    int count = 0;
+    QSet<QString> seen;
+    for (const auto& nodeId : nodeIds) {
+        if (seen.contains(nodeId)) continue;
+        seen.insert(nodeId);
+        const auto bounds = nodeBounds(nodeId);
+        if (!bounds.valid) continue;
+        sum += effectiveTransform(nodeId).map(bounds.centre());
+        ++count;
+    }
+    return count > 0 ? sum / static_cast<float>(count) : QVector3D{};
+}
+
 QVariantMap ExplodeController::displayedBounds(const QStringList& nodeIds) const
 {
     QStringList parts;

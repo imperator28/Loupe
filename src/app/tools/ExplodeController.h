@@ -59,6 +59,10 @@ public:
     Q_INVOKABLE [[nodiscard]] QString parentOf(const QString& nodeId) const;
     // The centre of the node's parts as assembled.
     Q_INVOKABLE [[nodiscard]] QVector3D assembledCentre(const QString& nodeId) const;
+    // Where these nodes' own centres are now: each node's assembled centre carried by its
+    // move, averaged. A point fixed to the parts, so turning them about it leaves it where it
+    // is -- unlike the centre of their bounding box, which shifts as they turn.
+    Q_INVOKABLE [[nodiscard]] QVector3D movedCentre(const QStringList& nodeIds) const;
     // {valid, minimum, maximum} of these nodes' parts as displayed; every part for none.
     Q_INVOKABLE [[nodiscard]] QVariantMap displayedBounds(const QStringList& nodeIds) const;
     // How far the node's centre has moved, and its rotation as Euler angles (degrees).

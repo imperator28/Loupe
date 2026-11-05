@@ -35,6 +35,7 @@ private slots:
     void explodeMovesASubAssemblyWithEverythingInIt();
     void explodeHandlesWorkInWorldAxesInsideATurnedSubAssembly();
     void explodeRotationTurnsAboutTheGivenPivot();
+    void explodeMovedCentreStaysPutAsASelectionTurns();
     void explodeAutoComesApartLevelByLevel();
     void explodeAutoOnlyMovesTheChosenSubAssembly();
     void explodeAutoTakesStackedLayersApartInOrder();
@@ -400,6 +401,43 @@ void InspectionToolsTest::explodeRotationTurnsAboutTheGivenPivot()
     QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), centre));
     QVERIFY(explode.isMoved(QStringLiteral("far")));
     QVERIFY(qAbs(explode.anglesOf(QStringLiteral("far")).y() - 45.0F) < 0.01F);
+}
+
+void InspectionToolsTest::explodeMovedCentreStaysPutAsASelectionTurns()
+{
+    // A lopsided sub-assembly: a small part beside a big one. The centre of its bounding
+    // box moves as it turns, so the handle, which turned about that, carried it off a
+    // little more with every turn. The moved centre is fixed to the parts.
+    loupe::app::tools::ExplodeController explode;
+    explode.setHierarchy({
+        {QStringLiteral("root"), QString{}},
+        {QStringLiteral("sub"), QStringLiteral("root")},
+        {QStringLiteral("small"), QStringLiteral("sub")},
+        {QStringLiteral("big"), QStringLiteral("sub")},
+    });
+    explode.includePartBounds(QStringLiteral("small"), {0, 0, 0}, {2, 2, 2});
+    explode.includePartBounds(QStringLiteral("big"), {10, -10, 0}, {40, 10, 2});
+    const QStringList selection{QStringLiteral("sub")};
+    const auto boxCentre = [&explode, &selection]() {
+        const auto bounds = explode.displayedBounds(selection);
+        return (bounds.value(QStringLiteral("minimum")).value<QVector3D>()
+                + bounds.value(QStringLiteral("maximum")).value<QVector3D>()) * 0.5F;
+    };
+    const auto pivot = explode.movedCentre(selection);
+    const auto boxBefore = boxCentre();
+    for (int turn = 0; turn < 8; ++turn) {
+        explode.beginInteraction(selection);
+        explode.previewRotation({0, 0, 1}, 45, explode.movedCentre(selection));
+        explode.commitInteraction();
+        QVERIFY2(closeTo(explode.movedCentre(selection), pivot), qPrintable(describe(explode.movedCentre(selection))));
+    }
+    // A full turn brings every part back where it began.
+    QVERIFY2(closeTo(boxCentre(), boxBefore), qPrintable(describe(boxCentre())));
+    explode.beginInteraction(selection);
+    explode.previewRotation({0, 0, 1}, 30, pivot);
+    explode.commitInteraction();
+    QVERIFY(!closeTo(boxCentre(), boxBefore)); // the box's centre is not a fixed point
+    QVERIFY(closeTo(explode.movedCentre(selection), pivot));
 }
 
 void InspectionToolsTest::explodeAutoComesApartLevelByLevel()
