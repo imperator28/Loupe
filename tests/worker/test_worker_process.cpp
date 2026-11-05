@@ -83,9 +83,12 @@ void send(QLocalSocket& socket, const QJsonObject& object)
 
 bool connectToWorker(QLocalSocket& socket, const QString& name)
 {
+    // Generous, since it returns as soon as the worker listens: the first launch under Rosetta
+    // (the Intel build, tested on an Apple Silicon runner) translates the whole binary first,
+    // which can take longer than a few seconds.
     QElapsedTimer timer;
     timer.start();
-    while (timer.elapsed() < 3'000) {
+    while (timer.elapsed() < 30'000) {
         socket.connectToServer(name);
         if (socket.waitForConnected(100)) {
             return true;
