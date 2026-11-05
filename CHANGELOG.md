@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.6-beta.1
+
+A testing build of faster opening and of drawing repeated parts once, with a fix for
+assemblies that use a sub-assembly more than once. Published as a pre-release.
+
+### Faster
+
+- **Opening large assemblies**: each part's volume, area and face measures are worked out
+  once instead of for every copy and every pass, mass properties run alongside meshing
+  instead of holding it up, and parts are meshed on every core. On a 4-core machine a
+  27.7 MB assembly that took 36 s to open fully takes 22 s, and a 12-part 1.5 MB one
+  0.94 s instead of 1.35 s.
+  Times to the first view are unchanged: reading the STEP file still runs on one core.
+- **Repeated parts**: every copy of a part is drawn from one shared shape, sent and loaded
+  once. An assembly of 24 identical stages opens about five times faster in the app and
+  uses a third less memory.
+- **Windows and macOS allocator**: the import worker uses mimalloc, about 20% faster at
+  opening on Windows and 3-7% on Apple Silicon.
+
+### Fixed
+
+- **Sub-assemblies used more than once**: every copy shared the first copy's parts, so
+  only one copy was shown (the others drawn over it) and exporting a part in any copy gave
+  the first. Each copy is now its own, in the tree, the viewport and exports.
+
 ## v0.1.5
 
 Tabs and multiple windows, an exploded view, in-app updates, and a broad interface
