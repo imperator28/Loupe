@@ -2,6 +2,26 @@
   "_comment": "Shown once after each update, and from Help > What's New in Loupe. One entry per release version (X.Y.Z, betas share it): a few highlights, each a ToolIcon glyph, a short title and one line. A test fails if the project version has no entry.",
   "versions": [
     {
+      "version": "0.1.6",
+      "items": [
+        {
+          "icon": "fit",
+          "title": "Opens faster",
+          "body": "Large assemblies open in about a third less time, measuring each part once and meshing on every core."
+        },
+        {
+          "icon": "isolate",
+          "title": "Repeated parts drawn once",
+          "body": "Every copy of a screw or fastener shares one shape, so big assemblies load faster and use less memory."
+        },
+        {
+          "icon": "check",
+          "title": "Every copy of a sub-assembly",
+          "body": "An assembly using the same sub-assembly several times now shows and exports each copy, not just the first."
+        }
+      ]
+    },
+    {
       "version": "0.1.5",
       "items": [
         {

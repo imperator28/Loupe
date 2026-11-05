@@ -1,6 +1,6 @@
 {
   "name": "loupe",
-  "version-string": "0.1.5",
+  "version-string": "0.1.6",
   "dependencies": [
     "catch2",
     {
