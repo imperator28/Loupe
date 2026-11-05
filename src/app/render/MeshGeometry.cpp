@@ -398,11 +398,30 @@ bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
 
 bool MeshGeometry::copySectionOverlayFrom(QObject* source)
 {
-    const auto* sourceGeometry = qobject_cast<MeshGeometry*>(source);
-    if (!sourceGeometry) return false;
+    return copySectionOverlayFromSources({QVariant::fromValue(source)});
+}
+
+bool MeshGeometry::copySectionOverlayFromSources(const QVariantList& sources)
+{
+    QVector<const MeshGeometry*> geometries;
+    for (const auto& value : sources) {
+        if (const auto* geometry = qobject_cast<const MeshGeometry*>(value.value<QObject*>())) geometries.append(geometry);
+    }
+    if (geometries.isEmpty()) return false;
     auto sectionSource = QSharedPointer<SectionSourceData>::create();
-    sectionSource->vertices = sourceGeometry->sourceVertexData_;
-    sectionSource->indices = sourceGeometry->sourceIndexData_;
+    qsizetype vertexTotal{};
+    qsizetype indexTotal{};
+    for (const auto* geometry : std::as_const(geometries)) {
+        vertexTotal += geometry->sourceVertexData_.size();
+        indexTotal += geometry->sourceIndexData_.size();
+    }
+    sectionSource->vertices.reserve(vertexTotal);
+    sectionSource->indices.reserve(indexTotal);
+    for (const auto* geometry : std::as_const(geometries)) {
+        const auto offset = static_cast<quint32>(sectionSource->vertices.size() / 3);
+        sectionSource->vertices.append(geometry->sourceVertexData_);
+        for (const auto index : geometry->sourceIndexData_) sectionSource->indices.append(offset + index);
+    }
     QVector3D minimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
     QVector3D maximum(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
     const auto& vertices = sectionSource->vertices;

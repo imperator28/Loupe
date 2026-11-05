@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QVariantList>
+
 #include <QQuick3DGeometry>
 #include <QSharedPointer>
 #include <QVector>
@@ -43,6 +45,9 @@ public:
     Q_INVOKABLE [[nodiscard]] QVariantMap faceViewFor(quint32 topologyId) const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
     Q_INVOKABLE bool copySectionOverlayFrom(QObject* source);
+    // One cap for a whole part: the worker splits a part into one mesh per colour, and a
+    // cut through any one of them alone is open, so it cannot be filled.
+    Q_INVOKABLE bool copySectionOverlayFromSources(const QVariantList& sources);
     Q_INVOKABLE void clearMesh();
     Q_INVOKABLE void setSection(bool enabled, int axis, double position, bool flipped);
     Q_INVOKABLE void setSectionPlane(bool enabled, double normalX, double normalY, double normalZ, double offset, bool flipped);
@@ -53,6 +58,8 @@ public:
                                       double outlineWidth = 0.0);
     [[nodiscard]] int vertexCount() const noexcept { return static_cast<int>(vertexData_.size() / 3); }
     [[nodiscard]] int triangleCount() const noexcept { return static_cast<int>(indexData_.size() / 3); }
+    // The triangles of the mesh as sent, before any section clips it.
+    Q_INVOKABLE int sourceTriangleCount() const noexcept { return static_cast<int>(sourceIndexData_.size() / 3); }
     [[nodiscard]] int sectionCapTriangleCount() const noexcept { return sectionCapTriangleCount_; }
     [[nodiscard]] bool sectionBusy() const noexcept { return pendingSectionBuilds_ > 0; }
     // The exact bounds of the vertices as drawn under a node's rigid position and rotation

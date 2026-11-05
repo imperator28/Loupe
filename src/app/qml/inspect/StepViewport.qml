@@ -37,8 +37,14 @@ Item {
     property var geometryByNode: ({})
     property var edgeModelByNode: ({})
     property var edgeGeometryByNode: ({})
+    // One section cap per part, keyed by node: the worker sends a part as one mesh per colour,
+    // and a cut through any one of them alone is open, so it could not be filled.
     property var sectionOverlayModelByNode: ({})
     property var sectionOverlayGeometryByNode: ({})
+    // nodeId -> the segment keys of its meshes, and the parts whose cap must be rebuilt from
+    // them because one changed.
+    property var segmentKeysByNode: ({})
+    property var sectionSourceDirtyByNode: ({})
     property var xrayModelBySegment: ({})
     property var boundsByNode: ({})
     // The exploded view (#17). Each part's models live under one node per part, which is
@@ -1071,6 +1077,8 @@ Item {
         edgeGeometryByNode = ({})
         sectionOverlayModelByNode = ({})
         sectionOverlayGeometryByNode = ({})
+        segmentKeysByNode = ({})
+        sectionSourceDirtyByNode = ({})
         xrayModelBySegment = ({})
         boundsByNode = ({})
         meshRevisionBySegment = ({})
@@ -1189,9 +1197,9 @@ Item {
         for (let id in modelByNode) {
             const model = modelByNode[id]
             model.sourceColor = root.displayColor(model.nodeId, model.importColor)
-            const overlay = sectionOverlayModelByNode[id]
-            if (overlay) overlay.sourceColor = model.sourceColor
         }
+        for (let nodeId in sectionOverlayModelByNode)
+            sectionOverlayModelByNode[nodeId].sourceColor = sectionCapColor(nodeId)
     }
 
     function applySection() {
@@ -1231,9 +1239,9 @@ Item {
         }
         const queue = []
         if (section.enabled && (section.sliceOnly || section.capEnabled)) {
-            for (let id in geometryByNode) {
-                const overlay = ensureSectionOverlay(id)
-                if (overlay) queue.push({ geometry: overlay, nodeId: modelByNode[id].nodeId })
+            for (let nodeId in segmentKeysByNode) {
+                const overlay = ensureSectionOverlay(nodeId)
+                if (overlay) queue.push({ geometry: overlay, nodeId: nodeId })
             }
         }
         sectionApplyRequest = queue.length > 0 ? {
@@ -1294,27 +1302,68 @@ Item {
     // each part's progress: set it when that changes.
     onSectionFinalizingChanged: applyRenderMode()
 
-    function ensureSectionOverlay(segmentKey) {
+    // A part's segments, in the order they arrived.
+    function noteSegment(nodeId, segmentKey) {
+        let keys = segmentKeysByNode[nodeId]
+        if (!keys) {
+            keys = []
+            segmentKeysByNode[nodeId] = keys
+        }
+        if (keys.indexOf(segmentKey) < 0) keys.push(segmentKey)
+        sectionSourceDirtyByNode[nodeId] = true
+    }
+
+    // The cut face takes the colour most of the part is drawn in.
+    function sectionCapColor(nodeId) {
+        let best = null
+        let bestCount = -1
+        for (const key of segmentKeysByNode[nodeId] || []) {
+            const model = modelByNode[key]
+            const geometry = geometryByNode[key]
+            if (!model || !geometry) continue
+            const count = geometry.sourceTriangleCount()
+            if (count > bestCount) {
+                best = model.sourceColor
+                bestCount = count
+            }
+        }
+        return best !== null ? best : root.theme.neutralBody
+    }
+
+    // The part's cap, built from every one of its meshes, and rebuilt when one of them changed.
+    function ensureSectionOverlay(nodeId) {
         if (root.presentationOnly) return null
-        const existing = sectionOverlayGeometryByNode[segmentKey]
-        if (existing) return existing
-        const sourceGeometry = geometryByNode[segmentKey]
-        const sourceModel = modelByNode[segmentKey]
-        if (!sourceGeometry || !sourceModel) return null
+        const keys = segmentKeysByNode[nodeId]
+        if (!keys || keys.length === 0) return null
+        const sources = []
+        for (const key of keys) {
+            if (geometryByNode[key]) sources.push(geometryByNode[key])
+        }
+        if (sources.length === 0) return null
+        const existing = sectionOverlayGeometryByNode[nodeId]
+        if (existing) {
+            if (sectionSourceDirtyByNode[nodeId]) {
+                existing.copySectionOverlayFromSources(sources)
+                sectionOverlayModelByNode[nodeId].sourceColor = sectionCapColor(nodeId)
+                delete sectionSourceDirtyByNode[nodeId]
+            }
+            return existing
+        }
 
         const overlayGeometry = geometryComponent.createObject(sceneRoot)
-        if (!overlayGeometry.copySectionOverlayFrom(sourceGeometry)) {
+        if (!overlayGeometry.copySectionOverlayFromSources(sources)) {
             overlayGeometry.destroy()
             return null
         }
+        delete sectionSourceDirtyByNode[nodeId]
         overlayGeometry.sectionBusyChanged.connect(function() { root.sectionBuildBusyChanged(overlayGeometry.sectionBusy) })
-        const overlayModel = sectionOverlayModelComponent.createObject(partNode(sourceModel.nodeId), {
+        const overlayModel = sectionOverlayModelComponent.createObject(partNode(nodeId), {
             "geometry": overlayGeometry,
-            "nodeId": sourceModel.nodeId,
-            "sourceColor": sourceModel.sourceColor
+            "nodeId": nodeId,
+            "sourceColor": sectionCapColor(nodeId)
         })
-        sectionOverlayGeometryByNode[segmentKey] = overlayGeometry
-        sectionOverlayModelByNode[segmentKey] = overlayModel
+        sectionOverlayGeometryByNode[nodeId] = overlayGeometry
+        sectionOverlayModelByNode[nodeId] = overlayModel
         return overlayGeometry
     }
 
@@ -1338,8 +1387,7 @@ Item {
         if (geometryByNode[segmentKey]) {
             const geometry = geometryByNode[segmentKey]
             if (!geometry.replaceWorkerMesh(meshJson)) return
-            const overlayGeometry = sectionOverlayGeometryByNode[segmentKey]
-            if (overlayGeometry) overlayGeometry.copySectionOverlayFrom(geometry)
+            sectionSourceDirtyByNode[nodeId] = true
             const model = modelByNode[segmentKey]
             if (model) {
                 model.importColor = sourceColor
@@ -1364,6 +1412,7 @@ Item {
         geometryByNode[segmentKey] = geometry
         modelByNode[segmentKey] = model
         xrayModelBySegment[segmentKey] = xrayModel
+        noteSegment(nodeId, segmentKey)
         includeGeometryBounds(nodeId, segmentKey)
         // Only the new model's own state. Re-walking every model here made a replay of N
         // segments cost N^2, which is most of what entering a workspace used to spend.
@@ -1430,8 +1479,8 @@ Item {
         // The refined tessellation: every copy draws it at once.
         if (!geometry.replaceWorkerMesh(meshJson)) return
         for (const segmentKey of instanceSegmentsByKey[sourceKey] || []) {
-            const overlay = sectionOverlayGeometryByNode[segmentKey]
-            if (overlay) overlay.copySectionOverlayFrom(geometry)
+            const model = modelByNode[segmentKey]
+            if (model) sectionSourceDirtyByNode[model.nodeId] = true
         }
         scheduleSectionForNewGeometry()
     }
@@ -1486,6 +1535,7 @@ Item {
         copies.push(segmentKey)
         modelByNode[segmentKey] = model
         xrayModelBySegment[segmentKey] = xrayModel
+        noteSegment(nodeId, segmentKey)
         includeGeometryBounds(nodeId, segmentKey)
         const section = !presentationOnly && controller ? controller.section : null
         applySolidState(model, sliceOnlyFinalState(section))
