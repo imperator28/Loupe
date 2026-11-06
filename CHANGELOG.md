@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.1.6-beta.4
+
+A testing build that fixes in-app updates of a copy in `C:\Program Files` on Windows, and
+lets pinned measurements be dragged and coloured. Published as a pre-release; everything in
+v0.1.6-beta.3 is included.
 
 ### New
 
@@ -10,11 +14,6 @@
   blue, teal, rose, violet, slate).
 - **Measurement tags are cards**: the theme's surface and text with an outline in the
   result's colour, instead of white on brown, so they read in both themes.
-
-## v0.1.6-beta.4
-
-A testing build that fixes in-app updates of a copy in `C:\Program Files` on Windows.
-Published as a pre-release; everything in v0.1.6-beta.3 is included.
 
 ### Fixed
 
