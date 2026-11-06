@@ -30,20 +30,26 @@ Rectangle {
 
     // Every mode the handoff names, in the controller's order. `picks` is how many it needs.
     readonly property var modes: [
-        { key: "point", label: qsTr("Point to point"), short: qsTr("Points"), icon: "measurePoints", picks: 2 },
-        { key: "edge", label: qsTr("Edge / curve length"), short: qsTr("Edge length"), icon: "measureEdge", picks: 1 },
-        { key: "surface-distance", label: qsTr("Surface to surface"), short: qsTr("Surfaces"), icon: "measureSurfaces", picks: 2 },
-        { key: "radius", label: qsTr("Radius / diameter"), short: qsTr("Radius"), icon: "measureRadius", picks: 1 },
-        { key: "angle", label: qsTr("Angle"), short: qsTr("Angle"), icon: "measureAngle", picks: 2 },
-        { key: "area", label: qsTr("Surface area"), short: qsTr("Area"), icon: "measureArea", picks: 1 },
-        { key: "volume", label: qsTr("Volume"), short: qsTr("Volume"), icon: "measureVolume", picks: 0 },
-        { key: "bounds", label: qsTr("Selected bounds"), short: qsTr("Bounds"), icon: "measureBounds", picks: 0 }
+        { key: "point", label: qsTr("Point to point"), short: qsTr("Points"), icon: "measurePoints", picks: 2,
+          hint: qsTr("Between two points. Snaps to vertices, circle centres and edges.") },
+        { key: "edge", label: qsTr("Edge / curve length"), short: qsTr("Edge"), icon: "measureEdge", picks: 1,
+          hint: qsTr("Along an edge. Shift or %1-click more edges to add them up.").arg(root.modifierName) },
+        { key: "surface-distance", label: qsTr("Surface to surface"), short: qsTr("Surfaces"), icon: "measureSurfaces", picks: 2,
+          hint: qsTr("Between two faces: the gap when they are parallel, else the closest distance.") },
+        { key: "radius", label: qsTr("Radius / diameter"), short: qsTr("Radius"), icon: "measureRadius", picks: 1,
+          hint: qsTr("Of a circular edge, or a cylindrical or spherical face.") },
+        { key: "angle", label: qsTr("Angle"), short: qsTr("Angle"), icon: "measureAngle", picks: 2,
+          hint: qsTr("From one flat face or straight edge to another.") },
+        { key: "area", label: qsTr("Surface area"), short: qsTr("Area"), icon: "measureArea", picks: 1,
+          hint: qsTr("Of a face. Shift or %1-click more faces to add them up.").arg(root.modifierName) },
+        { key: "volume", label: qsTr("Volume"), short: qsTr("Volume"), icon: "measureVolume", picks: 0,
+          hint: qsTr("Of the selection, or of the whole model when nothing is selected.") },
+        { key: "bounds", label: qsTr("Selected bounds"), short: qsTr("Bounds"), icon: "measureBounds", picks: 0,
+          hint: qsTr("The box around the selection, or around the whole model when nothing is selected.") }
     ]
-    readonly property var groups: [
-        { title: qsTr("Between two picks"), keys: ["point", "surface-distance", "angle"] },
-        { title: qsTr("One pick"), keys: ["edge", "radius", "area"] },
-        { title: qsTr("Whole part"), keys: ["volume", "bounds"] }
-    ]
+    // As they sit in the picker: two picks along the top, one pick and whole parts below.
+    readonly property var order: ["point", "surface-distance", "angle", "radius", "edge", "area", "volume", "bounds"]
+    readonly property string modifierName: Qt.platform.os === "osx" ? "⌘" : "Ctrl"
     function modeFor(key) {
         for (const mode of modes) if (mode.key === key) return mode
         return modes[0]
@@ -52,6 +58,10 @@ Rectangle {
     readonly property string activeKey: taskController ? taskController.modeKey : "point"
     readonly property var activeMode: modeFor(activeKey)
     readonly property int requiredPicks: taskController ? taskController.requiredPickCount : 0
+    readonly property bool multiPick: taskController !== null && taskController.multiPick
+    // A total shows a row per pick so far, and one asking for the first.
+    readonly property int slotCount: multiPick ? Math.max(1, picked.length) : requiredPicks
+    readonly property var pinned: taskController ? taskController.pinnedResults : []
     readonly property var picked: taskController ? taskController.pickedEntities : []
     readonly property bool hasResult: taskController !== null && taskController.resultText.length > 0
     readonly property string refusal: taskController ? taskController.refusal : ""
@@ -68,7 +78,9 @@ Rectangle {
         return ""
     }
 
-    // A mode: its glyph over its short name, the active one tinted and outlined in accent.
+    // A mode in the picker: its glyph over its short name. The picker is one segmented well,
+    // as the design's mode pickers are; the active mode is its raised thumb, with the glyph in
+    // accent and the name in weight, so it does not read by colour alone.
     component ModeTile: AbstractButton {
         id: tile
         required property var mode
@@ -76,10 +88,9 @@ Rectangle {
         objectName: "measureMode-" + mode.key
         Layout.fillWidth: true
         Layout.preferredWidth: 1
-        implicitHeight: 52
+        implicitHeight: 42
         hoverEnabled: true
         focusPolicy: Qt.StrongFocus
-        checkable: false
         Accessible.role: Accessible.RadioButton
         Accessible.name: mode.label
         Accessible.checked: active
@@ -87,17 +98,17 @@ Rectangle {
 
         background: Rectangle {
             radius: root.theme.radius2
-            color: tile.active ? root.theme.accentTint
-                 : tile.down ? Qt.darker(root.theme.control, root.theme.dark ? 0.82 : 1.08)
-                 : tile.hovered ? root.theme.control : "transparent"
-            border.color: tile.active ? root.theme.accent : tile.hovered ? root.theme.border : "transparent"
+            color: tile.active ? root.theme.surface1
+                 : tile.down ? root.theme.control
+                 : tile.hovered ? Qt.rgba(root.theme.accentTint.r, root.theme.accentTint.g, root.theme.accentTint.b, root.theme.accentTint.a * 0.7)
+                 : "transparent"
+            border.color: tile.active ? root.theme.borderPanel : "transparent"
             border.width: 1
             Behavior on color { ColorAnimation { duration: root.theme.durInstant } }
-            // The focus ring, outside the tile.
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -3
-                radius: parent.radius + 3
+                anchors.margins: -2
+                radius: parent.radius + 2
                 color: "transparent"
                 border.color: root.theme.accent
                 border.width: root.theme.focusRingWidth
@@ -105,17 +116,17 @@ Rectangle {
             }
         }
         contentItem: Column {
-            spacing: 3
-            topPadding: 7
+            spacing: 1
+            topPadding: 5
             ToolIcon {
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 20
-                height: 20
+                width: 18
+                height: 18
                 name: tile.mode.icon
-                color: tile.active ? root.theme.accent : root.foreground
+                color: tile.active ? root.theme.accent : root.subduedForeground
             }
             Label {
-                width: tile.width - 6
+                width: tile.width - 4
                 anchors.horizontalCenter: parent.horizontalCenter
                 horizontalAlignment: Text.AlignHCenter
                 text: tile.mode.short
@@ -141,32 +152,37 @@ Rectangle {
             IconButton { theme: root.theme; glyph: "close"; Accessible.name: qsTr("Close measurement"); onClicked: root.closeRequested() }
         }
 
-        // 1. What to measure.
-        Repeater {
-            model: root.groups
-            delegate: ColumnLayout {
-                required property var modelData
-                Layout.fillWidth: true
-                spacing: 4
-                Label {
-                    text: modelData.title
-                    color: root.subduedForeground
-                    font.pixelSize: root.theme.fontCaption
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    Repeater {
-                        model: modelData.keys
-                        delegate: ModeTile {
-                            required property string modelData
-                            mode: root.modeFor(modelData)
-                        }
+        // 1. What to measure: one well of eight, and what the active one does.
+        Rectangle {
+            objectName: "measureModePicker"
+            Layout.fillWidth: true
+            implicitHeight: modeGrid.implicitHeight + 6
+            radius: root.theme.radius3
+            color: root.theme.surfaceSubtle
+            GridLayout {
+                id: modeGrid
+                anchors.fill: parent
+                anchors.margins: 3
+                columns: 4
+                columnSpacing: 2
+                rowSpacing: 2
+                Repeater {
+                    model: root.order
+                    delegate: ModeTile {
+                        required property string modelData
+                        mode: root.modeFor(modelData)
                     }
-                    // The short row keeps its tiles the width of the others.
-                    Item { visible: modelData.keys.length < 3; Layout.fillWidth: true; Layout.preferredWidth: 1 }
                 }
             }
+        }
+        Label {
+            objectName: "measureModeHint"
+            Layout.fillWidth: true
+            Layout.topMargin: -4
+            text: root.activeMode.hint
+            wrapMode: Text.WordWrap
+            color: root.subduedForeground
+            font.pixelSize: root.theme.fontCaption
         }
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.theme.border }
@@ -178,11 +194,15 @@ Rectangle {
             visible: root.requiredPicks === 0
             wrapMode: Text.WordWrap
             color: root.subduedForeground
-            text: root.activeKey === "volume" ? qsTr("Select a closed solid in the view or the tree.")
-                                              : qsTr("Select a part in the view or the tree.")
+            // What it is of now, and how to change that.
+            text: {
+                const scope = root.taskController ? root.taskController.selectionScope : ""
+                const how = qsTr("Select parts or a sub-assembly to measure just them; Shift or %1-click adds.").arg(root.modifierName)
+                return scope.length > 0 ? qsTr("Of: %1. %2").arg(scope).arg(how) : how
+            }
         }
         Repeater {
-            model: root.requiredPicks
+            model: root.slotCount
             delegate: RowLayout {
                 id: slot
                 required property int index
@@ -243,6 +263,20 @@ Rectangle {
                         font.pixelSize: root.theme.fontCaption
                     }
                 }
+                // One pick out of a total.
+                IconButton {
+                    objectName: "measureRemovePick" + slot.index
+                    theme: root.theme
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    iconSize: 12
+                    visible: root.multiPick && slot.entry !== null && root.picked.length > 1
+                    glyph: "close"
+                    Accessible.name: qsTr("Take %1 out of the total").arg(slot.entry ? slot.entry.title : "")
+                    onClicked: root.taskController.removePick(slot.index)
+                    ThemedToolTip { theme: root.theme; text: qsTr("Take out of the total"); visible: parent.hovered }
+                }
             }
         }
         // A pick the mode could not use: what was wrong, and what to pick instead.
@@ -287,6 +321,22 @@ Rectangle {
                         color: root.subduedForeground
                         font.pixelSize: root.theme.fontSection
                         font.weight: Font.DemiBold
+                    }
+                    IconButton {
+                        objectName: "measurePin"
+                        theme: root.theme
+                        implicitWidth: 24
+                        implicitHeight: 24
+                        iconSize: 14
+                        glyph: "pin"
+                        enabled: root.taskController && root.taskController.canPin
+                        Accessible.name: qsTr("Pin the measurement to the view")
+                        onClicked: root.taskController.pinResult()
+                        ThemedToolTip {
+                            theme: root.theme
+                            text: qsTr("Pin: keep it in the view, pointing at what was measured, while you measure the next")
+                            visible: parent.hovered
+                        }
                     }
                     IconButton {
                         objectName: "measureCopy"
@@ -395,6 +445,65 @@ Rectangle {
                 text: qsTr("Clear")
                 enabled: root.picked.length > 0 || root.refusal.length > 0
                 onClicked: root.taskController.clearPicks()
+            }
+        }
+
+        // 4. What stays in the view: pinned results, any kind, for a review or a capture.
+        ColumnLayout {
+            objectName: "measurePinned"
+            Layout.fillWidth: true
+            visible: root.pinned.length > 0
+            spacing: 2
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; Layout.bottomMargin: 8; color: root.theme.border }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Pinned · %1").arg(root.pinned.length)
+                    color: root.foreground
+                    font.pixelSize: root.theme.fontSection
+                    font.weight: Font.DemiBold
+                }
+                ThemedButton {
+                    objectName: "measureClearPinned"
+                    theme: root.theme
+                    flat: true
+                    text: qsTr("Unpin all")
+                    onClicked: root.taskController.clearPinned()
+                }
+            }
+            Repeater {
+                model: root.pinned
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 8
+                    ToolIcon { width: 14; height: 14; name: "pin"; color: root.theme.selectedBody }
+                    Label {
+                        text: modelData.title
+                        color: root.subduedForeground
+                        font.pixelSize: root.theme.fontCaption
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignRight
+                        text: modelData.text
+                        elide: Text.ElideRight
+                        color: root.foreground
+                        font.pixelSize: root.theme.fontSection
+                        font.features: { "tnum": 1 }
+                    }
+                    IconButton {
+                        theme: root.theme
+                        implicitWidth: 22
+                        implicitHeight: 22
+                        iconSize: 12
+                        glyph: "close"
+                        Accessible.name: qsTr("Unpin %1").arg(modelData.title)
+                        onClicked: root.taskController.unpin(modelData.id)
+                        ThemedToolTip { theme: root.theme; text: qsTr("Unpin"); visible: parent.hovered }
+                    }
+                }
             }
         }
     }

@@ -25,6 +25,8 @@ struct MeasureEntity final {
 
     Kind kind{Kind::None};
     quint32 topologyId{};
+    // The part it is on, so a pick can be told from the same edge or face picked again.
+    QString nodeId;
     QString nodeLabel;
     // Where the pick is: the point itself, or for an edge or face the point on it nearest
     // where it was picked.
@@ -84,6 +86,24 @@ namespace measure {
 // 0..180, between lines 0..90, between a line and a plane 0..90. Negative when either has
 // no single direction (a curved face, a curved edge).
 [[nodiscard]] double angleBetween(const MeasureEntity& first, const MeasureEntity& second);
+
+// How an angle is drawn: an arc about `centre` from `from` to `to` (unit directions, each
+// pointing along one pick toward where it was picked), `radius` long, spanning `degrees`.
+struct AngleArc final {
+    bool valid{false};
+    double degrees{};
+    QVector3D centre;
+    QVector3D from;
+    QVector3D to;
+    float radius{};
+};
+
+// The angle as seen between the two picks: two flat faces meet along a line, and the arc
+// runs square to it from one face to the other; two straight edges meet (or pass nearest) at
+// a point, and the arc runs from one to the other; an edge meets a face's plane, and the arc
+// runs from the edge down to the plane. So a V-groove reads as its opening and an L as 90,
+// whichever way the faces' normals point. Invalid for parallel faces or lines.
+[[nodiscard]] AngleArc angleArc(const MeasureEntity& first, const MeasureEntity& second);
 
 // The centre of the circle through three points, and that circle's axis; false when they
 // are in a line.

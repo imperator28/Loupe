@@ -1208,9 +1208,9 @@ Item {
         // `visible`: in Edges Only, and while a 2D slice is showing, the
         // solid is not drawn but its edges are, and those must stay
         // selectable.
-        // A transparent part lets clicks through to what is behind it -- seeing past it to
-        // the part in focus is the point.
-        model.pickable = shown && !model.transparent
+        // A part made unselectable (Properties > Selectable) lets clicks through to what is
+        // behind it. Transparency alone no longer does: a see-through part stays selectable.
+        model.pickable = shown && controller.isNodeSelectable(model.nodeId)
     }
 
     function applyEdgeState(edgeModel, section, sliceOnlyFinal) {
@@ -1695,7 +1695,7 @@ Item {
             return false
         }
         if (root.measurementActive) {
-            acceptMeasurementHit(hit)
+            acceptMeasurementHit(hit, additive)
         } else {
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
                                                 hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive)
@@ -1832,24 +1832,43 @@ Item {
         hoverEdgeGeometry.clearEdges()
     }
 
-    function acceptMeasurementHit(hit) {
+    function acceptMeasurementHit(hit, additive) {
         const mode = root.controller.measurement.mode
         if (mode === 6 || mode === 7) {
+            // Shift or Ctrl/Cmd adds parts, and volume and bounds add them up.
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
+                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive === true)
             return
         }
         // Surface to surface measures between whole faces, so it takes the face's triangles.
         const pick = measureCandidateAt(hit, mode === 2)
-        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity)) return
-        // The measurement was started over when this pick began a new one.
-        let next = root.controller.measurement.pickedEntities.length === 1 ? [] : root.acceptedTopologies.slice()
-        // A whole edge or face stays lit in the measurement colour; a point has its numbered marker.
-        if (pick.sourceGeometry && pick.topologyId && (pick.info.kind === "edge" || pick.info.kind === "face")) next.push(pick)
-        root.acceptedTopologies = next
+        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity, additive === true)) return
+        syncAcceptedTopologies(pick)
         showHoverTopology(null)
         // The hover is the next candidate, at once: no move needed to see it.
         updateHover(input.mouseX, input.mouseY)
+    }
+
+    // The lit faces and edges follow the controller's picks: a new measurement starts them
+    // over, an added pick joins them, one taken back out of a total leaves.
+    function syncAcceptedTopologies(latest) {
+        const picked = root.controller ? root.controller.measurement.pickedEntities : []
+        const known = root.acceptedTopologies.slice()
+        if (latest && latest.sourceGeometry && latest.topologyId
+                && (latest.info.kind === "edge" || latest.info.kind === "face")) known.push(latest)
+        const next = []
+        for (const entry of picked) {
+            if (entry.entityKind !== "edge" && entry.entityKind !== "face") continue
+            for (let index = known.length - 1; index >= 0; --index) {
+                const candidate = known[index]
+                if (candidate.nodeId === entry.nodeId && candidate.topologyId === entry.topologyId
+                        && candidate.entityKind === entry.entityKind) {
+                    next.push(candidate)
+                    break
+                }
+            }
+        }
+        root.acceptedTopologies = next
     }
 
     // A face pick independent of the measurement mode, so the drawing workspace can pick and
@@ -2698,8 +2717,11 @@ Item {
         view: view
         revision: navigation.revision
         measurement: root.controller ? root.controller.measurement : null
+        // Pinned results stay when the tool closes; the one in progress shows while measuring.
         visible: !root.presentationOnly && root.controller !== null
-                 && (root.measurementActive || root.controller.measurement.pickedPoints.length > 0)
+                 && (root.measurementActive || root.controller.measurement.pickedPoints.length > 0
+                     || root.controller.measurement.pinnedResults.length > 0)
+        showCurrent: root.measurementActive || (root.controller !== null && root.controller.measurement.pickedPoints.length > 0)
         // The hover is for aiming; a capture shows the result only, and only if asked to.
         hover: root.measurementActive ? root.hoverTopology : null
         pointer: root.hoverPointer
@@ -2892,6 +2914,7 @@ Item {
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.transparencyActionText(); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Make unselectable"), qsTr("Make %1 parts unselectable")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.setSelectionSelectable(false) }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
         ThemedMenuSeparator { theme: componentContextMenu.theme; visible: root.explodedLayout }
@@ -3161,6 +3184,9 @@ Item {
         function onResultChanged() {
             if (root.controller && root.controller.measurement.pickedEntities.length === 0)
                 root.clearMeasurementHighlights()
+            // A pick taken out of a total from the panel.
+            else if (root.acceptedTopologies.length > root.controller.measurement.pickedEntities.length)
+                root.syncAcceptedTopologies(null)
         }
     }
 }

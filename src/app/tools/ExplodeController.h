@@ -63,6 +63,9 @@ public:
     // move, averaged. A point fixed to the parts, so turning them about it leaves it where it
     // is -- unlike the centre of their bounding box, which shifts as they turn.
     Q_INVOKABLE [[nodiscard]] QVector3D movedCentre(const QStringList& nodeIds) const;
+    // The box around these nodes' parts where the file puts them (every part for none); false
+    // when none of them has been drawn yet.
+    [[nodiscard]] bool assembledBox(const QStringList& nodeIds, QVector3D* minimum, QVector3D* maximum) const;
     // {valid, minimum, maximum} of these nodes' parts as displayed; every part for none.
     Q_INVOKABLE [[nodiscard]] QVariantMap displayedBounds(const QStringList& nodeIds) const;
     // How far the node's centre has moved, and its rotation as Euler angles (degrees).

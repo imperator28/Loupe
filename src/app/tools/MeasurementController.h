@@ -56,6 +56,16 @@ class MeasurementController final : public QObject {
     Q_PROPERTY(QString secondPickDescription READ secondPickDescription NOTIFY resultChanged)
     Q_PROPERTY(QVariantList pickedPoints READ pickedPoints NOTIFY resultChanged)
     Q_PROPERTY(QVariantList pickedEntities READ pickedEntities NOTIFY resultChanged)
+    // Edge length and area add up several picks: Shift or Ctrl/Cmd-click adds one (again to
+    // take it back out), a plain click starts over.
+    Q_PROPERTY(bool multiPick READ multiPick NOTIFY modeChanged)
+    // What volume and bounds are of: "Whole model", a part's or sub-assembly's name, or
+    // "3 parts", with how many parts that is.
+    Q_PROPERTY(QString selectionScope READ selectionScope NOTIFY resultChanged)
+    // Results pinned to the view: each {id, title, text, annotation, points, edges}, drawn
+    // where it was measured until unpinned, whatever is measured next.
+    Q_PROPERTY(QVariantList pinnedResults READ pinnedResults NOTIFY pinnedChanged)
+    Q_PROPERTY(bool canPin READ canPin NOTIFY resultChanged)
 
 public:
     explicit MeasurementController(QObject* parent = nullptr);
@@ -73,8 +83,19 @@ public:
                             const QString& nodeLabel);
     // A pick the viewport built from the part's geometry (a MeasureEntity in a QVariant).
     // False, with `refusal` saying why, when the mode cannot use it.
-    Q_INVOKABLE bool acceptEntity(const QVariant& entity, const QString& nodeLabel);
-    bool acceptEntity(const MeasureEntity& entity);
+    Q_INVOKABLE bool acceptEntity(const QVariant& entity, const QString& nodeLabel, bool additive = false);
+    bool acceptEntity(const MeasureEntity& entity, bool additive = false);
+    // The box volume and bounds measure, in scene millimetres, and what it is of.
+    void setSelectionBox(const QVector3D& minimum, const QVector3D& maximum, const QString& scope, int partCount);
+    // Takes one pick out of a total (edge length, area).
+    Q_INVOKABLE void removePick(int index);
+    Q_INVOKABLE void pinResult();
+    Q_INVOKABLE void unpin(const QString& id);
+    Q_INVOKABLE void clearPinned();
+    [[nodiscard]] bool multiPick() const noexcept;
+    [[nodiscard]] QString selectionScope() const { return hasSelectedGeometry_ ? selectionScope_ : QString{}; }
+    [[nodiscard]] QVariantList pinnedResults() const { return pinned_; }
+    [[nodiscard]] bool canPin() const noexcept { return result_.valid && !result_.annotation.isEmpty(); }
     // What a pick under the pointer would be, before it is made: {title, detail, eligible,
     // reason}. The hover chip shows it.
     // Also {kind: "surfacePoint" | "edgePoint" | "vertex" | "centre" | "edge" | "face",
@@ -111,6 +132,7 @@ public:
 signals:
     void modeChanged();
     void resultChanged();
+    void pinnedChanged();
 
 private:
     enum class Quantity { None, Length, Angle, Area, Volume, Bounds };
@@ -146,6 +168,13 @@ private:
     QVector<bool> legacyPicks_;
     Computed result_;
     QString refusal_;
+    QString selectionScope_;
+    int selectionPartCount_{};
+    QVector3D boxMinimum_;
+    QVector3D boxMaximum_;
+    bool hasBox_{false};
+    QVariantList pinned_;
+    int pinCounter_{};
     double longestEdgeMm_{};
     double circularRadiusMm_{};
     int planarFaceCount_{};

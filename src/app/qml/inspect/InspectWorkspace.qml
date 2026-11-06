@@ -675,6 +675,14 @@ Item {
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Hide"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: root.selectionTransparent ? qsTr("Make opaque") : qsTr("Make transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Make others transparent"); enabled: treeContextMenu.targetNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
+        ThemedMenuItem {
+            theme: treeContextMenu.theme
+            // Read when the menu opens: the selection is the part right-clicked by then.
+            text: treeContextMenu.targetNodeId.length > 0 && root.controller && root.controller.visibilityRevision >= 0
+                  && !root.controller.selectionSelectable() ? qsTr("Make selectable") : qsTr("Make unselectable")
+            enabled: treeContextMenu.targetNodeId.length > 0
+            onTriggered: root.controller.setSelectionSelectable(!root.controller.selectionSelectable())
+        }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Show all"); onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: treeContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
         ThemedMenuSeparator { theme: treeContextMenu.theme; visible: root.exploded }

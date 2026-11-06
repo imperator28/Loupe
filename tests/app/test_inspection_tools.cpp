@@ -30,6 +30,9 @@ private slots:
     void closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace();
     void circularEdgesKnowTheirCentreAndRadius();
     void pointPicksMeasureWithComponentsAndRefuseTheWrongKind();
+    void angleArcReadsAsTheOpeningBetweenThePicks();
+    void edgeAndAreaPicksAddUpAndComeBackOut();
+    void boundsDrawTheirBoxAndPinnedResultsStay();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void sectionCanUseASelectedFacePlane();
@@ -719,6 +722,126 @@ void InspectionToolsTest::pointPicksMeasureWithComponentsAndRefuseTheWrongKind()
     QVERIFY(controller.acceptEntity(vertex));
     QCOMPARE(controller.pickedEntities().size(), 1);
     QVERIFY(controller.resultText().isEmpty());
+}
+
+void InspectionToolsTest::angleArcReadsAsTheOpeningBetweenThePicks()
+{
+    // A V-groove opening 60 degrees: walls along Y, meeting at the bottom (x = 0, z = 0).
+    // Their outward normals are 120 degrees apart; what an engineer means is the opening.
+    // Each wall leans 30 degrees off vertical, one each way, so they open 60 degrees.
+    const auto rise = static_cast<float>(std::sin(60.0 * 3.14159265358979323846 / 180.0) * 10.0);
+    const QVector3D left(-5, 0, rise);
+    const QVector3D right(5, 0, rise);
+    auto wallA = flatFace({0, 0, 0}, left, left + QVector3D(0, 10, 0), {0, 10, 0}, left * 0.5F + QVector3D(0, 5, 0));
+    auto wallB = flatFace({0, 0, 0}, {0, 10, 0}, right + QVector3D(0, 10, 0), right, right * 0.5F + QVector3D(0, 5, 0));
+    // Normals pointing out of the groove's material, as a CAD face's would.
+    wallA.planeNormal = QVector3D::crossProduct(QVector3D(0, 1, 0), left).normalized();
+    if (wallA.planeNormal.x() < 0) wallA.planeNormal = -wallA.planeNormal;
+    wallB.planeNormal = QVector3D::crossProduct(right, QVector3D(0, 1, 0)).normalized();
+    if (wallB.planeNormal.x() > 0) wallB.planeNormal = -wallB.planeNormal;
+    const auto arc = loupe::app::tools::measure::angleArc(wallA, wallB);
+    QVERIFY(arc.valid);
+    QVERIFY2(std::abs(arc.degrees - 60.0) < 1e-3, qPrintable(QString::number(arc.degrees)));
+    QVERIFY(closeTo(arc.centre, {0, 5, 0}));
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::Angle);
+    QVERIFY(controller.acceptEntity(wallA));
+    QVERIFY(controller.acceptEntity(wallB));
+    QCOMPARE(controller.resultText(), QStringLiteral("60.00"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Supplement")), QStringLiteral("120.00°"));
+    const auto annotation = controller.annotation();
+    QCOMPARE(annotation.value(QStringLiteral("kind")).toString(), QStringLiteral("angle"));
+    QCOMPARE(annotation.value(QStringLiteral("arc")).toList().size(), 33);
+
+    // Two edges meeting at a corner of a hexagon: the corner's own 120 degrees.
+    const auto hexAngle = 120.0 * 3.14159265358979323846 / 180.0;
+    const auto edgeA = straightEdge({0, 0, 0}, {10, 0, 0});
+    const auto edgeB = straightEdge({0, 0, 0}, {static_cast<float>(10 * std::cos(hexAngle)), static_cast<float>(10 * std::sin(hexAngle)), 0});
+    QVERIFY(std::abs(loupe::app::tools::measure::angleArc(edgeA, edgeB).degrees - 120.0) < 1e-3);
+    // Parallel faces have no opening.
+    QVERIFY(!loupe::app::tools::measure::angleArc(
+        flatFace({0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {}), flatFace({0, 0, 2}, {1, 0, 2}, {1, 1, 2}, {0, 1, 2}, {})).valid);
+}
+
+void InspectionToolsTest::edgeAndAreaPicksAddUpAndComeBackOut()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::EdgeLength);
+    QVERIFY(controller.multiPick());
+    auto first = straightEdge({0, 0, 0}, {10, 0, 0});
+    first.nodeId = QStringLiteral("part");
+    first.topologyId = 1;
+    auto second = straightEdge({0, 0, 0}, {0, 5, 0});
+    second.nodeId = QStringLiteral("part");
+    second.topologyId = 2;
+    QVERIFY(controller.acceptEntity(first));
+    QCOMPARE(controller.resultText(), QStringLiteral("10.000"));
+    QVERIFY(controller.acceptEntity(second, true));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Total length · 2 edges"));
+    QCOMPARE(controller.resultText(), QStringLiteral("15.000"));
+    QCOMPARE(controller.pickedEntities().size(), 2);
+    QCOMPARE(controller.pickedEntities().at(1).toMap().value(QStringLiteral("polyline")).toList().size(), 2);
+    // The same edge again, added, takes it back out.
+    QVERIFY(controller.acceptEntity(first, true));
+    QCOMPARE(controller.resultText(), QStringLiteral("5.000"));
+    // A plain click starts over.
+    QVERIFY(controller.acceptEntity(first));
+    QVERIFY(controller.acceptEntity(first));
+    QCOMPARE(controller.pickedEntities().size(), 1);
+
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceArea);
+    auto faceA = flatFace({0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}, {});
+    faceA.areaMm2 = 4;
+    faceA.nodeId = QStringLiteral("a");
+    auto faceB = faceA;
+    faceB.areaMm2 = 6;
+    faceB.nodeId = QStringLiteral("b");
+    QVERIFY(controller.acceptEntity(faceA));
+    QVERIFY(controller.acceptEntity(faceB, true));
+    QCOMPARE(controller.resultText(), QStringLiteral("10.00"));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Total area · 2 faces"));
+    // Two-pick modes do not add up: a third pick starts the next measurement.
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceToSurface);
+    QVERIFY(!controller.multiPick());
+}
+
+void InspectionToolsTest::boundsDrawTheirBoxAndPinnedResultsStay()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::Bounds);
+    controller.setSelectedGeometry(100.0, 50.0, {30, 20, 10});
+    controller.setSelectionBox({-15, 0, 0}, {15, 20, 10}, QStringLiteral("Whole model"), 4);
+    QCOMPARE(controller.selectionScope(), QStringLiteral("Whole model"));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Bounds · 4 parts"));
+    const auto box = controller.annotation();
+    QCOMPARE(box.value(QStringLiteral("kind")).toString(), QStringLiteral("box"));
+    QCOMPARE(box.value(QStringLiteral("x")).toString(), QStringLiteral("30.000 mm"));
+    QVERIFY(closeTo(box.value(QStringLiteral("maximum")).value<QVector3D>(), {15, 20, 10}));
+
+    // Pinned: it stays drawn while the next measurement is made, of another kind.
+    QVERIFY(controller.canPin());
+    QSignalSpy pinned(&controller, &loupe::app::tools::MeasurementController::pinnedChanged);
+    controller.pinResult();
+    QCOMPARE(pinned.count(), 1);
+    QCOMPARE(controller.pinnedResults().size(), 1);
+    QCOMPARE(controller.pinnedResults().front().toMap().value(QStringLiteral("text")).toString(),
+             QStringLiteral("30.000 × 20.000 × 10.000 mm"));
+    controller.setMode(loupe::app::tools::MeasurementMode::PointToPoint);
+    MeasureEntity a;
+    a.kind = MeasureEntity::Kind::Vertex;
+    MeasureEntity b = a;
+    b.point = {3, 4, 0};
+    QVERIFY(controller.acceptEntity(a));
+    QVERIFY(controller.acceptEntity(b));
+    controller.pinResult();
+    QCOMPARE(controller.pinnedResults().size(), 2);
+    QVERIFY(controller.pickedEntities().isEmpty()); // ready for the next one
+    QCOMPARE(controller.pinnedResults().at(1).toMap().value(QStringLiteral("points")).toList().size(), 2);
+    controller.unpin(controller.pinnedResults().front().toMap().value(QStringLiteral("id")).toString());
+    QCOMPARE(controller.pinnedResults().size(), 1);
+    QCOMPARE(controller.pinnedResults().front().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Distance"));
+    controller.clearPinned();
+    QVERIFY(controller.pinnedResults().isEmpty());
 }
 
 void InspectionToolsTest::explodeAutoComesApartLevelByLevel()

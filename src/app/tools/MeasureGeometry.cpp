@@ -332,6 +332,100 @@ double angleBetween(const MeasureEntity& first, const MeasureEntity& second)
     return std::asin(std::abs(dot)) * kRadiansToDegrees;
 }
 
+AngleArc angleArc(const MeasureEntity& first, const MeasureEntity& second)
+{
+    AngleArc arc;
+    const auto isPlane = [](const MeasureEntity& entity) { return entity.kind == MeasureEntity::Kind::Face && entity.planar; };
+    const auto isLine = [](const MeasureEntity& entity) { return entity.kind == MeasureEntity::Kind::Edge && entity.linear; };
+    // Where each pick sits on its own face or line.
+    const auto anchorOf = [](const MeasureEntity& entity) { return entity.point; };
+    const auto finish = [&arc](const QVector3D& centre, QVector3D from, QVector3D to, const float reach) {
+        if (from.isNull() || to.isNull()) return;
+        from.normalize();
+        to.normalize();
+        arc.valid = true;
+        arc.centre = centre;
+        arc.from = from;
+        arc.to = to;
+        arc.degrees = std::acos(std::clamp(static_cast<double>(QVector3D::dotProduct(from, to)), -1.0, 1.0)) * kRadiansToDegrees;
+        arc.radius = std::max(reach * 0.55F, 1e-3F);
+    };
+    // The point of a line (through `point` along `direction`) nearest `target`.
+    const auto onLine = [](const QVector3D& point, const QVector3D& direction, const QVector3D& target) {
+        return point + direction * QVector3D::dotProduct(target - point, direction);
+    };
+
+    if (isPlane(first) && isPlane(second)) {
+        const auto n1 = first.planeNormal.normalized();
+        const auto n2 = second.planeNormal.normalized();
+        const auto axis = QVector3D::crossProduct(n1, n2);
+        if (axis.lengthSquared() < 1e-8F) return arc;
+        const auto direction = axis.normalized();
+        // A point on both planes: solve n1.x = d1, n2.x = d2 on the line through the origin
+        // square to both normals, then slide it to nearest the picks.
+        const auto d1 = QVector3D::dotProduct(n1, first.planePoint);
+        const auto d2 = QVector3D::dotProduct(n2, second.planePoint);
+        const auto onBoth = (QVector3D::crossProduct(n2, direction) * d1 + QVector3D::crossProduct(direction, n1) * d2)
+                            / QVector3D::dotProduct(direction, axis);
+        const auto p1 = anchorOf(first);
+        const auto p2 = anchorOf(second);
+        const auto centre = onLine(onBoth, direction, (p1 + p2) * 0.5F);
+        // Within each plane, square to the line, toward that face's pick.
+        auto from = QVector3D::crossProduct(direction, n1);
+        if (QVector3D::dotProduct(from, p1 - centre) < 0.0F) from = -from;
+        auto to = QVector3D::crossProduct(direction, n2);
+        if (QVector3D::dotProduct(to, p2 - centre) < 0.0F) to = -to;
+        const auto reach = std::min(QVector3D::dotProduct(from.normalized(), p1 - centre), QVector3D::dotProduct(to.normalized(), p2 - centre));
+        finish(centre, from, to, std::max(reach, 0.25F * (p1 - p2).length()));
+        return arc;
+    }
+    if (isLine(first) && isLine(second)) {
+        const auto d1 = first.direction.normalized();
+        const auto d2 = second.direction.normalized();
+        if (QVector3D::crossProduct(d1, d2).lengthSquared() < 1e-8F) return arc;
+        QVector3D on1;
+        QVector3D on2;
+        // Lines, not segments: edges that would meet if carried on.
+        const auto far = static_cast<float>(1e5);
+        segmentSegment({first.point - d1 * far, first.point + d1 * far}, {second.point - d2 * far, second.point + d2 * far}, &on1, &on2);
+        const auto centre = (on1 + on2) * 0.5F;
+        // Toward the far end of each edge from where they meet, so a corner reads as its corner.
+        const auto farEnd = [&centre](const MeasureEntity& edge) {
+            const auto& a = edge.polyline.isEmpty() ? edge.point : edge.polyline.constFirst();
+            const auto& b = edge.polyline.isEmpty() ? edge.point : edge.polyline.constLast();
+            return (a - centre).lengthSquared() > (b - centre).lengthSquared() ? a : b;
+        };
+        const auto e1 = farEnd(first);
+        const auto e2 = farEnd(second);
+        auto from = d1;
+        if (QVector3D::dotProduct(from, e1 - centre) < 0.0F) from = -from;
+        auto to = d2;
+        if (QVector3D::dotProduct(to, e2 - centre) < 0.0F) to = -to;
+        finish(centre, from, to, std::min((e1 - centre).length(), (e2 - centre).length()));
+        return arc;
+    }
+    const auto* line = isLine(first) ? &first : isLine(second) ? &second : nullptr;
+    const auto* plane = isPlane(first) ? &first : isPlane(second) ? &second : nullptr;
+    if (line && plane) {
+        const auto d = line->direction.normalized();
+        const auto n = plane->planeNormal.normalized();
+        const auto along = QVector3D::dotProduct(d, n);
+        const auto inPlane = d - n * along;
+        if (std::abs(along) < 1e-6F || inPlane.lengthSquared() < 1e-12F) return arc;
+        // Where the line meets the plane.
+        const auto t = QVector3D::dotProduct(plane->planePoint - line->point, n) / along;
+        const auto centre = line->point + d * t;
+        auto from = d;
+        const auto& a = line->polyline.isEmpty() ? line->point : line->polyline.constFirst();
+        const auto& b = line->polyline.isEmpty() ? line->point : line->polyline.constLast();
+        const auto end = (a - centre).lengthSquared() > (b - centre).lengthSquared() ? a : b;
+        if (QVector3D::dotProduct(from, end - centre) < 0.0F) from = -from;
+        const auto to = from - n * QVector3D::dotProduct(from, n);
+        finish(centre, line == &first ? from : to, line == &first ? to : from, (end - centre).length());
+    }
+    return arc;
+}
+
 bool circleThrough(const QVector3D& a, const QVector3D& b, const QVector3D& c, QVector3D* centre, QVector3D* axis,
                    double* radius)
 {

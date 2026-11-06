@@ -182,6 +182,27 @@ ElevatedPanel {
                      ? controller.selectionShowsTransparentEdges() : true
             onToggled: if (controller) controller.setSelectionTransparentEdges(checked)
         }
+        // Whether a click in the view takes the part. On by default, transparent or not; off,
+        // clicks pass through it to what is behind (Fusion's Selectable, Rhino's Lock). The
+        // tree still selects it, which is how it is turned back on.
+        ThemedSwitch {
+            objectName: "selectableSwitch"
+            theme: root.theme
+            visible: controller && controller.activeNodeId !== ""
+            text: qsTr("Selectable in the view")
+            checked: controller && controller.visibilityRevision >= 0 && controller.selectedNodeCount >= 0
+                     ? controller.selectionSelectable() : true
+            onToggled: if (controller) controller.setSelectionSelectable(checked)
+        }
+        Label {
+            Layout.fillWidth: true
+            visible: controller && controller.activeNodeId !== "" && controller.visibilityRevision >= 0
+                     && !controller.selectionSelectable()
+            text: qsTr("Clicks in the view pass through to what is behind. Select it in the tree to change this.")
+            wrapMode: Text.WordWrap
+            color: root.subduedForeground
+            font.pixelSize: root.theme.fontCaption
+        }
 
         // Document-level: shown when nothing is selected, where this panel otherwise only
         // carries its title.

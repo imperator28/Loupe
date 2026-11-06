@@ -226,6 +226,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/ContextPanel.qml
         qml/inspect/MeasurementPanel.qml
         qml/inspect/MeasurementOverlay.qml
+        qml/inspect/MeasurementAnnotation.qml
         qml/inspect/SectionPanel.qml
         qml/inspect/ExplodePanel.qml
         qml/inspect/FloatingToolWindow.qml

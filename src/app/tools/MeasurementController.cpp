@@ -242,15 +242,20 @@ QString MeasurementController::describePick(const MeasureEntity& entity) const
     return entity.nodeLabel.isEmpty() ? name : tr("%1 on %2").arg(name, entity.nodeLabel);
 }
 
-bool MeasurementController::acceptEntity(const QVariant& value, const QString& nodeLabel)
+bool MeasurementController::acceptEntity(const QVariant& value, const QString& nodeLabel, const bool additive)
 {
     if (!value.canConvert<MeasureEntity>()) return false;
     auto entity = value.value<MeasureEntity>();
     if (!nodeLabel.isEmpty()) entity.nodeLabel = nodeLabel;
-    return acceptEntity(entity);
+    return acceptEntity(entity, additive);
 }
 
-bool MeasurementController::acceptEntity(const MeasureEntity& entity)
+bool MeasurementController::multiPick() const noexcept
+{
+    return mode_ == MeasurementMode::EdgeLength || mode_ == MeasurementMode::SurfaceArea;
+}
+
+bool MeasurementController::acceptEntity(const MeasureEntity& entity, const bool additive)
 {
     QString reason;
     if (!eligible(entity, &reason)) {
@@ -260,11 +265,94 @@ bool MeasurementController::acceptEntity(const MeasureEntity& entity)
         }
         return false;
     }
-    append(entity, describePick(entity));
-    legacyPicks_.append(false);
+    if (multiPick() && additive && !picks_.isEmpty() && !legacyPicks_.contains(true)) {
+        // Adding to a total: the same edge or face again takes it back out.
+        for (qsizetype index = 0; index < picks_.size(); ++index) {
+            const auto& pick = picks_.at(index);
+            if (pick.kind == entity.kind && pick.topologyId == entity.topologyId && pick.nodeId == entity.nodeId) {
+                picks_.removeAt(index);
+                pickedDescriptions_.removeAt(index);
+                legacyPicks_.removeAt(index);
+                refusal_.clear();
+                recompute();
+                emit resultChanged();
+                return true;
+            }
+        }
+        picks_.append(entity);
+        pickedDescriptions_.append(describePick(entity));
+        legacyPicks_.append(false);
+        refusal_.clear();
+    } else {
+        append(entity, describePick(entity));
+        legacyPicks_.append(false);
+    }
     recompute();
     emit resultChanged();
     return true;
+}
+
+void MeasurementController::setSelectionBox(const QVector3D& minimum, const QVector3D& maximum, const QString& scope,
+                                            const int partCount)
+{
+    hasBox_ = minimum.x() <= maximum.x() && minimum.y() <= maximum.y() && minimum.z() <= maximum.z();
+    boxMinimum_ = minimum;
+    boxMaximum_ = maximum;
+    selectionScope_ = scope;
+    selectionPartCount_ = partCount;
+    recompute();
+    emit resultChanged();
+}
+
+void MeasurementController::removePick(const int index)
+{
+    if (index < 0 || index >= picks_.size()) return;
+    picks_.removeAt(index);
+    pickedDescriptions_.removeAt(index);
+    legacyPicks_.removeAt(index);
+    recompute();
+    emit resultChanged();
+}
+
+void MeasurementController::pinResult()
+{
+    if (!canPin()) return;
+    QVariantList points;
+    QVariantList edges;
+    for (const auto& pick : picks_) {
+        points.append(QVariant::fromValue(pick.kind == MeasureEntity::Kind::CircleCentre ? pick.centre : pick.point));
+        if (pick.kind == MeasureEntity::Kind::Edge && pick.polyline.size() >= 2) {
+            QVariantList line;
+            for (const auto& point : pick.polyline) line.append(QVariant::fromValue(point));
+            edges.append(QVariant(line));
+        }
+    }
+    pinned_.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("pin-%1").arg(++pinCounter_)},
+                               {QStringLiteral("title"), resultTitle()},
+                               {QStringLiteral("text"), QStringLiteral("%1 %2").arg(resultText(), resultUnit()).trimmed()},
+                               {QStringLiteral("annotation"), result_.annotation},
+                               {QStringLiteral("points"), points},
+                               {QStringLiteral("edges"), edges}});
+    emit pinnedChanged();
+    // The next measurement starts clean; the pinned one stays drawn.
+    if (requiredPickCount() > 0) clearPicks();
+}
+
+void MeasurementController::unpin(const QString& id)
+{
+    for (qsizetype index = 0; index < pinned_.size(); ++index) {
+        if (pinned_.at(index).toMap().value(QStringLiteral("id")).toString() != id) continue;
+        pinned_.removeAt(index);
+        emit pinnedChanged();
+        return;
+    }
+}
+
+void MeasurementController::clearPinned()
+{
+    if (pinned_.isEmpty()) return;
+    pinned_.clear();
+    emit pinnedChanged();
 }
 
 QVariantMap MeasurementController::describe(const QVariant& value) const
@@ -307,7 +395,16 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
         }
         return QString{};
     }();
+    // The edge under the pointer (or whose end or centre it is), drawn bold over the model:
+    // a 3D line is one pixel wide on most graphics back ends, too thin to tell it apart.
+    QVariantList polyline;
+    if (entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::CircleCentre
+        || entity.kind == MeasureEntity::Kind::EdgePoint || entity.kind == MeasureEntity::Kind::Vertex) {
+        polyline.reserve(entity.polyline.size());
+        for (const auto& point : entity.polyline) polyline.append(QVariant::fromValue(point));
+    }
     return {{QStringLiteral("kind"), kind},
+            {QStringLiteral("polyline"), polyline},
             {QStringLiteral("topologyId"), entity.topologyId},
             {QStringLiteral("point"), QVariant::fromValue(entity.point)},
             {QStringLiteral("title"), entity.kindName()},
@@ -414,7 +511,8 @@ QString MeasurementController::formatArea(const double squareMillimetres) const
 void MeasurementController::recompute()
 {
     result_ = {};
-    const auto complete = requiredPickCount() > 0 && picks_.size() == requiredPickCount();
+    const auto complete = requiredPickCount() > 0
+        && (multiPick() ? picks_.size() >= 1 : picks_.size() == requiredPickCount());
     const auto legacy = std::any_of(legacyPicks_.cbegin(), legacyPicks_.cend(), [](const bool value) { return value; });
     const auto distanceAnnotation = [this](const QVector3D& from, const QVector3D& to, const QString& text) {
         result_.annotation = {{QStringLiteral("kind"), QStringLiteral("distance")},
@@ -489,23 +587,46 @@ void MeasurementController::recompute()
                 degrees = std::acos(std::clamp(static_cast<double>(QVector3D::dotProduct(first, second)), -1.0, 1.0)) * 180.0 / 3.14159265358979323846;
             result_.method = tr("Between the normals at the picked points");
         } else {
-            degrees = measure::angleBetween(a, b);
             const auto faces = a.kind == MeasureEntity::Kind::Face && b.kind == MeasureEntity::Kind::Face;
             const auto lines = a.kind == MeasureEntity::Kind::Edge && b.kind == MeasureEntity::Kind::Edge;
-            result_.method = faces ? tr("Between the two faces' normals")
-                           : lines ? tr("Between the two edges' lines")
-                                   : tr("Between the edge and the face's plane");
-            if (faces && degrees >= 0.0)
-                result_.details.append(detail(tr("Supplement"), QStringLiteral("%1°").arg(fixed(180.0 - degrees, 2))));
-            else if (degrees >= 0.0)
-                result_.details.append(detail(tr("Complement"), QStringLiteral("%1°").arg(fixed(90.0 - degrees, 2))));
+            const auto arc = measure::angleArc(a, b);
+            degrees = arc.valid ? arc.degrees : measure::angleBetween(a, b);
+            result_.method = !arc.valid ? (faces ? tr("The faces are parallel") : tr("The edges are parallel"))
+                           : faces ? tr("From the first face to the second, square to where they meet")
+                           : lines ? tr("From the first edge to the second, where they meet")
+                                   : tr("From the edge down to the face's plane");
+            if (degrees >= 0.0)
+                result_.details.append(detail(lines || faces ? tr("Supplement") : tr("Complement"),
+                                              QStringLiteral("%1°").arg(fixed(lines || faces ? 180.0 - degrees : 90.0 - degrees, 2))));
+            if (arc.valid && degrees >= 0.0) {
+                // The arc, sampled, and a leg along each pick, so it reads which plane to which.
+                QVariantList points;
+                const auto side = QVector3D::crossProduct(QVector3D::crossProduct(arc.from, arc.to), arc.from).normalized();
+                const auto radians = degrees / 180.0 * 3.14159265358979323846;
+                constexpr int samples = 32;
+                for (int step = 0; step <= samples; ++step) {
+                    const auto t = radians * step / samples;
+                    const auto direction = side.isNull() ? arc.from
+                        : arc.from * static_cast<float>(std::cos(t)) + side * static_cast<float>(std::sin(t));
+                    points.append(QVariant::fromValue(arc.centre + direction * arc.radius));
+                }
+                const auto middle = side.isNull() ? arc.from
+                    : (arc.from * static_cast<float>(std::cos(radians / 2)) + side * static_cast<float>(std::sin(radians / 2)));
+                result_.annotation = {{QStringLiteral("kind"), QStringLiteral("angle")},
+                                      {QStringLiteral("arc"), points},
+                                      {QStringLiteral("centre"), QVariant::fromValue(arc.centre)},
+                                      {QStringLiteral("legFrom"), QVariant::fromValue(arc.centre + arc.from * arc.radius * 1.35F)},
+                                      {QStringLiteral("legTo"), QVariant::fromValue(arc.centre + arc.to * arc.radius * 1.35F)},
+                                      {QStringLiteral("at"), QVariant::fromValue(arc.centre + middle * arc.radius)},
+                                      {QStringLiteral("text"), QStringLiteral("%1°").arg(fixed(degrees, 2))}};
+            }
         }
         if (degrees < 0.0) break;
         result_.valid = true;
         result_.quantity = Quantity::Angle;
         result_.title = tr("Angle");
         result_.valueMm = degrees;
-        labelAnnotation((a.point + b.point) * 0.5F, QStringLiteral("%1°").arg(fixed(degrees, 2)));
+        if (result_.annotation.isEmpty()) labelAnnotation((a.point + b.point) * 0.5F, QStringLiteral("%1°").arg(fixed(degrees, 2)));
         break;
     }
     case MeasurementMode::EdgeLength: {
@@ -513,6 +634,16 @@ void MeasurementController::recompute()
         const auto& edge = picks_.front();
         result_.valid = true;
         result_.quantity = Quantity::Length;
+        if (picks_.size() > 1) {
+            double total{};
+            for (const auto& pick : picks_) total += pick.lengthMm;
+            result_.title = tr("Total length · %1 edges").arg(picks_.size());
+            result_.valueMm = total;
+            result_.method = tr("The edges' lengths added up. Shift or %1-click an edge to add or remove it.")
+                                 .arg(QStringLiteral("Ctrl/⌘"));
+            labelAnnotation(midpointOf(picks_.constLast().polyline, picks_.constLast().point), tr("Σ %1").arg(formatLength(total)));
+            break;
+        }
         result_.title = tr("Length");
         result_.valueMm = edge.lengthMm;
         result_.method = edge.circular ? tr("Along the circular edge")
@@ -552,6 +683,16 @@ void MeasurementController::recompute()
         const auto& face = picks_.front();
         result_.valid = true;
         result_.quantity = Quantity::Area;
+        if (picks_.size() > 1) {
+            double total{};
+            for (const auto& pick : picks_) total += pick.areaMm2;
+            result_.title = tr("Total area · %1 faces").arg(picks_.size());
+            result_.valueMm = total;
+            result_.method = tr("The faces' areas added up, from the CAD surfaces. Shift or %1-click a face to add or remove it.")
+                                 .arg(QStringLiteral("Ctrl/⌘"));
+            labelAnnotation(picks_.constLast().point, tr("Σ %1").arg(formatArea(total)));
+            break;
+        }
         result_.title = tr("Area");
         result_.valueMm = face.areaMm2;
         result_.method = tr("Of the whole face, from the CAD surface");
@@ -562,20 +703,31 @@ void MeasurementController::recompute()
         if (!hasSelectedGeometry_) break;
         result_.valid = true;
         result_.quantity = Quantity::Volume;
-        result_.title = tr("Volume");
+        result_.title = selectionPartCount_ > 1 ? tr("Volume · %1 parts").arg(selectionPartCount_) : tr("Volume");
         result_.valueMm = volumeMm3_;
-        result_.method = tr("Of the selected solid, from the CAD shape");
+        result_.method = selectionPartCount_ > 1 ? tr("The parts' volumes added up, from the CAD shapes")
+                                                 : tr("Of the solid, from the CAD shape");
         result_.details.append(detail(tr("Surface area"), formatArea(surfaceAreaMm2_)));
+        if (hasBox_) labelAnnotation((boxMinimum_ + boxMaximum_) * 0.5F, QStringLiteral("%1 %2").arg(resultText(), resultUnit()));
         break;
     case MeasurementMode::Bounds:
         if (!hasSelectedGeometry_) break;
         result_.valid = true;
         result_.quantity = Quantity::Bounds;
-        result_.title = tr("Bounds");
-        result_.method = tr("Axis-aligned box around the selection");
+        result_.title = selectionPartCount_ > 1 ? tr("Bounds · %1 parts").arg(selectionPartCount_) : tr("Bounds");
+        result_.method = tr("Box along X, Y and Z around the parts as drawn");
         result_.details.append(detail(QStringLiteral("X"), formatLength(boundsMm_.x())));
         result_.details.append(detail(QStringLiteral("Y"), formatLength(boundsMm_.y())));
         result_.details.append(detail(QStringLiteral("Z"), formatLength(boundsMm_.z())));
+        if (hasBox_) {
+            result_.annotation = {{QStringLiteral("kind"), QStringLiteral("box")},
+                                  {QStringLiteral("minimum"), QVariant::fromValue(boxMinimum_)},
+                                  {QStringLiteral("maximum"), QVariant::fromValue(boxMaximum_)},
+                                  {QStringLiteral("x"), formatLength(boundsMm_.x())},
+                                  {QStringLiteral("y"), formatLength(boundsMm_.y())},
+                                  {QStringLiteral("z"), formatLength(boundsMm_.z())},
+                                  {QStringLiteral("text"), resultText()}};
+        }
         break;
     }
 }
@@ -717,7 +869,14 @@ QVariantList MeasurementController::pickedEntities() const
                                   {QStringLiteral("radiusMm"), pick.radiusMm},
                                   {QStringLiteral("title"), legacyPicks_.value(index) ? pickedDescriptions_.value(index) : pick.kindName()},
                                   {QStringLiteral("detail"), description.value(QStringLiteral("detail"))},
-                                  {QStringLiteral("part"), pick.nodeLabel}});
+                                  {QStringLiteral("part"), pick.nodeLabel},
+                                  {QStringLiteral("nodeId"), pick.nodeId},
+                                  {QStringLiteral("polyline"), [&pick]() {
+                                       QVariantList line;
+                                       if (pick.kind != MeasureEntity::Kind::Edge) return line;
+                                       for (const auto& point : pick.polyline) line.append(QVariant::fromValue(point));
+                                       return line;
+                                   }()}});
     }
     return result;
 }

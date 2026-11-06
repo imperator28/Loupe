@@ -6,9 +6,10 @@ import QtQuick.Shapes
 //   - under the pointer, the snap point a click would take (a vertex's square, a circle
 //     centre's crosshair, an edge point's diamond, a face point's ring) and a chip naming it
 //     -- "Flat face · 240.00 mm²", or why this mode cannot use it;
-//   - the accepted picks as numbered markers;
-//   - the result where it was measured: a dimension line with its value, a radius leader,
-//     or a value tag on the edge or face.
+//   - the edge under the pointer, bold;
+//   - the result in progress and every pinned one, each drawn where it was measured
+//     (MeasurementAnnotation): bold picked edges, a dimension line, radius leader, angle arc,
+//     bounding box or value tag, and the picks.
 // Hover uses the accent (the temporary role), accepted picks and results the measurement
 // amber, so what is about to happen never reads as what has happened.
 Item {
@@ -26,6 +27,8 @@ Item {
     property point pointer: Qt.point(0, 0)
     property bool showHover: true
     property bool showResult: true
+    // The measurement in progress, apart from the pinned ones.
+    property bool showCurrent: true
 
     readonly property color hoverColor: theme ? theme.accent : "transparent"
     readonly property color pickColor: visualTheme ? visualTheme.selectionColor : "transparent"
@@ -40,125 +43,75 @@ Item {
         return point.x >= -margin && point.x <= width + margin && point.y >= -margin && point.y <= height + margin
     }
 
-    // ---- The result ----
-    readonly property var annotation: measurement ? measurement.annotation : ({})
-    readonly property string annotationKind: annotation && annotation.kind ? annotation.kind : ""
-    readonly property point fromScreen: annotationKind === "distance" || annotationKind === "radius"
-                                        ? project(annotation.from) : Qt.point(0, 0)
-    readonly property point toScreen: annotationKind === "distance" || annotationKind === "radius"
-                                      ? project(annotation.to) : Qt.point(0, 0)
-    readonly property point atScreen: annotationKind === "label" ? project(annotation.at) : Qt.point(0, 0)
-    readonly property real lineLength: Math.hypot(toScreen.x - fromScreen.x, toScreen.y - fromScreen.y)
-    // Square to the line, for the end ticks.
-    readonly property real tickX: lineLength > 0 ? -(toScreen.y - fromScreen.y) / lineLength * 6 : 0
-    readonly property real tickY: lineLength > 0 ? (toScreen.x - fromScreen.x) / lineLength * 6 : 0
-
-    Shape {
-        id: dimension
-        objectName: "measurementDimension"
-        anchors.fill: parent
-        visible: root.showResult && (root.annotationKind === "distance" || root.annotationKind === "radius")
-                 && (root.onScreen(root.fromScreen, 0) || root.onScreen(root.toScreen, 0))
-        preferredRendererType: Shape.CurveRenderer
-
-        // A thin halo under the line keeps it legible over any part colour.
-        ShapePath {
-            strokeColor: Qt.rgba(root.haloColor.r, root.haloColor.g, root.haloColor.b, 0.55)
-            strokeWidth: 3.5
-            fillColor: "transparent"
-            capStyle: ShapePath.RoundCap
-            PathMove { x: root.fromScreen.x; y: root.fromScreen.y }
-            PathLine { x: root.toScreen.x; y: root.toScreen.y }
-        }
-        ShapePath {
-            strokeColor: root.pickColor
-            strokeWidth: 1.5
-            fillColor: "transparent"
-            capStyle: ShapePath.RoundCap
-            PathMove { x: root.fromScreen.x; y: root.fromScreen.y }
-            PathLine { x: root.toScreen.x; y: root.toScreen.y }
-            // End ticks: a dimension, not a leader. A radius has its tick at the rim only.
-            PathMove { x: root.toScreen.x - root.tickX; y: root.toScreen.y - root.tickY }
-            PathLine { x: root.toScreen.x + root.tickX; y: root.toScreen.y + root.tickY }
-            PathMove {
-                x: root.annotationKind === "radius" ? root.fromScreen.x - 5 : root.fromScreen.x - root.tickX
-                y: root.annotationKind === "radius" ? root.fromScreen.y : root.fromScreen.y - root.tickY
-            }
-            PathLine {
-                x: root.annotationKind === "radius" ? root.fromScreen.x + 5 : root.fromScreen.x + root.tickX
-                y: root.annotationKind === "radius" ? root.fromScreen.y : root.fromScreen.y + root.tickY
-            }
-            PathMove { x: root.fromScreen.x; y: root.annotationKind === "radius" ? root.fromScreen.y - 5 : root.fromScreen.y }
-            PathLine { x: root.fromScreen.x; y: root.annotationKind === "radius" ? root.fromScreen.y + 5 : root.fromScreen.y }
-        }
-    }
-
-    // The value, on the line's middle, or on the picked edge or face.
-    Rectangle {
-        id: valueTag
-        objectName: "measurementValueTag"
-        readonly property point anchorPoint: root.annotationKind === "label" ? root.atScreen
-            : Qt.point((root.fromScreen.x + root.toScreen.x) / 2, (root.fromScreen.y + root.toScreen.y) / 2)
-        visible: root.showResult && root.annotationKind.length > 0 && root.onScreen(anchorPoint, 0)
-        // A tag on a point sits just above it; on a line, centred across it.
-        x: Math.round(anchorPoint.x - width / 2)
-        y: Math.round(root.annotationKind === "label" ? anchorPoint.y - height - 10 : anchorPoint.y - height / 2)
-        width: valueText.implicitWidth + 14
-        height: valueText.implicitHeight + 6
-        radius: root.theme ? root.theme.radius2 : 0
-        color: root.pickColor
-        border.color: root.haloColor
-        border.width: 1
-
-        Label {
-            id: valueText
-            anchors.centerIn: parent
-            text: root.annotation && root.annotation.text ? root.annotation.text : ""
-            color: root.pickTextColor
-            font.pixelSize: root.theme ? root.theme.fontSection : 12
-            font.weight: Font.DemiBold
-            font.features: { "tnum": 1 }
-        }
-    }
-    // A tag on a point says which point.
-    Rectangle {
-        visible: valueTag.visible && root.annotationKind === "label"
-        x: Math.round(valueTag.anchorPoint.x - 3)
-        y: Math.round(valueTag.anchorPoint.y - 3)
-        width: 6
-        height: 6
-        radius: 3
-        color: root.pickColor
-        border.color: root.haloColor
-        border.width: 1
-    }
-
-    // ---- The accepted picks, numbered ----
+    // ---- Pinned results: kept where they were measured, under the one in progress ----
     Repeater {
-        model: root.measurement ? root.measurement.pickedPoints : []
-        delegate: Rectangle {
+        model: root.measurement ? root.measurement.pinnedResults : []
+        delegate: MeasurementAnnotation {
             required property var modelData
-            required property int index
-            readonly property point screenPosition: root.project(modelData)
-            objectName: "measurementPickMarker" + index
-            width: 20
-            height: 20
-            radius: 10
-            x: Math.round(screenPosition.x - width / 2)
-            y: Math.round(screenPosition.y - height / 2)
-            visible: root.showResult && root.onScreen(screenPosition, width)
-            color: root.pickColor
-            border.color: root.haloColor
-            border.width: 2
+            objectName: "measurementPinned-" + modelData.id
+            anchors.fill: parent
+            projector: root
+            theme: root.theme
+            visualTheme: root.visualTheme
+            visible: root.showResult
+            pinned: true
+            numbered: false
+            title: modelData.title
+            annotation: modelData.annotation
+            edges: modelData.edges
+            points: modelData.points
+        }
+    }
 
-            Label {
-                anchors.centerIn: parent
-                text: index + 1
-                color: root.pickTextColor
-                font.pixelSize: root.theme ? root.theme.fontCaption : 11
-                font.weight: Font.Bold
-                font.features: { "tnum": 1 }
+    // ---- The result in progress ----
+    MeasurementAnnotation {
+        objectName: "measurementResult"
+        anchors.fill: parent
+        projector: root
+        theme: root.theme
+        visualTheme: root.visualTheme
+        visible: root.showResult && root.showCurrent
+        annotation: root.measurement ? root.measurement.annotation : ({})
+        points: root.measurement ? root.measurement.pickedPoints : []
+        edges: {
+            const result = []
+            for (const entry of root.measurement ? root.measurement.pickedEntities : []) {
+                if (entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
             }
+            return result
+        }
+    }
+
+    // The edge under the pointer, bold in the hover accent, so it is clear which one a click takes.
+    readonly property var hoverPolyline: {
+        if (!root.showHover || !root.hover || !root.hover.info || !root.hover.info.polyline) return []
+        const result = []
+        for (const point of root.hover.info.polyline) {
+            const screen = root.project(point)
+            result.push(Qt.point(screen.x, screen.y))
+        }
+        return result
+    }
+    Shape {
+        objectName: "measurementHoverEdge"
+        anchors.fill: parent
+        visible: root.hoverPolyline.length > 1
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: Qt.rgba(root.haloColor.r, root.haloColor.g, root.haloColor.b, 0.5)
+            strokeWidth: 5
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            joinStyle: ShapePath.RoundJoin
+            PathPolyline { path: root.hoverPolyline }
+        }
+        ShapePath {
+            strokeColor: root.hoverColor
+            strokeWidth: 3
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            joinStyle: ShapePath.RoundJoin
+            PathPolyline { path: root.hoverPolyline }
         }
     }
 

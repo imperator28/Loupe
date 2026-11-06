@@ -253,6 +253,12 @@ Item {
             f: "",
             t: ""
         },
+        // Pin: a pushpin, for keeping a measurement in the view.
+        "pin": {
+            s: "M7.5 3.5 H12.5 L12 8 L14.5 11 H5.5 L8 8 Z M10 11 V16.5",
+            f: "",
+            t: ""
+        },
         // Copy: two sheets.
         "copy": {
             s: "M7.5 7.5 H16 V16 H7.5 Z M4 12.5 V4 H12.5",

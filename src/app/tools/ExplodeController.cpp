@@ -244,6 +244,20 @@ QVector3D ExplodeController::assembledCentre(const QString& nodeId) const
     return bounds.valid ? bounds.centre() : QVector3D{};
 }
 
+bool ExplodeController::assembledBox(const QStringList& nodeIds, QVector3D* minimum, QVector3D* maximum) const
+{
+    Bounds result;
+    if (nodeIds.isEmpty()) {
+        for (auto it = partBounds_.cbegin(); it != partBounds_.cend(); ++it) result.include(*it);
+    } else {
+        for (const auto& nodeId : nodeIds) result.include(nodeBounds(nodeId));
+    }
+    if (!result.valid) return false;
+    if (minimum) *minimum = result.minimum;
+    if (maximum) *maximum = result.maximum;
+    return true;
+}
+
 QVector3D ExplodeController::movedCentre(const QStringList& nodeIds) const
 {
     QVector3D sum;
