@@ -216,14 +216,24 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
     QVERIFY(metrics.value(QStringLiteral("previewTriangleCount")).toInteger() > 0);
     QVERIFY(metrics.value(QStringLiteral("refinedTriangleCount")).toInteger() > 0);
     QVERIFY(metrics.value(QStringLiteral("bodyCount")).toInt() > 0);
+    QVERIFY(worker.state() == QProcess::Running);
     // The allocator malloc goes to: a build linking mimalloc whose override did not take
     // (a DLL loaded too late, a static link keeping the system malloc) fails here.
+    const auto allocator = metrics.value(QStringLiteral("allocator")).toString();
 #ifdef LOUPE_EXPECT_WORKER_MIMALLOC
-    QCOMPARE(metrics.value(QStringLiteral("allocator")).toString(), QStringLiteral("mimalloc"));
+    // Except on a Windows machine where a module from outside Windows, such as an endpoint-security
+    // agent's, got into the worker ahead of mimalloc's redirect: no import order of the worker's
+    // overcomes that, so it says nothing about the build. CI's runners have no such module.
+    const auto blockedPrefix = QStringLiteral("system (mimalloc not in effect; loaded before it: ");
+    if (allocator.startsWith(blockedPrefix)) {
+        QSKIP(qPrintable(QStringLiteral("mimalloc's override is blocked on this machine by %1, which loads before the "
+                                        "worker's imports; the worker runs on the system allocator here")
+                             .arg(allocator.mid(blockedPrefix.size()).chopped(1))));
+    }
+    QCOMPARE(allocator, QStringLiteral("mimalloc"));
 #else
-    QCOMPARE(metrics.value(QStringLiteral("allocator")).toString(), QStringLiteral("system"));
+    QCOMPARE(allocator, QStringLiteral("system"));
 #endif
-    QVERIFY(worker.state() == QProcess::Running);
 }
 
 void WorkerProcessTest::validStepStreamsTriangulatedMesh()
