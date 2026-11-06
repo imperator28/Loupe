@@ -31,8 +31,6 @@ Item {
     property bool showCurrent: true
 
     readonly property color hoverColor: theme ? theme.accent : "transparent"
-    readonly property color pickColor: visualTheme ? visualTheme.selectionColor : "transparent"
-    readonly property color pickTextColor: visualTheme ? visualTheme.sectionLabel : "transparent"
     readonly property color haloColor: visualTheme ? visualTheme.markerBorder : "transparent"
 
     function project(point) {
@@ -56,6 +54,10 @@ Item {
             visible: root.showResult
             pinned: true
             numbered: false
+            draggable: true
+            lineColor: root.theme ? root.theme.measureColor(modelData.color) : "transparent"
+            tagOffset: modelData.offset !== undefined ? modelData.offset : Qt.point(0, 0)
+            onTagMoved: function(x, y) { if (root.measurement) root.measurement.setPinOffset(modelData.id, x, y) }
             title: modelData.title
             annotation: modelData.annotation
             edges: modelData.edges

@@ -2711,7 +2711,8 @@ Item {
         objectName: "measurementOverlay"
         anchors.fill: parent
         z: 4
-        enabled: false
+        // Only a pinned tag takes the pointer (to be dragged); everywhere else it passes to
+        // the view underneath, which has no handler of its own on this layer.
         theme: root.theme
         visualTheme: viewportVisualTheme
         view: view

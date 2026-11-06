@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Pinned measurements, laid out your way**: drag a pinned tag anywhere in the view; its
+  leader keeps pointing at what was measured as the view turns, and double-clicking puts it
+  back. Each pin takes a colour, in turn, and its swatch in the panel picks another (amber,
+  blue, teal, rose, violet, slate).
+- **Measurement tags are cards**: the theme's surface and text with an outline in the
+  result's colour, instead of white on brown, so they read in both themes.
+
 ## v0.1.6-beta.4
 
 A testing build that fixes in-app updates of a copy in `C:\Program Files` on Windows.

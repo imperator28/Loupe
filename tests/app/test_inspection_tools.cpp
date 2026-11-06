@@ -1,5 +1,6 @@
 #include <QtTest/QTest>
 #include <QJsonObject>
+#include <QPointF>
 #include <QtTest/QSignalSpy>
 #include <QtCore/qmath.h>
 #include <QFileInfo>
@@ -837,6 +838,14 @@ void InspectionToolsTest::boundsDrawTheirBoxAndPinnedResultsStay()
     QCOMPARE(controller.pinnedResults().size(), 2);
     QVERIFY(controller.pickedEntities().isEmpty()); // ready for the next one
     QCOMPARE(controller.pinnedResults().at(1).toMap().value(QStringLiteral("points")).toList().size(), 2);
+    // Pins take the colours in turn, and keep a colour chosen and where their tag was dragged.
+    QCOMPARE(controller.pinnedResults().at(0).toMap().value(QStringLiteral("color")).toString(), QStringLiteral("amber"));
+    QCOMPARE(controller.pinnedResults().at(1).toMap().value(QStringLiteral("color")).toString(), QStringLiteral("blue"));
+    const auto secondId = controller.pinnedResults().at(1).toMap().value(QStringLiteral("id")).toString();
+    controller.setPinColor(secondId, QStringLiteral("rose"));
+    controller.setPinOffset(secondId, 40, -25);
+    QCOMPARE(controller.pinnedResults().at(1).toMap().value(QStringLiteral("color")).toString(), QStringLiteral("rose"));
+    QCOMPARE(controller.pinnedResults().at(1).toMap().value(QStringLiteral("offset")).toPointF(), QPointF(40, -25));
     controller.unpin(controller.pinnedResults().front().toMap().value(QStringLiteral("id")).toString());
     QCOMPARE(controller.pinnedResults().size(), 1);
     QCOMPARE(controller.pinnedResults().front().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Distance"));

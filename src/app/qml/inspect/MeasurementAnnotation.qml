@@ -25,9 +25,18 @@ Item {
     // A pinned result names what it is on its tag ("Gap 5.000 mm").
     property string title: ""
     property bool pinned: false
-
-    readonly property color lineColor: visualTheme ? visualTheme.selectionColor : "transparent"
-    readonly property color tagTextColor: visualTheme ? visualTheme.sectionLabel : "transparent"
+    // The colour it is drawn in: lines, markers and the outline of its tags. The tag itself is
+    // a card in the theme's raised surface with the theme's text, so it reads on any colour.
+    property color lineColor: theme ? theme.measureColor("amber") : "transparent"
+    // Where its tag was dragged to, in pixels from where it sits by default, and whether it
+    // can be: pinned results can, so a review can lay them out clear of one another.
+    property point tagOffset: Qt.point(0, 0)
+    property bool draggable: false
+    signal tagMoved(real x, real y)
+    readonly property color tagTextColor: theme ? theme.foreground : "transparent"
+    readonly property color tagFill: theme ? theme.surface3 : "transparent"
+    // Text on a filled marker: the tag surface's colour, light on dark colours and the reverse.
+    readonly property color markerTextColor: theme ? theme.surface3 : "transparent"
     readonly property color haloColor: visualTheme ? visualTheme.markerBorder : "transparent"
     readonly property color halo: Qt.rgba(haloColor.r, haloColor.g, haloColor.b, 0.55)
     readonly property string kind: annotation && annotation.kind ? annotation.kind : ""
@@ -44,6 +53,31 @@ Item {
             result.push(Qt.point(screen.x, screen.y))
         }
         return result
+    }
+
+    // Drags a pinned result's tag: it takes the press itself, so the view underneath (which
+    // keeps every drag it starts) does not orbit instead. Double-click puts the tag back.
+    component TagDragArea: MouseArea {
+        property point pressedAt: Qt.point(0, 0)
+        anchors.fill: parent
+        enabled: root.draggable
+        acceptedButtons: Qt.LeftButton
+        hoverEnabled: true
+        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        onPressed: function(mouse) { pressedAt = mapToItem(root, mouse.x, mouse.y) }
+        onPositionChanged: function(mouse) {
+            if (!pressed) return
+            const at = mapToItem(root, mouse.x, mouse.y)
+            root.dragDelta = Qt.point(at.x - pressedAt.x, at.y - pressedAt.y)
+        }
+        onReleased: {
+            const x = root.tagOffset.x + root.dragDelta.x
+            const y = root.tagOffset.y + root.dragDelta.y
+            root.dragDelta = Qt.point(0, 0)
+            if (Math.abs(x - root.tagOffset.x) + Math.abs(y - root.tagOffset.y) > 0.5) root.tagMoved(x, y)
+        }
+        onCanceled: root.dragDelta = Qt.point(0, 0)
+        onDoubleClicked: root.tagMoved(0, 0)
     }
 
     // ---- Picked edges, bold ----
@@ -238,14 +272,16 @@ Item {
                 : Qt.point(-10000, -10000)
             objectName: "measurementBoxSize" + modelData.label
             visible: root.projector.onScreen(middle, 0)
-            x: Math.round(middle.x - width / 2)
-            y: Math.round(middle.y - height / 2)
+            x: Math.round(middle.x - width / 2 + root.liveOffset.x)
+            y: Math.round(middle.y - height / 2 + root.liveOffset.y)
             width: sizeRow.implicitWidth + 14
-            height: sizeRow.implicitHeight + 6
+            height: sizeRow.implicitHeight + 8
             radius: root.theme ? root.theme.radius2 : 0
-            color: root.lineColor
-            border.color: root.haloColor
-            border.width: 1
+            color: root.tagFill
+            border.color: root.lineColor
+            border.width: 1.5
+            // A pinned box's tags move together, as one annotation.
+            TagDragArea {}
             Row {
                 id: sizeRow
                 anchors.centerIn: parent
@@ -261,7 +297,7 @@ Item {
                         id: axisLetter
                         anchors.centerIn: parent
                         text: sizeTag.modelData.label
-                        color: root.haloColor
+                        color: root.markerTextColor
                         font.pixelSize: root.theme ? root.theme.fontCaption : 11
                         font.weight: Font.Bold
                     }
@@ -278,48 +314,92 @@ Item {
     }
 
     // ---- The value tag ----
+    // Dragged (pinned results), the tag follows the pointer and the offset is kept on release.
+    property point dragDelta: Qt.point(0, 0)
+    readonly property point liveOffset: Qt.point(tagOffset.x + dragDelta.x, tagOffset.y + dragDelta.y)
+    readonly property bool moved: Math.abs(liveOffset.x) + Math.abs(liveOffset.y) > 0.5
+
     Rectangle {
         id: valueTag
         objectName: "measurementValueTag"
-        readonly property bool onPoint: root.kind === "label" || root.kind === "angle"
         readonly property point anchorPoint: root.kind === "label" || root.kind === "angle" ? root.projector.project(root.annotation.at)
             : root.kind === "box" ? Qt.point(-10000, -10000)
             : Qt.point((root.fromScreen.x + root.toScreen.x) / 2, (root.fromScreen.y + root.toScreen.y) / 2)
+        // Where it sits before any drag: on a line or an arc, centred on it; on a point,
+        // above it, with a leader down to it.
+        readonly property point home: Qt.point(anchorPoint.x - width / 2,
+                                               root.kind === "label" ? anchorPoint.y - height - 10 : anchorPoint.y - height / 2)
         visible: root.kind.length > 0 && root.kind !== "box" && root.tagText.length > 0 && root.projector.onScreen(anchorPoint, 0)
-        // On a line or an arc, centred on it; on a point, above it with a leader.
-        x: Math.round(anchorPoint.x - width / 2)
-        y: Math.round(root.kind === "label" ? anchorPoint.y - height - 10 : anchorPoint.y - height / 2)
-        width: valueText.implicitWidth + 14
-        height: valueText.implicitHeight + 6
+        x: Math.round(home.x + root.liveOffset.x)
+        y: Math.round(home.y + root.liveOffset.y)
+        width: tagRow.implicitWidth + 16
+        height: tagRow.implicitHeight + 8
         radius: root.theme ? root.theme.radius2 : 0
-        color: root.lineColor
-        border.color: root.haloColor
-        border.width: 1
+        color: root.tagFill
+        border.color: root.lineColor
+        border.width: 1.5
 
-        Label {
-            id: valueText
+        Row {
+            id: tagRow
             anchors.centerIn: parent
-            text: root.tagText
-            color: root.tagTextColor
-            font.pixelSize: root.theme ? root.theme.fontSection : 12
-            font.weight: Font.DemiBold
-            font.features: { "tnum": 1 }
+            spacing: 6
+            // The result's colour, so a tag dragged clear of its lines still says which they are.
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 7
+                height: 7
+                radius: 3.5
+                color: root.lineColor
+            }
+            Label {
+                id: valueText
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tagText
+                color: root.tagTextColor
+                font.pixelSize: root.theme ? root.theme.fontSection : 12
+                font.weight: Font.DemiBold
+                font.features: { "tnum": 1 }
+            }
         }
+
+        TagDragArea {}
     }
-    // A tag on a point: the leader from it down to the point it is about.
+    // The leader from the tag to what it is about: down to a picked point, and to the line or
+    // arc once the tag has been dragged off it.
+    readonly property point leaderStart: {
+        const cx = valueTag.x + valueTag.width / 2
+        const cy = valueTag.y + valueTag.height / 2
+        const dx = valueTag.anchorPoint.x - cx
+        const dy = valueTag.anchorPoint.y - cy
+        // Where the line to the anchor leaves the tag's edge.
+        const sx = dx !== 0 ? (valueTag.width / 2) / Math.abs(dx) : Infinity
+        const sy = dy !== 0 ? (valueTag.height / 2) / Math.abs(dy) : Infinity
+        const t = Math.min(sx, sy, 1)
+        return Qt.point(cx + dx * t, cy + dy * t)
+    }
     Shape {
         anchors.fill: parent
-        visible: valueTag.visible && root.kind === "label"
+        visible: valueTag.visible && (root.kind === "label" || root.moved)
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: root.halo
+            strokeWidth: 3
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            PathMove { x: root.leaderStart.x; y: root.leaderStart.y }
+            PathLine { x: valueTag.anchorPoint.x; y: valueTag.anchorPoint.y }
+        }
         ShapePath {
             strokeColor: root.lineColor
             strokeWidth: 1.25
             fillColor: "transparent"
-            PathMove { x: valueTag.anchorPoint.x; y: valueTag.y + valueTag.height }
+            capStyle: ShapePath.RoundCap
+            PathMove { x: root.leaderStart.x; y: root.leaderStart.y }
             PathLine { x: valueTag.anchorPoint.x; y: valueTag.anchorPoint.y }
         }
     }
     Rectangle {
-        visible: valueTag.visible && root.kind === "label"
+        visible: valueTag.visible && (root.kind === "label" || root.moved)
         x: Math.round(valueTag.anchorPoint.x - 3)
         y: Math.round(valueTag.anchorPoint.y - 3)
         width: 6
@@ -353,7 +433,7 @@ Item {
                 anchors.centerIn: parent
                 visible: root.numbered
                 text: index + 1
-                color: root.tagTextColor
+                color: root.markerTextColor
                 font.pixelSize: root.theme ? root.theme.fontCaption : 11
                 font.weight: Font.Bold
                 font.features: { "tnum": 1 }
