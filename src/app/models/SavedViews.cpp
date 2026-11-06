@@ -51,7 +51,8 @@ void SavedViews::setDocument(const QString& documentPath)
             entry.summary = object.value(QStringLiteral("summary")).toString();
             entry.created = static_cast<qint64>(object.value(QStringLiteral("created")).toDouble());
             entry.data = object.value(QStringLiteral("data")).toObject().toVariantMap();
-            if (!entry.id.isEmpty() && (entry.kind == QStringLiteral("display") || entry.kind == QStringLiteral("camera")))
+            if (!entry.id.isEmpty() && (entry.kind == QStringLiteral("display") || entry.kind == QStringLiteral("camera")
+                                        || entry.kind == QStringLiteral("layout")))
                 entries_.append(entry);
         }
     }
@@ -97,6 +98,17 @@ void SavedViews::rename(const QString& id, const QString& name)
     emit changed();
 }
 
+bool SavedViews::replace(const QString& id, const QString& summary, const QVariantMap& data)
+{
+    auto* entry = find(id);
+    if (!entry || data.isEmpty()) return false;
+    entry->summary = summary;
+    entry->data = data;
+    persist();
+    emit changed();
+    return true;
+}
+
 void SavedViews::remove(const QString& id)
 {
     for (qsizetype index = 0; index < entries_.size(); ++index) {
@@ -111,7 +123,8 @@ void SavedViews::remove(const QString& id)
 
 QString SavedViews::nextName(const QString& kind) const
 {
-    const auto stem = kind == QStringLiteral("camera") ? tr("View %1") : tr("Display %1");
+    const auto stem = kind == QStringLiteral("camera") ? tr("View %1")
+                    : kind == QStringLiteral("layout") ? tr("Layout %1") : tr("Display %1");
     for (int number = 1;; ++number) {
         const auto candidate = stem.arg(number);
         const bool taken = std::any_of(entries_.cbegin(), entries_.cend(),

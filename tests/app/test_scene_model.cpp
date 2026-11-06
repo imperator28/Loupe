@@ -1,6 +1,7 @@
 #include <QtTest/QTest>
 
 #include <QGuiApplication>
+#include <QVector2D>
 #include <QVector3D>
 
 #include <cmath>
@@ -8,6 +9,7 @@
 #include "app/render/SceneModel.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/SectionMeshBuilder.h"
+#include "app/tools/MeasureGeometry.h"
 #include "protocol/GeometryPayload.h"
 
 class SceneModelTest final : public QObject
@@ -30,7 +32,14 @@ private slots:
     void meshGeometryBuildsSectionOverlayWithoutBodyFaces();
     void sectionOverlayBuildsFilledContoursWithRoundedJoins();
     void sectionOverlaySkipsAPartThePlaneMisses();
+    void sectionCapLeavesATubesBoreOpen();
+    void sectionCapFillsAPlateAroundManyHoles();
+    void sectionCapFillsAnIslandInsideABore();
+    void sectionCapClosesAcrossASmallSeamGap();
+    void sectionCapCompletesAContourWithLongStraightRuns();
+    void sectionOverlayCapsAPartSplitAcrossColourSegments();
     void topologyRangesResolveAndCopyCompleteEntities();
+    void measurementEntitiesCarryShapeAndSnapToVerticesAndCentres();
     void faceBoundaryExcludesInternalTessellationEdges();
     void faceFrameDistinguishesAFlatFaceFromACurvedOne();
     void faceViewLooksAlongAPlaneNormalOrACylinderAxis();
@@ -264,6 +273,240 @@ void SceneModelTest::sectionOverlaySkipsAPartThePlaneMisses()
     QVERIFY(!overlay.sectionBusy());
     QCOMPARE(overlay.triangleCount(), 0);
     QCOMPARE(overlay.sectionCapTriangleCount(), 0);
+}
+
+namespace {
+
+using Ring = QVector<QVector2D>;
+
+// The walls of a prism standing on z = -1..1, each wall its own quad with its own vertices,
+// as the worker sends a part: one face's triangulation does not share nodes with the next.
+QSharedPointer<loupe::app::render::SectionSourceData> prismWalls(const QVector<Ring>& rings,
+                                                                 const QVector2D& seamShift = {})
+{
+    auto source = QSharedPointer<loupe::app::render::SectionSourceData>::create();
+    for (const auto& ring : rings) {
+        for (qsizetype index = 0; index < ring.size(); ++index) {
+            auto first = ring.at(index);
+            auto second = ring.at((index + 1) % ring.size());
+            // The first wall of the first ring is moved a hair, as an unwelded seam would be.
+            if (index == 0 && &ring == &rings.front()) {
+                first += seamShift;
+                second += seamShift;
+            }
+            const auto base = static_cast<quint32>(source->vertices.size() / 3);
+            for (const auto& corner : {QVector3D(first, -1.0F), QVector3D(second, -1.0F),
+                                       QVector3D(second, 1.0F), QVector3D(first, 1.0F)}) {
+                source->vertices.append(corner.x());
+                source->vertices.append(corner.y());
+                source->vertices.append(corner.z());
+            }
+            source->indices.append({base, base + 1, base + 2, base, base + 2, base + 3});
+        }
+    }
+    return source;
+}
+
+Ring square(const float half, const QVector2D& centre = {})
+{
+    return {centre + QVector2D(-half, -half), centre + QVector2D(half, -half),
+            centre + QVector2D(half, half), centre + QVector2D(-half, half)};
+}
+
+Ring circle(const float radius, const int sides, const QVector2D& centre = {})
+{
+    Ring ring;
+    for (int index = 0; index < sides; ++index) {
+        const auto angle = 2.0 * std::numbers::pi * index / sides;
+        ring.append(centre + QVector2D(static_cast<float>(std::cos(angle) * radius),
+                                       static_cast<float>(std::sin(angle) * radius)));
+    }
+    return ring;
+}
+
+// The area the cap covers: its fill triangles, each drawn from both sides.
+double capArea(const loupe::app::render::SectionBuildResult& result)
+{
+    double area{};
+    for (qsizetype index = 0; index + 2 < result.fillIndexCount; index += 3) {
+        const auto point = [&result](const quint32 vertex) {
+            const auto offset = static_cast<qsizetype>(vertex) * 3;
+            return QVector3D(result.vertices.at(offset), result.vertices.at(offset + 1), result.vertices.at(offset + 2));
+        };
+        const auto a = point(result.indices.at(index));
+        const auto b = point(result.indices.at(index + 1));
+        const auto c = point(result.indices.at(index + 2));
+        area += 0.5 * static_cast<double>(QVector3D::crossProduct(b - a, c - a).length());
+    }
+    return area / 2.0;
+}
+
+double capAreaFor(const QSharedPointer<loupe::app::render::SectionSourceData>& source)
+{
+    loupe::app::render::SectionBuildRequest request;
+    request.source = source;
+    request.normal = {0.0F, 0.0F, 1.0F};
+    request.offset = 0.0;
+    request.capEnabled = true;
+    return capArea(loupe::app::render::buildSectionOverlay(request));
+}
+
+double polygonArea(const Ring& ring)
+{
+    double area{};
+    for (qsizetype index = 0; index < ring.size(); ++index) {
+        const auto& a = ring.at(index);
+        const auto& b = ring.at((index + 1) % ring.size());
+        area += static_cast<double>(a.x()) * b.y() - static_cast<double>(b.x()) * a.y();
+    }
+    return std::abs(area) * 0.5;
+}
+
+} // namespace
+
+void SceneModelTest::sectionCapLeavesATubesBoreOpen()
+{
+    // A square tube: the cut is a ring, and its bore must stay open. Filling every contour
+    // on its own covered the bore over.
+    QVERIFY(std::abs(capAreaFor(prismWalls({square(2.0F), square(1.0F)})) - 12.0) < 1.0e-3);
+    // A round one, with the bore's contour wound the same way as the outside.
+    const auto outer = circle(5.0F, 96);
+    const auto inner = circle(3.0F, 64);
+    const auto expected = polygonArea(outer) - polygonArea(inner);
+    QVERIFY(std::abs(capAreaFor(prismWalls({outer, inner})) - expected) < expected * 1.0e-4);
+}
+
+void SceneModelTest::sectionCapFillsAPlateAroundManyHoles()
+{
+    QVector<Ring> rings{square(10.0F)};
+    double holes{};
+    for (int row = -2; row <= 2; ++row) {
+        for (int column = -2; column <= 2; ++column) {
+            rings.append(circle(1.0F, 24, QVector2D(column * 3.5F, row * 3.5F)));
+            holes += polygonArea(rings.constLast());
+        }
+    }
+    const auto expected = 400.0 - holes;
+    QVERIFY2(std::abs(capAreaFor(prismWalls(rings)) - expected) < expected * 1.0e-4,
+             qPrintable(QString::number(capAreaFor(prismWalls(rings)))));
+}
+
+void SceneModelTest::sectionCapFillsAnIslandInsideABore()
+{
+    // Wall, bore, and a pin standing in the bore: material, hole, material again.
+    const auto expected = 64.0 - 16.0 + 4.0;
+    QVERIFY(std::abs(capAreaFor(prismWalls({square(4.0F), square(2.0F), square(1.0F)})) - expected) < 1.0e-3);
+}
+
+void SceneModelTest::sectionCapClosesAcrossASmallSeamGap()
+{
+    // One wall a few microns off its neighbours: the cut's chain does not meet itself, and
+    // an open chain was left unfilled -- the part showed hollow.
+    const auto area = capAreaFor(prismWalls({square(10.0F)}, QVector2D(0.0F, 0.004F)));
+    QVERIFY2(std::abs(area - 400.0) < 0.5, qPrintable(QString::number(area)));
+}
+
+void SceneModelTest::sectionCapCompletesAContourWithLongStraightRuns()
+{
+    // An L with every side split into many collinear points, as a mesher splits a long
+    // edge: clipping stalled on the collinear points and gave up with the cap half-built.
+    Ring ring;
+    const auto run = [&ring](const QVector2D& from, const QVector2D& to) {
+        for (int step = 0; step < 40; ++step) ring.append(from + (to - from) * (static_cast<float>(step) / 40.0F));
+    };
+    run({0, 0}, {6, 0});
+    run({6, 0}, {6, 2});
+    run({6, 2}, {2, 2});
+    run({2, 2}, {2, 6});
+    run({2, 6}, {0, 6});
+    run({0, 6}, {0, 0});
+    const auto area = capAreaFor(prismWalls({ring}));
+    QVERIFY2(std::abs(area - 20.0) < 1.0e-3, qPrintable(QString::number(area)));
+}
+
+void SceneModelTest::sectionOverlayCapsAPartSplitAcrossColourSegments()
+{
+    // A part whose faces are not all one colour arrives as several meshes, one per colour.
+    // Each alone is an open shell whose cut cannot close; the part's cap is built from all.
+    loupe::app::render::MeshGeometry sides;
+    QVERIFY(sides.appendWorkerMesh(QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,1,5,0,5,4,1,2,6,1,6,5]}")));
+    loupe::app::render::MeshGeometry otherSides;
+    QVERIFY(otherSides.appendWorkerMesh(QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,2,3,7,2,7,6,3,0,4,3,4,7]}")));
+
+    loupe::app::render::MeshGeometry single;
+    QVERIFY(single.copySectionOverlayFrom(&sides));
+    single.configureSection(true, 0.0, 0.0, 1.0, 0.0, false, true, false, true, true, false, 0.1);
+    QTRY_VERIFY_WITH_TIMEOUT(!single.sectionBusy(), 3000);
+    QCOMPARE(single.sectionCapTriangleCount(), 0);
+
+    loupe::app::render::MeshGeometry overlay;
+    QVERIFY(overlay.copySectionOverlayFromSources({QVariant::fromValue<QObject*>(&sides),
+                                                   QVariant::fromValue<QObject*>(&otherSides)}));
+    overlay.configureSection(true, 0.0, 0.0, 1.0, 0.0, false, true, false, true, true, false, 0.1);
+    QTRY_VERIFY_WITH_TIMEOUT(!overlay.sectionBusy(), 3000);
+    QVERIFY(overlay.sectionCapTriangleCount() >= 2);
+}
+
+void SceneModelTest::measurementEntitiesCarryShapeAndSnapToVerticesAndCentres()
+{
+    using loupe::app::tools::MeasureEntity;
+    // A flat square face, placed 10 up in the scene.
+    loupe::protocol::MeshPayload meshPayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"),
+        QStringLiteral("segment"), QStringLiteral("#ffffff"), 1,
+        {0, 0, 0, 2, 0, 0, 2, 2, 0, 0, 2, 0},
+        {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, {0, 1, 2, 0, 2, 3},
+        {{7, loupe::protocol::TopologyKind::Face, 0, 6, 4.0F, 0.0F}}};
+    loupe::app::render::MeshGeometry mesh;
+    QVERIFY(mesh.appendWorkerMesh(loupe::protocol::encodeGeometry(meshPayload)));
+    QMatrix4x4 placed;
+    placed.translate(0, 0, 10);
+    const auto face = mesh.faceEntity(7, placed, {1, 1, 10}, {0, 0, 1}, true).value<MeasureEntity>();
+    QCOMPARE(face.kind, MeasureEntity::Kind::Face);
+    QVERIFY(face.planar);
+    QCOMPARE(face.areaMm2, 4.0);
+    QVERIFY((face.planePoint - QVector3D(1, 1, 10)).length() < 1e-5F);
+    QVERIFY((face.planeNormal - QVector3D(0, 0, 1)).length() < 1e-5F);
+    QCOMPARE(face.triangles.size(), 6);
+    QVERIFY(mesh.faceEntity(7, placed, {}, {}, false).value<MeasureEntity>().triangles.isEmpty());
+
+    // A straight edge from (0,0,0) to (4,0,0) in two segments, and a circle of radius 1 about (10,0,0).
+    QVector<float> vertices{0, 0, 0, 2, 0, 0, 4, 0, 0};
+    QVector<quint32> indices{0, 1, 1, 2};
+    const auto circleStart = static_cast<quint32>(vertices.size() / 3);
+    for (int step = 0; step < 32; ++step) {
+        const auto angle = 2.0 * std::numbers::pi * step / 32;
+        vertices.append({static_cast<float>(10 + std::cos(angle)), static_cast<float>(std::sin(angle)), 0.0F});
+    }
+    for (quint32 step = 0; step < 32; ++step) indices.append({circleStart + step, circleStart + (step + 1) % 32});
+    loupe::protocol::EdgePayload edgePayload{1, 1, QStringLiteral("definition"), QStringLiteral("node"), 1, vertices, indices,
+        {{3, loupe::protocol::TopologyKind::Edge, 0, 4, 4.0F, 0.0F},
+         {5, loupe::protocol::TopologyKind::Edge, 4, 64, static_cast<float>(2 * std::numbers::pi), 1.0F}}};
+    loupe::app::render::CadEdgeGeometry edges;
+    QVERIFY(edges.replaceWorkerEdges(loupe::protocol::encodeGeometry(edgePayload)));
+    const QMatrix4x4 identity;
+    const auto line = edges.edgeEntity(3, identity, {3, 1, 0}).value<MeasureEntity>();
+    QVERIFY(line.linear);
+    QCOMPARE(line.polyline.size(), 3);
+    QVERIFY((line.point - QVector3D(3, 0, 0)).length() < 1e-5F);
+    const auto ring = edges.edgeEntity(5, identity, {}).value<MeasureEntity>();
+    QVERIFY(ring.circular);
+    QVERIFY((ring.centre - QVector3D(10, 0, 0)).length() < 1e-4F);
+
+    // Near the line's end: its vertex. Along it: a point on it. Near the circle: its centre.
+    const auto vertex = edges.snapPointAt(3.95, 0.02, 0, 0.1, 0.1, identity).value<MeasureEntity>();
+    QCOMPARE(vertex.kind, MeasureEntity::Kind::Vertex);
+    QVERIFY((vertex.point - QVector3D(4, 0, 0)).length() < 1e-5F);
+    const auto onEdge = edges.snapPointAt(1.3, 0.02, 0, 0.1, 0.1, identity).value<MeasureEntity>();
+    QCOMPARE(onEdge.kind, MeasureEntity::Kind::EdgePoint);
+    QVERIFY((onEdge.point - QVector3D(1.3F, 0, 0)).length() < 1e-5F);
+    const auto centre = edges.snapPointAt(10, 1.02, 0, 0.1, 0.01, identity).value<MeasureEntity>();
+    QCOMPARE(centre.kind, MeasureEntity::Kind::CircleCentre);
+    QVERIFY((centre.point - QVector3D(10, 0, 0)).length() < 1e-4F);
+    QVERIFY(!edges.snapPointAt(20, 20, 0, 0.1, 0.1, identity).isValid());
 }
 
 void SceneModelTest::topologyRangesResolveAndCopyCompleteEntities()

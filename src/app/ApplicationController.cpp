@@ -115,6 +115,19 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     workerEnvironment.remove(QStringLiteral("XPC_FLAGS"));
     workerProcess_.setProcessEnvironment(workerEnvironment);
     workerProcess_.setProcessChannelMode(QProcess::ForwardedChannels);
+    // A layout set aside when an edit starts over from the assembly is kept, unless it is
+    // one already saved, so starting over never loses a layout.
+    // Volume and bounds with nothing selected are of the whole model, whose parts may have
+    // finished arriving since the selection last changed: measure again on entering them.
+    connect(&measurementController_, &tools::MeasurementController::modeChanged, this,
+            [this] { applyActiveGeometryToMeasurement(); });
+    connect(&explodeController_, &tools::ExplodeController::layoutSetAside, this,
+            [this](const QVariantMap& snapshot, const QString& summary) {
+        for (const auto& value : savedViews_.explodeLayouts()) {
+            if (snapshot == savedViews_.data(value.toMap().value(QStringLiteral("id")).toString())) return;
+        }
+        savedViews_.add(QStringLiteral("layout"), {}, tr("Set aside · %1").arg(summary), snapshot);
+    });
     connect(&workerProcess_, &QProcess::started, this, [this] {
         setImportProgress(tr("Starting STEP importer"), 0.005);
         connectWorker();
@@ -616,6 +629,8 @@ void ApplicationController::openFile(const QUrl& file)
     visibilityModel_.setNodes({});
     opacityByNode_.clear();
     transparentWithoutEdges_.clear();
+    unselectableNodes_.clear();
+    measurementController_.clearPinned();
     materialByNode_.clear();
     appearanceByNode_.clear();
     importedColorByNode_.clear();
@@ -848,6 +863,29 @@ void ApplicationController::setSelectionTransparentEdges(const bool shown)
     emit visibilityChanged();
 }
 
+bool ApplicationController::isNodeSelectable(const QString& nodeId) const
+{
+    return !unselectableNodes_.contains(nodeId);
+}
+
+bool ApplicationController::selectionSelectable() const
+{
+    const auto selected = geometryNodesForSelection();
+    return std::ranges::none_of(selected, [this](const QString& nodeId) { return unselectableNodes_.contains(nodeId); });
+}
+
+void ApplicationController::setSelectionSelectable(const bool selectable)
+{
+    const auto selected = geometryNodesForSelection();
+    if (selected.isEmpty()) return;
+    for (const auto& nodeId : selected) {
+        if (selectable) unselectableNodes_.remove(nodeId);
+        else unselectableNodes_.insert(nodeId);
+    }
+    ++visibilityRevision_;
+    emit visibilityChanged();
+}
+
 void ApplicationController::markOpenMilestone(qint64& milestone)
 {
     if (!openClock_.isValid() || milestone >= 0) return;
@@ -915,6 +953,34 @@ QString ApplicationController::saveDisplayState(const QString& name)
                             {QStringLiteral("opacity"), opacity.toVariantMap()},
                             {QStringLiteral("withoutEdges"), withoutEdges.toVariantList()},
                             {QStringLiteral("presentation"), static_cast<int>(viewerPresentation_)}});
+}
+
+QString ApplicationController::saveExplodeLayout(const QString& name)
+{
+    if (!explodeController_.exploded()) return {};
+    return savedViews_.add(QStringLiteral("layout"), name, explodeController_.layoutSummary(), explodeController_.layoutSnapshot());
+}
+
+bool ApplicationController::applyExplodeLayout(const QString& id)
+{
+    const auto snapshot = savedViews_.data(id);
+    return !snapshot.isEmpty() && explodeController_.restoreLayout(snapshot);
+}
+
+bool ApplicationController::updateExplodeLayout(const QString& id)
+{
+    if (!explodeController_.exploded()) return false;
+    return savedViews_.replace(id, explodeController_.layoutSummary(), explodeController_.layoutSnapshot());
+}
+
+QString ApplicationController::currentExplodeLayoutId() const
+{
+    if (!explodeController_.exploded() || explodeController_.showingAssembly()) return {};
+    for (const auto& value : savedViews_.explodeLayouts()) {
+        const auto id = value.toMap().value(QStringLiteral("id")).toString();
+        if (explodeController_.layoutMatches(savedViews_.data(id))) return id;
+    }
+    return {};
 }
 
 bool ApplicationController::applyDisplayState(const QString& id)
@@ -1692,14 +1758,39 @@ bool ApplicationController::saveAppearanceOverride(const cache::AppearanceOverri
 
 void ApplicationController::applyActiveGeometryToMeasurement()
 {
-    const auto it = geometryByNode_.constFind(activeNodeId_);
-    if (it == geometryByNode_.cend()) {
+    // Volume and bounds are of the selection -- a part, a sub-assembly, several of either --
+    // or, with nothing selected, of the whole model.
+    auto parts = geometryNodesForSelection();
+    const auto wholeModel = parts.isEmpty();
+    if (wholeModel) parts = geometryByNode_.keys();
+    parts.erase(std::remove_if(parts.begin(), parts.end(), [this](const QString& nodeId) { return !geometryByNode_.contains(nodeId); }),
+                parts.end());
+    if (parts.isEmpty()) {
         measurementController_.clearSelectedGeometry();
         return;
     }
-    const auto& geometry = *it;
-    measurementController_.setSelectedGeometry(geometry.surfaceAreaMm2, geometry.volumeMm3, geometry.boundsMm);
-    measurementController_.setSelectedTopology(geometry.longestEdgeMm, geometry.circularRadiusMm, geometry.planarFaceCount);
+    double area{};
+    double volume{};
+    for (const auto& nodeId : parts) {
+        const auto& geometry = geometryByNode_[nodeId];
+        area += geometry.surfaceAreaMm2;
+        volume += geometry.volumeMm3;
+    }
+    QVector3D minimum;
+    QVector3D maximum;
+    const auto hasBox = explodeController_.assembledBox(wholeModel ? QStringList{} : parts, &minimum, &maximum);
+    // One part keeps the size the worker measured on its CAD shape; several are boxed together
+    // where they are drawn, which only the assembled part boxes know.
+    const auto& first = geometryByNode_[parts.front()];
+    const auto size = parts.size() == 1 || !hasBox ? first.boundsMm : maximum - minimum;
+    measurementController_.setSelectedGeometry(area, volume, size);
+    if (parts.size() == 1)
+        measurementController_.setSelectedTopology(first.longestEdgeMm, first.circularRadiusMm, first.planarFaceCount);
+    const auto scope = wholeModel ? tr("Whole model")
+                     : selectedNodeIds_.size() == 1 ? displayNameByNode_.value(selectedNodeIds_.front(), tr("Component"))
+                                                    : tr("%1 selected").arg(selectedNodeIds_.size());
+    if (hasBox) measurementController_.setSelectionBox(minimum, maximum, scope, static_cast<int>(parts.size()));
+    else measurementController_.setSelectionBox({1, 1, 1}, {0, 0, 0}, scope, static_cast<int>(parts.size()));
 }
 
 double ApplicationController::activeSurfaceAreaMm2() const
@@ -2081,6 +2172,18 @@ void ApplicationController::acceptViewPick(const QString& nodeId, const double x
     measurementController_.recordPick({static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)},
                                       {static_cast<float>(normalX), static_cast<float>(normalY), static_cast<float>(normalZ)},
                                       displayNameByNode_.value(nodeId, tr("Component")), tr("Surface point"));
+}
+
+bool ApplicationController::acceptMeasureEntity(const QString& nodeId, const QVariant& entity, const bool additive)
+{
+    if (nodeId.isEmpty() || !entity.canConvert<tools::MeasureEntity>()) return false;
+    auto pick = entity.value<tools::MeasureEntity>();
+    pick.nodeId = nodeId;
+    pick.nodeLabel = displayNameByNode_.value(nodeId, tr("Component"));
+    // As every pick does: a flat face offers its plane to the section tool.
+    if (pick.kind == tools::MeasureEntity::Kind::Face && pick.planar)
+        sectionController_.setCandidatePlane(pick.planeNormal, pick.planePoint);
+    return measurementController_.acceptEntity(pick, additive);
 }
 
 bool ApplicationController::acceptTopologyPick(const QString& nodeId, const QString& entityKind,

@@ -1,6 +1,7 @@
 #include "app/render/MeshGeometry.h"
 
 #include "app/render/SectionMeshBuilder.h"
+#include "app/tools/MeasureGeometry.h"
 
 #include "protocol/GeometryPayload.h"
 #include "protocol/ProtocolTypes.h"
@@ -364,6 +365,42 @@ QVariantMap MeshGeometry::faceViewFor(const quint32 topologyId) const
     return view;
 }
 
+QVariant MeshGeometry::faceEntity(const quint32 topologyId, const QMatrix4x4& toScene, const QVector3D& scenePoint,
+                                  const QVector3D& sceneNormal, const bool withTriangles) const
+{
+    const auto range = std::find_if(sourceTopology_.cbegin(), sourceTopology_.cend(), [topologyId](const auto& value) {
+        return value.topologyId == topologyId && value.kind == protocol::TopologyKind::Face;
+    });
+    if (range == sourceTopology_.cend()) return {};
+    tools::MeasureEntity face;
+    face.kind = tools::MeasureEntity::Kind::Face;
+    face.topologyId = topologyId;
+    face.point = scenePoint;
+    face.normal = sceneNormal;
+    face.areaMm2 = range->measureMm;
+    face.radiusMm = range->radiusMm;
+    const auto end = static_cast<qsizetype>(range->firstIndex + range->indexCount);
+    face.triangles.reserve(end - static_cast<qsizetype>(range->firstIndex));
+    for (auto index = static_cast<qsizetype>(range->firstIndex); index < end; ++index) {
+        const auto offset = static_cast<qsizetype>(sourceIndexData_.at(index)) * 3;
+        face.triangles.append({sourceVertexData_.at(offset), sourceVertexData_.at(offset + 1), sourceVertexData_.at(offset + 2)});
+    }
+    // Shape in the part's own frame, then placed: a rigid placement keeps flat flat.
+    tools::measure::describeFace(&face);
+    if (face.planar) {
+        face.planeNormal = toScene.mapVector(face.planeNormal).normalized();
+        // An outward normal: the side the pick was made from.
+        if (!sceneNormal.isNull() && QVector3D::dotProduct(face.planeNormal, sceneNormal) < 0.0F) face.planeNormal = -face.planeNormal;
+    }
+    face.planePoint = toScene.map(face.planePoint);
+    if (withTriangles) {
+        for (auto& point : face.triangles) point = toScene.map(point);
+    } else {
+        face.triangles.clear();
+    }
+    return QVariant::fromValue(face);
+}
+
 bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
 {
     const auto* sourceGeometry = qobject_cast<MeshGeometry*>(source);
@@ -398,11 +435,30 @@ bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
 
 bool MeshGeometry::copySectionOverlayFrom(QObject* source)
 {
-    const auto* sourceGeometry = qobject_cast<MeshGeometry*>(source);
-    if (!sourceGeometry) return false;
+    return copySectionOverlayFromSources({QVariant::fromValue(source)});
+}
+
+bool MeshGeometry::copySectionOverlayFromSources(const QVariantList& sources)
+{
+    QVector<const MeshGeometry*> geometries;
+    for (const auto& value : sources) {
+        if (const auto* geometry = qobject_cast<const MeshGeometry*>(value.value<QObject*>())) geometries.append(geometry);
+    }
+    if (geometries.isEmpty()) return false;
     auto sectionSource = QSharedPointer<SectionSourceData>::create();
-    sectionSource->vertices = sourceGeometry->sourceVertexData_;
-    sectionSource->indices = sourceGeometry->sourceIndexData_;
+    qsizetype vertexTotal{};
+    qsizetype indexTotal{};
+    for (const auto* geometry : std::as_const(geometries)) {
+        vertexTotal += geometry->sourceVertexData_.size();
+        indexTotal += geometry->sourceIndexData_.size();
+    }
+    sectionSource->vertices.reserve(vertexTotal);
+    sectionSource->indices.reserve(indexTotal);
+    for (const auto* geometry : std::as_const(geometries)) {
+        const auto offset = static_cast<quint32>(sectionSource->vertices.size() / 3);
+        sectionSource->vertices.append(geometry->sourceVertexData_);
+        for (const auto index : geometry->sourceIndexData_) sectionSource->indices.append(offset + index);
+    }
     QVector3D minimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
     QVector3D maximum(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest());
     const auto& vertices = sectionSource->vertices;

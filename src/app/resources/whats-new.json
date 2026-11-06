@@ -5,6 +5,21 @@
       "version": "0.1.6",
       "items": [
         {
+          "icon": "measure",
+          "title": "Measure what you mean",
+          "body": "See what a click takes before you click, the gap between faces, angles drawn as arcs, and pinned results that stay in view."
+        },
+        {
+          "icon": "section",
+          "title": "Solid sections",
+          "body": "Cut parts show filled, with their holes open, even when their faces are different colours."
+        },
+        {
+          "icon": "explode",
+          "title": "Saved exploded layouts",
+          "body": "Keep a spread or a hinge turned open, and come back to it in one click."
+        },
+        {
           "icon": "fit",
           "title": "Opens faster",
           "body": "Large assemblies open in about a third less time, measuring each part once and meshing on every core."

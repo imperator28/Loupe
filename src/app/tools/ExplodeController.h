@@ -59,6 +59,13 @@ public:
     Q_INVOKABLE [[nodiscard]] QString parentOf(const QString& nodeId) const;
     // The centre of the node's parts as assembled.
     Q_INVOKABLE [[nodiscard]] QVector3D assembledCentre(const QString& nodeId) const;
+    // Where these nodes' own centres are now: each node's assembled centre carried by its
+    // move, averaged. A point fixed to the parts, so turning them about it leaves it where it
+    // is -- unlike the centre of their bounding box, which shifts as they turn.
+    Q_INVOKABLE [[nodiscard]] QVector3D movedCentre(const QStringList& nodeIds) const;
+    // The box around these nodes' parts where the file puts them (every part for none); false
+    // when none of them has been drawn yet.
+    [[nodiscard]] bool assembledBox(const QStringList& nodeIds, QVector3D* minimum, QVector3D* maximum) const;
     // {valid, minimum, maximum} of these nodes' parts as displayed; every part for none.
     Q_INVOKABLE [[nodiscard]] QVariantMap displayedBounds(const QStringList& nodeIds) const;
     // How far the node's centre has moved, and its rotation as Euler angles (degrees).
@@ -101,6 +108,19 @@ public:
     Q_INVOKABLE void setAngles(const QString& nodeId, const QVector3D& degrees);
     Q_INVOKABLE void resetNode(const QString& nodeId);
     Q_INVOKABLE void resetAll();
+
+    // Saved layouts: the layout as data to keep ({transforms: {node: 16 numbers, row-major},
+    // autoFactors: {scope: factor}}), and back. Restoring is one step to undo, and leaves the
+    // view on the assembly (blend 0) so the viewport can ease the parts out to it. Nodes the
+    // document does not have are skipped; false when nothing in the snapshot applies.
+    Q_INVOKABLE [[nodiscard]] QVariantMap layoutSnapshot() const;
+    Q_INVOKABLE bool restoreLayout(const QVariantMap& snapshot);
+    // Whether the layout is the one in `snapshot` (to a hair).
+    Q_INVOKABLE [[nodiscard]] bool layoutMatches(const QVariantMap& snapshot) const;
+    // "3 parts moved · 2 turned": what a layout holds, in a few words.
+    Q_INVOKABLE [[nodiscard]] QString layoutSummary() const;
+    // Whether the view is on the assembly with a layout kept aside (Assembled, not reset).
+    [[nodiscard]] bool showingAssembly() const noexcept { return exploded() && blend_ < 0.5; }
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
 
@@ -127,6 +147,10 @@ signals:
     void interactionChanged();
     void historyChanged();
     void settingsChanged();
+    // An edit was begun on the assembly while a layout was kept aside: the edit starts from
+    // where the file puts the parts, and the kept layout is handed over to be saved, so
+    // nothing is lost. Undo also brings it back.
+    void layoutSetAside(const QVariantMap& snapshot, const QString& summary);
 
 private:
     struct Bounds {
@@ -153,7 +177,12 @@ private:
     void setPlacement(const QString& nodeId, const QMatrix4x4& placement);
     void setOwnTransform(const QString& nodeId, const QMatrix4x4& transform);
     void invalidate();
-    void showLayoutForEditing();
+    enum class EditFrom { Layout, Assembly };
+    // An edit is made to what is on screen. On the assembly with a layout kept aside, an edit
+    // from the assembly (a drag, a spread, a typed move) starts a new layout and sets the
+    // kept one aside; anything else brings the kept layout back first.
+    void showLayoutForEditing(EditFrom from = EditFrom::Layout);
+    [[nodiscard]] static QVariantMap snapshotOf(const State& state);
     void announce(const QStringList& partIds);
     void announceStateChange(const State& before);
     void pushUndo(const State& before);

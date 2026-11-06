@@ -1,5 +1,57 @@
 # Changelog
 
+## v0.1.6-beta.3
+
+A testing build of the reworked Measure tool, filled section caps, and saved exploded
+layouts. Published as a pre-release; everything in v0.1.6-beta.2 is included.
+
+### New
+
+- **Pin measurements to the view**: Pin keeps a result drawn where it was measured, its
+  leader on the geometry as the view turns, while you measure the next. Any number, of
+  any kind, for a review or a capture; unpin one or all from the panel.
+- **Angle shows what it is between**: an arc from one face or edge to the other, with a
+  leg along each, and its value on the arc. It is the angle the two open at, so a V-groove
+  reads as its opening, with the supplement alongside.
+- **Edges and faces add up**: in Edge and Area, Shift or Ctrl/⌘-click more to total them;
+  the same one again takes it back out. Picked edges are drawn bold, so it is clear which
+  edge is measured.
+- **Volume and bounds of anything**: of the selection (a part, a sub-assembly, several),
+  or of the whole model when nothing is selected. Bounds draws the box with its X, Y and Z
+  sizes on its edges.
+- **Selectable**: a transparent part stays selectable. Properties > Selectable in the view,
+  or the right-click menus, makes a part let clicks through to what is behind it.
+
+- **Measure, shown before and after**: the face or edge a click would take lights up, and a
+  chip by the pointer names it ("Flat face · 240.00 mm²") or says why the mode cannot use
+  it. Point to point snaps to vertices, circle centres and edges. The result is drawn where
+  it was measured (a dimension line, a radius leader, a tag), the picks are numbered in the
+  view and the panel, and the panel gives ΔX/ΔY/ΔZ, diameter or supplement, how the value
+  was found, and Copy.
+- **Saved exploded layouts**: save a layout to come back to in one click, save over it,
+  rename or delete it, in the Exploded view panel and under Views > Exploded.
+
+### Fixed
+
+- **Surface to surface** measured between the two click points. It is now the gap square
+  to two parallel flat faces, or the true minimum distance between any two faces.
+- **Angle** was between the normals at two click points, so a curved face gave whatever its
+  normal was there. It is between flat faces or straight edges now, and a curved one is
+  refused with the reason.
+- **Section caps**: a solid part could show hollow when cut. Caps were built per colour, so
+  a part with any face of another colour was cut as open shells; a hairline gap left a
+  contour open; and a bore was filled over. Caps are built per part, small gaps are closed,
+  holes stay open, and dense sections build 10 to 30 times faster.
+- **Exploded view, turning a part**: dragging a ring far flung the part away, because the
+  turn followed a pivot that moved with every step. The pivot is fixed when the drag
+  starts, and successive turns of a lopsided sub-assembly no longer creep it away.
+- **Exploded view, Assembled**: the handles disappeared on the assembly, and Exploded
+  brought the old layout back, so the assembled positions could not be edited from.
+  Moving a part on the assembly now starts a new layout; the old one is saved first.
+- **Transparent parts could not be clicked**: making a part transparent also made it
+  unselectable in the view. Those are separate choices now.
+- **Volume and bounds of a sub-assembly** gave nothing: only a single part was measured.
+
 ## v0.1.6-beta.2
 
 A testing build that fixes in-app updates on Windows when Loupe is installed in

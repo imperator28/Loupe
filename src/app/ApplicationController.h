@@ -221,6 +221,14 @@ public:
     Q_INVOKABLE void resetDisplayState();
     Q_INVOKABLE QString saveCameraView(const QString& name, const QVariantMap& camera, const QString& summary);
     Q_INVOKABLE [[nodiscard]] QVariantMap cameraView(const QString& id) const { return savedViews_.data(id); }
+    // A saved exploded layout: where every moved part is, for coming back to a spread or a
+    // set of turned parts in one click. Applying it leaves the view on the assembly for the
+    // viewport to ease out; updating saves the current layout over the entry.
+    Q_INVOKABLE QString saveExplodeLayout(const QString& name);
+    Q_INVOKABLE bool applyExplodeLayout(const QString& id);
+    Q_INVOKABLE bool updateExplodeLayout(const QString& id);
+    // The saved layout that is on screen now, or "".
+    Q_INVOKABLE [[nodiscard]] QString currentExplodeLayoutId() const;
     [[nodiscard]] tools::ExplodeController& explodeController() noexcept { return explodeController_; }
     [[nodiscard]] QObject* captureController() noexcept { return &captureController_; }
     [[nodiscard]] QObject* exportWorkspaceController() noexcept { return &exportWorkspaceController_; }
@@ -283,6 +291,13 @@ public:
     Q_INVOKABLE [[nodiscard]] bool nodeShowsTransparentEdges(const QString& nodeId) const;
     Q_INVOKABLE [[nodiscard]] bool selectionShowsTransparentEdges() const;
     Q_INVOKABLE void setSelectionTransparentEdges(bool shown);
+    // Whether a click in the view can take the part: yes unless turned off for it ("Selectable"
+    // in Properties, as Fusion's Selectable and Rhino's Lock). Transparency no longer decides it:
+    // a see-through part stays selectable unless made unselectable, and an unselectable part lets
+    // clicks through to what is behind it. The tree still selects it.
+    Q_INVOKABLE [[nodiscard]] bool isNodeSelectable(const QString& nodeId) const;
+    Q_INVOKABLE [[nodiscard]] bool selectionSelectable() const;
+    Q_INVOKABLE void setSelectionSelectable(bool selectable);
     static constexpr double kDefaultTransparentOpacity = 0.45;
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId);
     Q_INVOKABLE bool assignActiveMaterial(const QString& materialId, const QString& scope);
@@ -307,6 +322,9 @@ public:
     Q_INVOKABLE void acceptViewSelection(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ,
                                          bool additive = false);
     Q_INVOKABLE void acceptViewPick(const QString& nodeId, double x, double y, double z, double normalX, double normalY, double normalZ);
+    // A measurement pick the viewport built from the part's geometry (a MeasureEntity).
+    // `additive` (Shift or Ctrl/Cmd) adds it to a total, where the mode adds up.
+    Q_INVOKABLE bool acceptMeasureEntity(const QString& nodeId, const QVariant& entity, bool additive = false);
     Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
                                         double x, double y, double z, double normalX, double normalY, double normalZ,
                                         double measureMm, double radiusMm);
@@ -424,6 +442,8 @@ private:
     QHash<QString, double> opacityByNode_;
     // Transparent parts whose edges are turned off.
     QSet<QString> transparentWithoutEdges_;
+    // Parts a click in the view passes through.
+    QSet<QString> unselectableNodes_;
     QString assemblyExportMessage_;
     bool assemblyExportSucceeded_{false};
     QString assemblyExportStageKey_;

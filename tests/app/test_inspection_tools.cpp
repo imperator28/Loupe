@@ -1,4 +1,5 @@
 #include <QtTest/QTest>
+#include <QJsonObject>
 #include <QtTest/QSignalSpy>
 #include <QtCore/qmath.h>
 #include <QFileInfo>
@@ -23,6 +24,15 @@ private slots:
     void viewportPicksProducePointToPointMeasurement();
     void viewportPicksIdentifyTheSelectedSurface();
     void pickedSurfaceNormalsProduceAngleMeasurement();
+    void surfaceToSurfaceMeasuresTheGapSquareToParallelFaces();
+    void surfaceToSurfaceFindsTheTrueMinimumBetweenFacesAtAnAngle();
+    void angleIsBetweenFlatFacesAndStraightEdgesOnly();
+    void closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace();
+    void circularEdgesKnowTheirCentreAndRadius();
+    void pointPicksMeasureWithComponentsAndRefuseTheWrongKind();
+    void angleArcReadsAsTheOpeningBetweenThePicks();
+    void edgeAndAreaPicksAddUpAndComeBackOut();
+    void boundsDrawTheirBoxAndPinnedResultsStay();
     void sectionStateNeverMutatesExportShape();
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void sectionCanUseASelectedFacePlane();
@@ -35,6 +45,9 @@ private slots:
     void explodeMovesASubAssemblyWithEverythingInIt();
     void explodeHandlesWorkInWorldAxesInsideATurnedSubAssembly();
     void explodeRotationTurnsAboutTheGivenPivot();
+    void explodeMovedCentreStaysPutAsASelectionTurns();
+    void explodeEditOnTheAssemblyStartsFromTheAssembly();
+    void explodeLayoutSnapshotsRoundTrip();
     void explodeAutoComesApartLevelByLevel();
     void explodeAutoOnlyMovesTheChosenSubAssembly();
     void explodeAutoTakesStackedLayersApartInOrder();
@@ -402,6 +415,435 @@ void InspectionToolsTest::explodeRotationTurnsAboutTheGivenPivot()
     QVERIFY(qAbs(explode.anglesOf(QStringLiteral("far")).y() - 45.0F) < 0.01F);
 }
 
+void InspectionToolsTest::explodeMovedCentreStaysPutAsASelectionTurns()
+{
+    // A lopsided sub-assembly: a small part beside a big one. The centre of its bounding
+    // box moves as it turns, so the handle, which turned about that, carried it off a
+    // little more with every turn. The moved centre is fixed to the parts.
+    loupe::app::tools::ExplodeController explode;
+    explode.setHierarchy({
+        {QStringLiteral("root"), QString{}},
+        {QStringLiteral("sub"), QStringLiteral("root")},
+        {QStringLiteral("small"), QStringLiteral("sub")},
+        {QStringLiteral("big"), QStringLiteral("sub")},
+    });
+    explode.includePartBounds(QStringLiteral("small"), {0, 0, 0}, {2, 2, 2});
+    explode.includePartBounds(QStringLiteral("big"), {10, -10, 0}, {40, 10, 2});
+    const QStringList selection{QStringLiteral("sub")};
+    const auto boxCentre = [&explode, &selection]() {
+        const auto bounds = explode.displayedBounds(selection);
+        return (bounds.value(QStringLiteral("minimum")).value<QVector3D>()
+                + bounds.value(QStringLiteral("maximum")).value<QVector3D>()) * 0.5F;
+    };
+    const auto pivot = explode.movedCentre(selection);
+    const auto boxBefore = boxCentre();
+    for (int turn = 0; turn < 8; ++turn) {
+        explode.beginInteraction(selection);
+        explode.previewRotation({0, 0, 1}, 45, explode.movedCentre(selection));
+        explode.commitInteraction();
+        QVERIFY2(closeTo(explode.movedCentre(selection), pivot), qPrintable(describe(explode.movedCentre(selection))));
+    }
+    // A full turn brings every part back where it began.
+    QVERIFY2(closeTo(boxCentre(), boxBefore), qPrintable(describe(boxCentre())));
+    explode.beginInteraction(selection);
+    explode.previewRotation({0, 0, 1}, 30, pivot);
+    explode.commitInteraction();
+    QVERIFY(!closeTo(boxCentre(), boxBefore)); // the box's centre is not a fixed point
+    QVERIFY(closeTo(explode.movedCentre(selection), pivot));
+}
+
+void InspectionToolsTest::explodeEditOnTheAssemblyStartsFromTheAssembly()
+{
+    // Spread, then Assembled: the layout is kept, the view shows the assembly. Dragging a
+    // part there used to bring the layout back first, so the part jumped from under the
+    // pointer and its assembled place was lost. The drag starts from the assembly now, and
+    // the kept layout is handed over to be saved.
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    explode.autoExplode({}, 1.0);
+    const auto spreadFar = displayedCentre(explode, QStringLiteral("far"));
+    QVERIFY(!closeTo(spreadFar, {100, 0, 0}));
+    explode.setBlend(0.0);
+    QVERIFY(explode.showingAssembly());
+    QVERIFY(closeTo(explode.offsetOf(QStringLiteral("far")), {}));
+    QCOMPARE(explode.autoFactor({}), 0.0);
+    QVERIFY(closeTo(explode.movedCentre({QStringLiteral("far")}), {100, 0, 0}));
+
+    QSignalSpy setAside(&explode, &loupe::app::tools::ExplodeController::layoutSetAside);
+    explode.beginInteraction({QStringLiteral("far")});
+    QCOMPARE(setAside.count(), 1);
+    QCOMPARE(explode.blend(), 1.0);
+    // Nothing moved by starting: everything is still where it is assembled.
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 0}));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("left")), {-10, 0, 0}));
+    explode.previewTranslation({0, 0, 20});
+    explode.commitInteraction();
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 20}));
+    QVERIFY(!explode.isMoved(QStringLiteral("left")));
+
+    // The set-aside layout is the spread one, and restoring it puts the parts back there.
+    const auto kept = setAside.at(0).at(0).toMap();
+    QVERIFY(explode.restoreLayout(kept));
+    QCOMPARE(explode.blend(), 0.0); // the viewport eases out to it
+    explode.setBlend(1.0);
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), spreadFar));
+    QVERIFY(explode.layoutMatches(kept));
+
+    // Undo walks back: the new layout, then the assembly it started from, then the spread.
+    explode.undo();
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 20}));
+    explode.undo();
+    QVERIFY(!explode.exploded());
+    explode.undo();
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), spreadFar));
+
+    // Putting a part back on the assembly is an edit to the layout: it comes back first.
+    explode.setBlend(0.0);
+    explode.resetNode(QStringLiteral("far"));
+    QCOMPARE(setAside.count(), 1);
+    QCOMPARE(explode.blend(), 1.0);
+    QVERIFY(explode.isMoved(QStringLiteral("left")));
+    QVERIFY(!explode.isMoved(QStringLiteral("far")));
+}
+
+void InspectionToolsTest::explodeLayoutSnapshotsRoundTrip()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    QVERIFY(!explode.restoreLayout(explode.layoutSnapshot())); // nothing to restore
+    explode.beginInteraction({QStringLiteral("sub")});
+    explode.previewRotation({0, 0, 1}, 30, explode.movedCentre({QStringLiteral("sub")}));
+    explode.commitInteraction();
+    explode.translateBy({QStringLiteral("far")}, {5, 0, 0});
+    QCOMPARE(explode.layoutSummary(), QStringLiteral("3 parts moved · 2 turned"));
+    const auto left = displayedCentre(explode, QStringLiteral("left"));
+    // Kept as JSON in the settings: through it and back.
+    const auto stored = QJsonObject::fromVariantMap(explode.layoutSnapshot()).toVariantMap();
+    explode.resetAll();
+    QVERIFY(!explode.layoutMatches(stored));
+    QVERIFY(explode.restoreLayout(stored));
+    explode.setBlend(1.0);
+    QVERIFY(explode.layoutMatches(stored));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("left")), left));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {105, 0, 0}));
+
+    // A node the document no longer has is skipped; garbage is ignored.
+    auto foreign = stored;
+    auto transforms = foreign.value(QStringLiteral("transforms")).toMap();
+    transforms.insert(QStringLiteral("gone"), transforms.value(QStringLiteral("far")));
+    transforms.insert(QStringLiteral("far"), QVariantList{1, 2, 3});
+    foreign.insert(QStringLiteral("transforms"), transforms);
+    explode.resetAll();
+    QVERIFY(explode.restoreLayout(foreign));
+    QVERIFY(!explode.isMoved(QStringLiteral("far")));
+    QVERIFY(explode.isMoved(QStringLiteral("left")));
+}
+
+namespace {
+
+using loupe::app::tools::MeasureEntity;
+
+// A flat rectangle as two triangles, at z or (vertical) at x.
+MeasureEntity flatFace(const QVector3D& a, const QVector3D& b, const QVector3D& c, const QVector3D& d, const QVector3D& pick)
+{
+    MeasureEntity face;
+    face.kind = MeasureEntity::Kind::Face;
+    face.topologyId = 1;
+    face.point = pick;
+    face.triangles = {a, b, c, a, c, d};
+    loupe::app::tools::measure::describeFace(&face);
+    return face;
+}
+
+MeasureEntity straightEdge(const QVector3D& from, const QVector3D& to)
+{
+    MeasureEntity edge;
+    edge.kind = MeasureEntity::Kind::Edge;
+    edge.topologyId = 2;
+    edge.point = from;
+    edge.polyline = {from, to};
+    loupe::app::tools::measure::describeEdge(&edge);
+    return edge;
+}
+
+QString detailValue(const loupe::app::tools::MeasurementController& controller, const QString& label)
+{
+    for (const auto& value : controller.resultDetails()) {
+        const auto map = value.toMap();
+        if (map.value(QStringLiteral("label")).toString() == label) return map.value(QStringLiteral("value")).toString();
+    }
+    return {};
+}
+
+} // namespace
+
+void InspectionToolsTest::surfaceToSurfaceMeasuresTheGapSquareToParallelFaces()
+{
+    // A wall 5 mm thick, its two faces picked far apart along it. The old measurement was
+    // between the two click points, 20-odd mm here; the gap square to the faces is 5.
+    const auto bottom = flatFace({0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}, {2, 2, 0});
+    const auto top = flatFace({20, 0, 5}, {30, 0, 5}, {30, 10, 5}, {20, 10, 5}, {28, 9, 5});
+    QVERIFY(bottom.planar && top.planar);
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceToSurface);
+    QVERIFY(controller.acceptEntity(bottom));
+    QVERIFY(controller.resultText().isEmpty());
+    QVERIFY(controller.acceptEntity(top));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Gap"));
+    QCOMPARE(controller.resultText(), QStringLiteral("5.000"));
+    QCOMPARE(controller.resultLabel(), QStringLiteral("5 mm"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Angle")), QStringLiteral("0.00°"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Minimum")), QStringLiteral("11.180 mm"));
+    // The dimension runs square from the second pick to the first plane.
+    const auto annotation = controller.annotation();
+    QCOMPARE(annotation.value(QStringLiteral("kind")).toString(), QStringLiteral("distance"));
+    QVERIFY(closeTo(annotation.value(QStringLiteral("from")).value<QVector3D>(), {28, 9, 0}));
+    QVERIFY(closeTo(annotation.value(QStringLiteral("to")).value<QVector3D>(), {28, 9, 5}));
+    controller.setEffectiveUnit(QStringLiteral("in"));
+    QCOMPARE(controller.resultText(), QStringLiteral("0.1969"));
+}
+
+void InspectionToolsTest::surfaceToSurfaceFindsTheTrueMinimumBetweenFacesAtAnAngle()
+{
+    // A floor and a wall standing 5 mm off its edge and 1 mm above it: square faces that are
+    // not parallel meet nearest at the floor's edge and the wall's bottom edge.
+    const auto floor = flatFace({0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}, {5, 5, 0});
+    const auto wall = flatFace({15, 0, 1}, {15, 10, 1}, {15, 10, 11}, {15, 0, 11}, {15, 5, 6});
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceToSurface);
+    QVERIFY(controller.acceptEntity(floor));
+    QVERIFY(controller.acceptEntity(wall));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Minimum distance"));
+    QCOMPARE(controller.resultText(), QStringLiteral("5.099"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Angle")), QStringLiteral("90.00°"));
+    QCOMPARE(detailValue(controller, QStringLiteral("ΔX")), QStringLiteral("5.000 mm"));
+    QCOMPARE(detailValue(controller, QStringLiteral("ΔZ")), QStringLiteral("1.000 mm"));
+}
+
+void InspectionToolsTest::angleIsBetweenFlatFacesAndStraightEdgesOnly()
+{
+    const auto floor = flatFace({0, 0, 0}, {10, 0, 0}, {10, 10, 0}, {0, 10, 0}, {5, 5, 0});
+    // A ramp rising 30 degrees along X.
+    const auto rise = static_cast<float>(std::tan(30.0 * 3.14159265358979323846 / 180.0) * 10.0);
+    const auto ramp = flatFace({0, 0, 0}, {10, 0, rise}, {10, 10, rise}, {0, 10, 0}, {5, 5, rise / 2});
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::Angle);
+    QVERIFY(controller.acceptEntity(floor));
+    QVERIFY(controller.acceptEntity(ramp));
+    QCOMPARE(controller.resultText(), QStringLiteral("30.00"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Supplement")), QStringLiteral("150.00°"));
+
+    // A curved face is refused, with why: it has no one direction to measure from.
+    MeasureEntity curved;
+    curved.kind = MeasureEntity::Kind::Face;
+    curved.topologyId = 9;
+    curved.radiusMm = 4.0;
+    curved.triangles = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 0, 0}, {1, 1, 0.5F}, {0, 1, 0}};
+    loupe::app::tools::measure::describeFace(&curved);
+    QVERIFY(!curved.planar);
+    QVERIFY(!controller.acceptEntity(curved));
+    QVERIFY(controller.refusal().contains(QStringLiteral("curved face")));
+    QVERIFY(!controller.describe(curved).value(QStringLiteral("eligible")).toBool());
+    QCOMPARE(controller.resultText(), QStringLiteral("30.00")); // the last result stands
+
+    // Lines: a straight edge against the floor is its rise out of the plane; two edges, the
+    // angle between their lines, whichever way each runs.
+    QVERIFY(controller.acceptEntity(straightEdge({0, 0, 0}, {10, 0, rise})));
+    QVERIFY(controller.acceptEntity(floor));
+    QCOMPARE(controller.resultText(), QStringLiteral("30.00"));
+    QVERIFY(controller.acceptEntity(straightEdge({0, 0, 0}, {10, 0, 0})));
+    QVERIFY(controller.acceptEntity(straightEdge({0, 5, 0}, {0, -5, 0})));
+    QCOMPARE(controller.resultText(), QStringLiteral("90.00"));
+}
+
+void InspectionToolsTest::closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace()
+{
+    // Two skew lines 3 apart in Z.
+    const auto along = straightEdge({-5, 0, 0}, {5, 0, 0});
+    const auto across = straightEdge({0, -5, 3}, {0, 5, 3});
+    const auto skew = loupe::app::tools::measure::closestPoints(along, across);
+    QVERIFY(std::abs(skew.distance - 3.0) < 1e-5);
+    QVERIFY(closeTo(skew.first, {0, 0, 0}));
+    QVERIFY(closeTo(skew.second, {0, 0, 3}));
+    // An edge that pierces a face touches it.
+    const auto floor = flatFace({-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0}, {});
+    const auto pin = straightEdge({0.2F, 0.3F, -2}, {0.2F, 0.3F, 2});
+    QVERIFY(loupe::app::tools::measure::closestPoints(pin, floor).distance < 1e-5);
+}
+
+void InspectionToolsTest::circularEdgesKnowTheirCentreAndRadius()
+{
+    MeasureEntity edge;
+    edge.kind = MeasureEntity::Kind::Edge;
+    edge.radiusMm = 4.0;
+    for (int step = 0; step <= 48; ++step) {
+        const auto angle = 2.0 * 3.14159265358979323846 * step / 48;
+        edge.polyline.append({static_cast<float>(10 + 4 * std::cos(angle)), static_cast<float>(-3 + 4 * std::sin(angle)), 7.0F});
+    }
+    edge.point = edge.polyline.front();
+    loupe::app::tools::measure::describeEdge(&edge);
+    QVERIFY(edge.circular);
+    QVERIFY(!edge.linear);
+    QVERIFY(closeTo(edge.centre, {10, -3, 7}));
+    QVERIFY(std::abs(std::abs(edge.axis.z()) - 1.0F) < 1e-4F);
+
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::RadiusDiameter);
+    QVERIFY(controller.acceptEntity(edge));
+    QCOMPARE(controller.resultText(), QStringLiteral("4.000"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Diameter")), QStringLiteral("8.000 mm"));
+    QCOMPARE(controller.annotation().value(QStringLiteral("kind")).toString(), QStringLiteral("radius"));
+    QVERIFY(!controller.acceptEntity(straightEdge({0, 0, 0}, {1, 0, 0})));
+    QVERIFY(controller.refusal().startsWith(QStringLiteral("Not round")));
+}
+
+void InspectionToolsTest::pointPicksMeasureWithComponentsAndRefuseTheWrongKind()
+{
+    loupe::app::tools::MeasurementController controller;
+    MeasureEntity vertex;
+    vertex.kind = MeasureEntity::Kind::Vertex;
+    vertex.point = {1, 2, 3};
+    MeasureEntity centre;
+    centre.kind = MeasureEntity::Kind::CircleCentre;
+    centre.point = {4, 6, 3};
+    centre.centre = {4, 6, 3};
+    QVERIFY(!controller.acceptEntity(straightEdge({0, 0, 0}, {1, 0, 0}))); // a whole edge is not a point
+    QVERIFY(controller.acceptEntity(vertex));
+    QCOMPARE(controller.pickInstruction(), QStringLiteral("Select the second point"));
+    QVERIFY(controller.acceptEntity(centre));
+    QCOMPARE(controller.resultText(), QStringLiteral("5.000"));
+    QCOMPARE(detailValue(controller, QStringLiteral("ΔX")), QStringLiteral("3.000 mm"));
+    QCOMPARE(detailValue(controller, QStringLiteral("ΔY")), QStringLiteral("4.000 mm"));
+    QCOMPARE(detailValue(controller, QStringLiteral("ΔZ")), QStringLiteral("0.000 mm"));
+    QCOMPARE(controller.pickedEntities().size(), 2);
+    QCOMPARE(controller.pickedEntities().at(1).toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Circle centre"));
+    QVERIFY(controller.resultSummary().startsWith(QStringLiteral("Distance: 5.000 mm")));
+    // A third pick starts the next measurement.
+    QVERIFY(controller.acceptEntity(vertex));
+    QCOMPARE(controller.pickedEntities().size(), 1);
+    QVERIFY(controller.resultText().isEmpty());
+}
+
+void InspectionToolsTest::angleArcReadsAsTheOpeningBetweenThePicks()
+{
+    // A V-groove opening 60 degrees: walls along Y, meeting at the bottom (x = 0, z = 0).
+    // Their outward normals are 120 degrees apart; what an engineer means is the opening.
+    // Each wall leans 30 degrees off vertical, one each way, so they open 60 degrees.
+    const auto rise = static_cast<float>(std::sin(60.0 * 3.14159265358979323846 / 180.0) * 10.0);
+    const QVector3D left(-5, 0, rise);
+    const QVector3D right(5, 0, rise);
+    auto wallA = flatFace({0, 0, 0}, left, left + QVector3D(0, 10, 0), {0, 10, 0}, left * 0.5F + QVector3D(0, 5, 0));
+    auto wallB = flatFace({0, 0, 0}, {0, 10, 0}, right + QVector3D(0, 10, 0), right, right * 0.5F + QVector3D(0, 5, 0));
+    // Normals pointing out of the groove's material, as a CAD face's would.
+    wallA.planeNormal = QVector3D::crossProduct(QVector3D(0, 1, 0), left).normalized();
+    if (wallA.planeNormal.x() < 0) wallA.planeNormal = -wallA.planeNormal;
+    wallB.planeNormal = QVector3D::crossProduct(right, QVector3D(0, 1, 0)).normalized();
+    if (wallB.planeNormal.x() > 0) wallB.planeNormal = -wallB.planeNormal;
+    const auto arc = loupe::app::tools::measure::angleArc(wallA, wallB);
+    QVERIFY(arc.valid);
+    QVERIFY2(std::abs(arc.degrees - 60.0) < 1e-3, qPrintable(QString::number(arc.degrees)));
+    QVERIFY(closeTo(arc.centre, {0, 5, 0}));
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::Angle);
+    QVERIFY(controller.acceptEntity(wallA));
+    QVERIFY(controller.acceptEntity(wallB));
+    QCOMPARE(controller.resultText(), QStringLiteral("60.00"));
+    QCOMPARE(detailValue(controller, QStringLiteral("Supplement")), QStringLiteral("120.00°"));
+    const auto annotation = controller.annotation();
+    QCOMPARE(annotation.value(QStringLiteral("kind")).toString(), QStringLiteral("angle"));
+    QCOMPARE(annotation.value(QStringLiteral("arc")).toList().size(), 33);
+
+    // Two edges meeting at a corner of a hexagon: the corner's own 120 degrees.
+    const auto hexAngle = 120.0 * 3.14159265358979323846 / 180.0;
+    const auto edgeA = straightEdge({0, 0, 0}, {10, 0, 0});
+    const auto edgeB = straightEdge({0, 0, 0}, {static_cast<float>(10 * std::cos(hexAngle)), static_cast<float>(10 * std::sin(hexAngle)), 0});
+    QVERIFY(std::abs(loupe::app::tools::measure::angleArc(edgeA, edgeB).degrees - 120.0) < 1e-3);
+    // Parallel faces have no opening.
+    QVERIFY(!loupe::app::tools::measure::angleArc(
+        flatFace({0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}, {}), flatFace({0, 0, 2}, {1, 0, 2}, {1, 1, 2}, {0, 1, 2}, {})).valid);
+}
+
+void InspectionToolsTest::edgeAndAreaPicksAddUpAndComeBackOut()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::EdgeLength);
+    QVERIFY(controller.multiPick());
+    auto first = straightEdge({0, 0, 0}, {10, 0, 0});
+    first.nodeId = QStringLiteral("part");
+    first.topologyId = 1;
+    auto second = straightEdge({0, 0, 0}, {0, 5, 0});
+    second.nodeId = QStringLiteral("part");
+    second.topologyId = 2;
+    QVERIFY(controller.acceptEntity(first));
+    QCOMPARE(controller.resultText(), QStringLiteral("10.000"));
+    QVERIFY(controller.acceptEntity(second, true));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Total length · 2 edges"));
+    QCOMPARE(controller.resultText(), QStringLiteral("15.000"));
+    QCOMPARE(controller.pickedEntities().size(), 2);
+    QCOMPARE(controller.pickedEntities().at(1).toMap().value(QStringLiteral("polyline")).toList().size(), 2);
+    // The same edge again, added, takes it back out.
+    QVERIFY(controller.acceptEntity(first, true));
+    QCOMPARE(controller.resultText(), QStringLiteral("5.000"));
+    // A plain click starts over.
+    QVERIFY(controller.acceptEntity(first));
+    QVERIFY(controller.acceptEntity(first));
+    QCOMPARE(controller.pickedEntities().size(), 1);
+
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceArea);
+    auto faceA = flatFace({0, 0, 0}, {2, 0, 0}, {2, 2, 0}, {0, 2, 0}, {});
+    faceA.areaMm2 = 4;
+    faceA.nodeId = QStringLiteral("a");
+    auto faceB = faceA;
+    faceB.areaMm2 = 6;
+    faceB.nodeId = QStringLiteral("b");
+    QVERIFY(controller.acceptEntity(faceA));
+    QVERIFY(controller.acceptEntity(faceB, true));
+    QCOMPARE(controller.resultText(), QStringLiteral("10.00"));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Total area · 2 faces"));
+    // Two-pick modes do not add up: a third pick starts the next measurement.
+    controller.setMode(loupe::app::tools::MeasurementMode::SurfaceToSurface);
+    QVERIFY(!controller.multiPick());
+}
+
+void InspectionToolsTest::boundsDrawTheirBoxAndPinnedResultsStay()
+{
+    loupe::app::tools::MeasurementController controller;
+    controller.setMode(loupe::app::tools::MeasurementMode::Bounds);
+    controller.setSelectedGeometry(100.0, 50.0, {30, 20, 10});
+    controller.setSelectionBox({-15, 0, 0}, {15, 20, 10}, QStringLiteral("Whole model"), 4);
+    QCOMPARE(controller.selectionScope(), QStringLiteral("Whole model"));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Bounds · 4 parts"));
+    const auto box = controller.annotation();
+    QCOMPARE(box.value(QStringLiteral("kind")).toString(), QStringLiteral("box"));
+    QCOMPARE(box.value(QStringLiteral("x")).toString(), QStringLiteral("30.000 mm"));
+    QVERIFY(closeTo(box.value(QStringLiteral("maximum")).value<QVector3D>(), {15, 20, 10}));
+
+    // Pinned: it stays drawn while the next measurement is made, of another kind.
+    QVERIFY(controller.canPin());
+    QSignalSpy pinned(&controller, &loupe::app::tools::MeasurementController::pinnedChanged);
+    controller.pinResult();
+    QCOMPARE(pinned.count(), 1);
+    QCOMPARE(controller.pinnedResults().size(), 1);
+    QCOMPARE(controller.pinnedResults().front().toMap().value(QStringLiteral("text")).toString(),
+             QStringLiteral("30.000 × 20.000 × 10.000 mm"));
+    controller.setMode(loupe::app::tools::MeasurementMode::PointToPoint);
+    MeasureEntity a;
+    a.kind = MeasureEntity::Kind::Vertex;
+    MeasureEntity b = a;
+    b.point = {3, 4, 0};
+    QVERIFY(controller.acceptEntity(a));
+    QVERIFY(controller.acceptEntity(b));
+    controller.pinResult();
+    QCOMPARE(controller.pinnedResults().size(), 2);
+    QVERIFY(controller.pickedEntities().isEmpty()); // ready for the next one
+    QCOMPARE(controller.pinnedResults().at(1).toMap().value(QStringLiteral("points")).toList().size(), 2);
+    controller.unpin(controller.pinnedResults().front().toMap().value(QStringLiteral("id")).toString());
+    QCOMPARE(controller.pinnedResults().size(), 1);
+    QCOMPARE(controller.pinnedResults().front().toMap().value(QStringLiteral("title")).toString(), QStringLiteral("Distance"));
+    controller.clearPinned();
+    QVERIFY(controller.pinnedResults().isEmpty());
+}
+
 void InspectionToolsTest::explodeAutoComesApartLevelByLevel()
 {
     loupe::app::tools::ExplodeController explode;
@@ -544,10 +986,11 @@ void InspectionToolsTest::explodeBlendEasesPartsHome()
     QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 0}));
     // The placement itself is kept until reset: this is the assembled view of a layout.
     QVERIFY(explode.exploded());
-    // An edit is made to the layout, so it comes back into view.
+    // A move made on the assembly starts from the assembly, which is what is on screen; the
+    // kept layout is set aside (see explodeEditOnTheAssemblyStartsFromTheAssembly).
     explode.translateBy({QStringLiteral("far")}, {0, 0, 1});
     QCOMPARE(explode.blend(), 1.0);
-    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 40, 1}));
+    QVERIFY(closeTo(displayedCentre(explode, QStringLiteral("far")), {100, 0, 1}));
     explode.resetAll();
     QCOMPARE(explode.blend(), 1.0);
 }

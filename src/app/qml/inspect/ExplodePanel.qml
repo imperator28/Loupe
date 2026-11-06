@@ -28,6 +28,10 @@ Rectangle {
     readonly property bool hasLayout: taskController !== null && taskController.exploded
     // The view shows the layout (rather than easing to, or resting on, the assembly).
     readonly property bool showingLayout: hasLayout && taskController.blend > 0.5
+    // On the assembly with a layout kept aside: what a drag there does is not obvious, so say.
+    readonly property bool showingKeptAssembly: hasLayout && !showingLayout
+    readonly property QtObject store: documentController ? documentController.savedViews : null
+    readonly property var savedLayouts: store ? store.explodeLayouts : []
     readonly property vector3d selectedOffset: taskController && selectedNodeId.length > 0 && revision >= 0
                                                ? taskController.offsetOf(selectedNodeId) : Qt.vector3d(0, 0, 0)
     readonly property vector3d selectedAngles: taskController && selectedNodeId.length > 0 && revision >= 0
@@ -160,6 +164,62 @@ Rectangle {
             wrapMode: Text.WordWrap
             color: root.subduedForeground
             text: qsTr("Exploded spreads the parts apart; switch back any time to compare.")
+        }
+        Label {
+            objectName: "explodeAssemblyHint"
+            Layout.fillWidth: true
+            visible: root.showingKeptAssembly
+            wrapMode: Text.WordWrap
+            color: root.subduedForeground
+            text: qsTr("Showing the assembly. Exploded brings your layout back; moving a part here starts a new one, and your layout is saved below first.")
+        }
+
+        // Layouts to come back to: a spread, a hinge turned open, a part pulled out.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: root.theme.spacing2
+            SectionTitle { text: qsTr("Saved layouts") }
+            ThemedButton {
+                objectName: "explodeSaveLayoutButton"
+                theme: root.theme
+                text: qsTr("Save")
+                leftPadding: 28
+                enabled: root.viewport !== null && root.showingLayout
+                onClicked: {
+                    const id = root.viewport.saveExplodeLayout("")
+                    if (id.length > 0) layoutList.editingId = id
+                }
+                ToolIcon {
+                    x: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 14
+                    name: "add"
+                    color: parent.enabled ? root.foreground : root.subduedForeground
+                }
+                ThemedToolTip {
+                    theme: root.theme
+                    text: qsTr("Keep where every part is now, to come back to in one click")
+                    visible: parent.hovered
+                }
+            }
+        }
+        SavedViewList {
+            id: layoutList
+            objectName: "explodeLayoutList"
+            theme: root.theme
+            store: root.store
+            Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
+            entries: root.savedLayouts
+            activeId: root.viewport ? root.viewport.activeExplodeLayoutId : ""
+            visibleRows: 3
+            placeholderIcon: "explode"
+            emptyText: qsTr("Save a layout to come back to it in one click.")
+            canSaveOver: true
+            saveOverEnabled: root.showingLayout
+            onActivated: function(id) { if (root.viewport) root.viewport.goToExplodeLayout(id) }
+            onSaveOverRequested: function(id) { if (root.viewport) root.viewport.updateExplodeLayout(id) }
         }
 
         // 2. How far apart.

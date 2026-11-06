@@ -212,6 +212,65 @@ Item {
             f: "",
             t: ""
         },
+        // Measure modes. Two picks, then one, then the whole part.
+        "measurePoints": {
+            s: "M5.6 14.4 L14.4 5.6",
+            f: "M4 14.2 A1.8 1.8 0 1 0 4.01 14.2 Z M16 2.2 A1.8 1.8 0 1 0 16.01 2.2 Z",
+            t: ""
+        },
+        "measureSurfaces": {
+            s: "M3 4.5 H17 M3 15.5 H17 M10 7 V13 M8.2 8.8 L10 7 L11.8 8.8 M8.2 11.2 L10 13 L11.8 11.2",
+            f: "",
+            t: ""
+        },
+        "measureAngle": {
+            s: "M3.5 16 H16.5 M3.5 16 L12.5 4.5 M9.5 16 A6 6 0 0 0 7.2 11.3",
+            f: "",
+            t: ""
+        },
+        "measureEdge": {
+            s: "M4.5 15.5 L15.5 4.5 M2.8 13.8 L6.2 17.2 M13.8 2.8 L17.2 6.2",
+            f: "",
+            t: ""
+        },
+        "measureRadius": {
+            s: "M10 3 A7 7 0 1 0 10.01 3 Z M10 10 L15 5",
+            f: "M10 8.8 A1.2 1.2 0 1 0 10.01 8.8 Z",
+            t: ""
+        },
+        "measureArea": {
+            s: "M4 4 H16 V16 H4 Z",
+            f: "",
+            t: "M4 4 H16 V16 H4 Z"
+        },
+        "measureVolume": {
+            s: "M10 2.8 L16.5 6.4 V13.6 L10 17.2 L3.5 13.6 V6.4 Z M3.5 6.4 L10 10 L16.5 6.4 M10 10 V17.2",
+            f: "",
+            t: "M3.5 6.4 L10 10 V17.2 L3.5 13.6 Z"
+        },
+        "measureBounds": {
+            s: "M3 7 V3 H7 M13 3 H17 V7 M17 13 V17 H13 M7 17 H3 V13 M7.5 7.5 H12.5 V12.5 H7.5 Z",
+            f: "",
+            t: ""
+        },
+        // Pin: a pushpin, for keeping a measurement in the view.
+        "pin": {
+            s: "M7.5 3.5 H12.5 L12 8 L14.5 11 H5.5 L8 8 Z M10 11 V16.5",
+            f: "",
+            t: ""
+        },
+        // Copy: two sheets.
+        "copy": {
+            s: "M7.5 7.5 H16 V16 H7.5 Z M4 12.5 V4 H12.5",
+            f: "",
+            t: ""
+        },
+        // Save over: a circling arrow, for updating a saved entry with what is there now.
+        "saveOver": {
+            s: "M15.6 8.2 A6 6 0 1 0 15.8 12.4 M16 4.2 V8.4 H11.8",
+            f: "",
+            t: ""
+        },
         "capture": {
             s: "M3 7.5 H6.2 L7.7 5.5 H12.3 L13.8 7.5 H17 V15.5 H3 Z",
             f: "",

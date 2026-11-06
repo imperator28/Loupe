@@ -37,8 +37,14 @@ Item {
     property var geometryByNode: ({})
     property var edgeModelByNode: ({})
     property var edgeGeometryByNode: ({})
+    // One section cap per part, keyed by node: the worker sends a part as one mesh per colour,
+    // and a cut through any one of them alone is open, so it could not be filled.
     property var sectionOverlayModelByNode: ({})
     property var sectionOverlayGeometryByNode: ({})
+    // nodeId -> the segment keys of its meshes, and the parts whose cap must be rebuilt from
+    // them because one changed.
+    property var segmentKeysByNode: ({})
+    property var sectionSourceDirtyByNode: ({})
     property var xrayModelBySegment: ({})
     property var boundsByNode: ({})
     // The exploded view (#17). Each part's models live under one node per part, which is
@@ -100,6 +106,11 @@ Item {
     // finish on the spot, so a pass gets through many of them; the cap keeps the UI live.
     readonly property int sectionItemsPerPass: 150
     property var hoverTopology: null
+    // Where the pointer is, for the measurement hover chip.
+    property point hoverPointer: Qt.point(0, 0)
+    // How close, in pixels, the pointer must be to take an edge, and an edge's end.
+    readonly property real measureEdgePixels: 7
+    readonly property real measureVertexPixels: 10
     property var acceptedTopologies: []
     readonly property bool hasAcceptedFaceHighlight: {
         for (const pick of acceptedTopologies) {
@@ -279,13 +290,15 @@ Item {
         const node = handlePivot && revision >= 0 ? partNodeByNode[handlePivot.nodeId] : null
         return node ? node.mapPositionToScene(handlePivot.local) : Qt.vector3d(0, 0, 0)
     }
-    readonly property vector3d handleCentre: handlePivot && partNodeByNode[handlePivot.nodeId]
-            ? handlePivotPoint
-            : handleBounds
-            ? Qt.vector3d((handleBounds.minimum.x + handleBounds.maximum.x) * 0.5,
-                          (handleBounds.minimum.y + handleBounds.maximum.y) * 0.5,
-                          (handleBounds.minimum.z + handleBounds.maximum.z) * 0.5)
-            : Qt.vector3d(0, 0, 0)
+    // Without a picked pivot, the selection's own centre as it has been moved: a point fixed
+    // to the parts. Their bounding box's centre shifts as they turn, so turning about it made
+    // every turn after the first carry the parts off a little further.
+    readonly property vector3d handleCentre: {
+        const revision = explode ? explode.revision : -1
+        if (handlePivot && partNodeByNode[handlePivot.nodeId]) return handlePivotPoint
+        if (!handleBounds || revision < 0) return Qt.vector3d(0, 0, 0)
+        return explode.movedCentre(handleNodeIds)
+    }
     // The handle's orientation: the world's, or the picked face's.
     readonly property quaternion handleFrame: {
         const revision = explode ? explode.revision : -1
@@ -296,9 +309,12 @@ Item {
     }
     readonly property real handlePixels: 96
     readonly property real handleLength: worldPerPixelAt(handleCentre) * handlePixels
-    // Hidden while the view eases to (or shows) the assembly: a move is made to the layout.
+    // Shown on the layout and on the assembly alike, hidden only while the view eases between
+    // the two. On the assembly a drag starts a new layout from where the parts are assembled,
+    // and the one kept aside is saved first, so nothing is lost by starting over.
     readonly property bool handlesShown: explodedLayoutEnabled && explodeToolActive && explode !== null
-            && !presentationOnly && !captureUiHidden && handleBounds !== null && explode.blend > 0.999
+            && !presentationOnly && !captureUiHidden && handleBounds !== null
+            && (explode.blend > 0.999 || explode.blend < 0.001)
             && !pickingPivot
     // The handle under the pointer, and the drag in progress: {kind, axis, ...}.
     property var handleHover: null
@@ -436,6 +452,37 @@ Item {
         return id
     }
 
+    // Saved exploded layouts. Going to one eases the parts out of the assembly to it.
+    readonly property string activeExplodeLayoutId: {
+        const revision = explode ? explode.revision : -1
+        const showing = explode ? explode.blend > 0.5 : false
+        const saved = controller ? controller.savedViews.explodeLayouts : []
+        return controller && revision >= 0 && showing && saved.length > 0 ? controller.currentExplodeLayoutId() : ""
+    }
+
+    function saveExplodeLayout(name) {
+        if (!controller) return ""
+        const id = controller.saveExplodeLayout(name)
+        if (id.length > 0) saveViewThumbnail(id)
+        return id
+    }
+
+    function updateExplodeLayout(id) {
+        if (!controller || !controller.updateExplodeLayout(id)) return false
+        saveViewThumbnail(id)
+        return true
+    }
+
+    function goToExplodeLayout(id) {
+        if (!controller || !explode) return false
+        explodeResetAnimation.stop()
+        layoutViewAnimation.stop()
+        autoExplodeAnimation.stop()
+        if (!controller.applyExplodeLayout(id)) return false
+        showExploded()
+        return true
+    }
+
     function goToDisplayState(id) {
         if (!controller || !controller.applyDisplayState(id)) return false
         currentDisplayStateId = id
@@ -522,14 +569,19 @@ Item {
     function beginHandleDrag(hit, x, y) {
         const layout = handleLayout()
         if (!layout || !explode) return false
-        const axis = handleAxis(hit.axis)
-        const drag = { kind: hit.kind, axis: hit.axis, startX: x, startY: y, centre: handleCentre,
+        // Copied, not referenced: a vector3d read from a property stays tied to it, and the
+        // handle's centre and frame move with the parts as they turn. Turning about a pivot
+        // that followed each step flung the parts off, further the further the drag went.
+        const copy = function(vector) { return Qt.vector3d(vector.x, vector.y, vector.z) }
+        const axis = copy(handleAxis(hit.axis))
+        const centre = copy(handleCentre)
+        const drag = { kind: hit.kind, axis: hit.axis, axisVector: axis, startX: x, startY: y, centre: centre,
                        centreScreen: layout.centre, value: 0 }
         if (hit.kind === "free") {
             // In the plane of the screen through the handle, at the scale it is drawn at.
-            drag.right = navigation.orientation.times(Qt.vector3d(1, 0, 0))
-            drag.up = navigation.orientation.times(Qt.vector3d(0, 1, 0))
-            drag.worldPerPixel = worldPerPixelAt(handleCentre)
+            drag.right = copy(navigation.orientation.times(Qt.vector3d(1, 0, 0)))
+            drag.up = copy(navigation.orientation.times(Qt.vector3d(0, 1, 0)))
+            drag.worldPerPixel = worldPerPixelAt(centre)
         } else if (hit.kind === "move") {
             drag.axisX = layout.tips[hit.axis].x - layout.centre.x
             drag.axisY = layout.tips[hit.axis].y - layout.centre.y
@@ -556,11 +608,25 @@ Item {
                 }
                 const grabbed = layout.ringPoints[hit.axis][nearest]
                 const radius = handleLength * 0.72
-                const tangent = axis.crossProduct(grabbed.minus(handleCentre)).normalized()
+                const tangent = axis.crossProduct(grabbed.minus(centre)).normalized()
                 const ahead = screenPoint(grabbed.plus(tangent.times(radius * 0.2)))
                 const here = screenPoint(grabbed)
                 drag.tangentX = ahead.x - here.x
                 drag.tangentY = ahead.y - here.y
+                // Grabbed where the ring runs straight at the eye, its tangent is a few pixels
+                // long, and a pixel of drag was many degrees of turn. Keep a fifth of a radian
+                // at least a sixth of the ring's on-screen radius away.
+                const pixels = Math.hypot(drag.tangentX, drag.tangentY)
+                const minimum = Math.max(6, Math.hypot(here.x - layout.centre.x, here.y - layout.centre.y) / 6)
+                if (pixels < 1e-3) {
+                    drag.tangentX = -(here.y - layout.centre.y)
+                    drag.tangentY = here.x - layout.centre.x
+                }
+                const length = Math.max(1e-3, Math.hypot(drag.tangentX, drag.tangentY))
+                if (length < minimum) {
+                    drag.tangentX *= minimum / length
+                    drag.tangentY *= minimum / length
+                }
             }
         }
         explode.beginInteraction(handleNodeIds)
@@ -585,7 +651,7 @@ Item {
             handleReadoutPosition = Qt.point(x, y)
             return
         }
-        const axis = handleAxis(drag.axis)
+        const axis = drag.axisVector
         if (drag.kind === "move") {
             const travel = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.axisX, drag.axisY, drag.millimetres)
             const snapped = explode.snapTranslation(travel, free)
@@ -595,9 +661,13 @@ Item {
         } else {
             let degrees = 0
             if (drag.mode === "angle") {
-                const angle = handleMath.screenAngle(x, y, drag.centreScreen)
-                drag.turned += handleMath.angleStep(drag.lastAngle, angle)
-                drag.lastAngle = angle
+                // Over the centre the pointer's angle is noise, and crossing it flips by half
+                // a turn: hold the angle there until the pointer is clear again.
+                if (Math.hypot(x - drag.centreScreen.x, y - drag.centreScreen.y) > 8) {
+                    const angle = handleMath.screenAngle(x, y, drag.centreScreen)
+                    drag.turned += handleMath.angleStep(drag.lastAngle, angle)
+                    drag.lastAngle = angle
+                }
                 degrees = drag.sign * drag.turned
             } else {
                 degrees = handleMath.axisTravel(x - drag.startX, y - drag.startY, drag.tangentX, drag.tangentY, 0.2) * 180 / Math.PI
@@ -1071,6 +1141,8 @@ Item {
         edgeGeometryByNode = ({})
         sectionOverlayModelByNode = ({})
         sectionOverlayGeometryByNode = ({})
+        segmentKeysByNode = ({})
+        sectionSourceDirtyByNode = ({})
         xrayModelBySegment = ({})
         boundsByNode = ({})
         meshRevisionBySegment = ({})
@@ -1136,9 +1208,9 @@ Item {
         // `visible`: in Edges Only, and while a 2D slice is showing, the
         // solid is not drawn but its edges are, and those must stay
         // selectable.
-        // A transparent part lets clicks through to what is behind it -- seeing past it to
-        // the part in focus is the point.
-        model.pickable = shown && !model.transparent
+        // A part made unselectable (Properties > Selectable) lets clicks through to what is
+        // behind it. Transparency alone no longer does: a see-through part stays selectable.
+        model.pickable = shown && controller.isNodeSelectable(model.nodeId)
     }
 
     function applyEdgeState(edgeModel, section, sliceOnlyFinal) {
@@ -1189,9 +1261,9 @@ Item {
         for (let id in modelByNode) {
             const model = modelByNode[id]
             model.sourceColor = root.displayColor(model.nodeId, model.importColor)
-            const overlay = sectionOverlayModelByNode[id]
-            if (overlay) overlay.sourceColor = model.sourceColor
         }
+        for (let nodeId in sectionOverlayModelByNode)
+            sectionOverlayModelByNode[nodeId].sourceColor = sectionCapColor(nodeId)
     }
 
     function applySection() {
@@ -1231,9 +1303,9 @@ Item {
         }
         const queue = []
         if (section.enabled && (section.sliceOnly || section.capEnabled)) {
-            for (let id in geometryByNode) {
-                const overlay = ensureSectionOverlay(id)
-                if (overlay) queue.push({ geometry: overlay, nodeId: modelByNode[id].nodeId })
+            for (let nodeId in segmentKeysByNode) {
+                const overlay = ensureSectionOverlay(nodeId)
+                if (overlay) queue.push({ geometry: overlay, nodeId: nodeId })
             }
         }
         sectionApplyRequest = queue.length > 0 ? {
@@ -1294,27 +1366,68 @@ Item {
     // each part's progress: set it when that changes.
     onSectionFinalizingChanged: applyRenderMode()
 
-    function ensureSectionOverlay(segmentKey) {
+    // A part's segments, in the order they arrived.
+    function noteSegment(nodeId, segmentKey) {
+        let keys = segmentKeysByNode[nodeId]
+        if (!keys) {
+            keys = []
+            segmentKeysByNode[nodeId] = keys
+        }
+        if (keys.indexOf(segmentKey) < 0) keys.push(segmentKey)
+        sectionSourceDirtyByNode[nodeId] = true
+    }
+
+    // The cut face takes the colour most of the part is drawn in.
+    function sectionCapColor(nodeId) {
+        let best = null
+        let bestCount = -1
+        for (const key of segmentKeysByNode[nodeId] || []) {
+            const model = modelByNode[key]
+            const geometry = geometryByNode[key]
+            if (!model || !geometry) continue
+            const count = geometry.sourceTriangleCount()
+            if (count > bestCount) {
+                best = model.sourceColor
+                bestCount = count
+            }
+        }
+        return best !== null ? best : root.theme.neutralBody
+    }
+
+    // The part's cap, built from every one of its meshes, and rebuilt when one of them changed.
+    function ensureSectionOverlay(nodeId) {
         if (root.presentationOnly) return null
-        const existing = sectionOverlayGeometryByNode[segmentKey]
-        if (existing) return existing
-        const sourceGeometry = geometryByNode[segmentKey]
-        const sourceModel = modelByNode[segmentKey]
-        if (!sourceGeometry || !sourceModel) return null
+        const keys = segmentKeysByNode[nodeId]
+        if (!keys || keys.length === 0) return null
+        const sources = []
+        for (const key of keys) {
+            if (geometryByNode[key]) sources.push(geometryByNode[key])
+        }
+        if (sources.length === 0) return null
+        const existing = sectionOverlayGeometryByNode[nodeId]
+        if (existing) {
+            if (sectionSourceDirtyByNode[nodeId]) {
+                existing.copySectionOverlayFromSources(sources)
+                sectionOverlayModelByNode[nodeId].sourceColor = sectionCapColor(nodeId)
+                delete sectionSourceDirtyByNode[nodeId]
+            }
+            return existing
+        }
 
         const overlayGeometry = geometryComponent.createObject(sceneRoot)
-        if (!overlayGeometry.copySectionOverlayFrom(sourceGeometry)) {
+        if (!overlayGeometry.copySectionOverlayFromSources(sources)) {
             overlayGeometry.destroy()
             return null
         }
+        delete sectionSourceDirtyByNode[nodeId]
         overlayGeometry.sectionBusyChanged.connect(function() { root.sectionBuildBusyChanged(overlayGeometry.sectionBusy) })
-        const overlayModel = sectionOverlayModelComponent.createObject(partNode(sourceModel.nodeId), {
+        const overlayModel = sectionOverlayModelComponent.createObject(partNode(nodeId), {
             "geometry": overlayGeometry,
-            "nodeId": sourceModel.nodeId,
-            "sourceColor": sourceModel.sourceColor
+            "nodeId": nodeId,
+            "sourceColor": sectionCapColor(nodeId)
         })
-        sectionOverlayGeometryByNode[segmentKey] = overlayGeometry
-        sectionOverlayModelByNode[segmentKey] = overlayModel
+        sectionOverlayGeometryByNode[nodeId] = overlayGeometry
+        sectionOverlayModelByNode[nodeId] = overlayModel
         return overlayGeometry
     }
 
@@ -1338,8 +1451,7 @@ Item {
         if (geometryByNode[segmentKey]) {
             const geometry = geometryByNode[segmentKey]
             if (!geometry.replaceWorkerMesh(meshJson)) return
-            const overlayGeometry = sectionOverlayGeometryByNode[segmentKey]
-            if (overlayGeometry) overlayGeometry.copySectionOverlayFrom(geometry)
+            sectionSourceDirtyByNode[nodeId] = true
             const model = modelByNode[segmentKey]
             if (model) {
                 model.importColor = sourceColor
@@ -1364,6 +1476,7 @@ Item {
         geometryByNode[segmentKey] = geometry
         modelByNode[segmentKey] = model
         xrayModelBySegment[segmentKey] = xrayModel
+        noteSegment(nodeId, segmentKey)
         includeGeometryBounds(nodeId, segmentKey)
         // Only the new model's own state. Re-walking every model here made a replay of N
         // segments cost N^2, which is most of what entering a workspace used to spend.
@@ -1430,8 +1543,8 @@ Item {
         // The refined tessellation: every copy draws it at once.
         if (!geometry.replaceWorkerMesh(meshJson)) return
         for (const segmentKey of instanceSegmentsByKey[sourceKey] || []) {
-            const overlay = sectionOverlayGeometryByNode[segmentKey]
-            if (overlay) overlay.copySectionOverlayFrom(geometry)
+            const model = modelByNode[segmentKey]
+            if (model) sectionSourceDirtyByNode[model.nodeId] = true
         }
         scheduleSectionForNewGeometry()
     }
@@ -1486,6 +1599,7 @@ Item {
         copies.push(segmentKey)
         modelByNode[segmentKey] = model
         xrayModelBySegment[segmentKey] = xrayModel
+        noteSegment(nodeId, segmentKey)
         includeGeometryBounds(nodeId, segmentKey)
         const section = !presentationOnly && controller ? controller.section : null
         applySolidState(model, sliceOnlyFinalState(section))
@@ -1581,7 +1695,7 @@ Item {
             return false
         }
         if (root.measurementActive) {
-            acceptMeasurementHit(hit)
+            acceptMeasurementHit(hit, additive)
         } else {
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
                                                 hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive)
@@ -1589,43 +1703,95 @@ Item {
         return true
     }
 
-    function topologyPickFromHit(hit) {
-        if (!root.controller || !hit.objectHit || !hit.objectHit.nodeId) return null
-        const mode = root.controller.measurement.mode
-        const nodeId = hit.objectHit.nodeId
-        let sourceGeometry = null
-        let info = null
+    // What a click at this hit would pick in the current mode, as the CAD tools snap: in
+    // point to point a vertex, else a circle's centre, else a point on an edge, else the point
+    // on the face; for the other modes the whole edge or face the mode is about. Null when
+    // the mode measures whole parts (volume, bounds) or nothing is there.
+    //   { nodeId, entity (a MeasureEntity), info (its description), entityKind ("face" or
+    //     "edge", what to highlight), topologyId, sourceGeometry, placementNode }
+    // `withShape` asks for a face's triangles too: only an accepted surface-to-surface pick
+    // needs them, and copying them on every hover would cost for nothing.
+    function measureCandidateAt(hit, withShape) {
+        if (!root.controller || !hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return null
+        const measurement = root.controller.measurement
+        const mode = measurement.mode
+        if (mode === 6 || mode === 7) return null
+        const model = hit.objectHit
+        const nodeId = model.nodeId
         // The part's geometry (faces and edges alike) is in its own frame -- a copy of a shared
-        // mesh, an exploded part -- so the hit is taken into it, as facePickFromHit does.
-        const local = hit.objectHit.mapPositionFromScene(hit.scenePosition)
-        if (mode === 1 || mode === 3) {
-            sourceGeometry = edgeGeometryByNode[nodeId]
-            if (sourceGeometry) {
-                const tolerance = Math.max(root.sceneDiagonal * 0.001, root.sectionWorldPerPixel * 10)
-                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z, tolerance)
-                if (info && mode === 3 && info.radiusMm <= 0) info = null
-            }
-            if (!info && mode === 3 && hit.objectHit.geometry) {
-                sourceGeometry = hit.objectHit.geometry
-                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z)
-                if (info && info.radiusMm <= 0) info = null
-            }
-        } else if (mode === 2 || mode === 4 || mode === 5) {
-            sourceGeometry = hit.objectHit.geometry
-            if (sourceGeometry)
-                info = sourceGeometry.topologyAtPoint(local.x, local.y, local.z)
+        // mesh, an exploded part -- so the hit is taken into it, and the entity back out.
+        const local = model.mapPositionFromScene(hit.scenePosition)
+        const toScene = model.sceneTransform
+        const pixel = root.worldPerPixelAt(hit.scenePosition)
+        const edgeGeometry = edgeGeometryByNode[nodeId]
+        const edgeModel = edgeModelByNode[nodeId]
+        const edgeToScene = edgeModel ? edgeModel.sceneTransform : toScene
+        let entity = undefined
+        let entityKind = ""
+        let sourceGeometry = null
+        let topologyId = 0
+        let placementNode = model.parent
+
+        const takeFace = function() {
+            const geometry = model.geometry
+            const info = geometry ? geometry.topologyAtPoint(local.x, local.y, local.z) : null
+            if (!info || !info.topologyId) return false
+            entity = geometry.faceEntity(info.topologyId, toScene, hit.scenePosition, hit.sceneNormal, withShape === true)
+            if (!entity) return false
+            entityKind = "face"
+            sourceGeometry = geometry
+            topologyId = info.topologyId
+            return true
         }
-        if (!info || !info.topologyId) return null
+        const takeEdge = function(round) {
+            if (!edgeGeometry) return false
+            // Within a few pixels of the pointer, whatever the zoom.
+            const info = edgeGeometry.topologyAtPoint(local.x, local.y, local.z, pixel * root.measureEdgePixels)
+            if (!info || !info.topologyId || (round && info.radiusMm <= 0)) return false
+            entity = edgeGeometry.edgeEntity(info.topologyId, edgeToScene, hit.scenePosition)
+            if (!entity) return false
+            entityKind = "edge"
+            sourceGeometry = edgeGeometry
+            topologyId = info.topologyId
+            placementNode = edgeModel ? edgeModel.parent : model.parent
+            return true
+        }
+
+        if (mode === 0) {
+            const snap = edgeGeometry ? edgeGeometry.snapPointAt(local.x, local.y, local.z, pixel * root.measureEdgePixels,
+                                                                 pixel * root.measureVertexPixels, edgeToScene) : undefined
+            if (snap) {
+                entity = snap
+                entityKind = "edge"
+                sourceGeometry = edgeGeometry
+                topologyId = measurement.describe(snap).topologyId
+                placementNode = edgeModel ? edgeModel.parent : model.parent
+            } else {
+                // A point on the face, with the face lit so it is clear which one.
+                takeFace()
+                entity = measurement.surfacePointEntity(hit.scenePosition, hit.sceneNormal)
+            }
+        } else if (mode === 1) {
+            takeEdge(false)
+        } else if (mode === 2 || mode === 5) {
+            takeFace()
+        } else if (mode === 3) {
+            // Round first; failing that, whatever is there, so the hover can say it is not round.
+            if (!takeEdge(true) && !takeFace()) takeEdge(false)
+        } else if (mode === 4) {
+            if (!takeEdge(false)) takeFace()
+        }
+        if (!entity) return null
+        const info = measurement.describe(entity)
         return {
             nodeId: nodeId,
-            entityKind: info.entityKind,
-            topologyId: info.topologyId,
-            measureMm: info.measureMm,
-            radiusMm: info.radiusMm,
+            entity: entity,
+            info: info,
+            entityKind: entityKind,
+            topologyId: topologyId,
             sourceGeometry: sourceGeometry,
-            placementNode: hit.objectHit.parent,
-            point: hit.scenePosition,
-            normal: hit.sceneNormal
+            placementNode: placementNode,
+            point: info.point
         }
     }
 
@@ -1639,10 +1805,15 @@ Item {
     }
 
     function showHoverTopology(pick) {
+        const same = pick && root.hoverTopology && pick.sourceGeometry === root.hoverTopology.sourceGeometry
+                && pick.topologyId === root.hoverTopology.topologyId && pick.entityKind === root.hoverTopology.entityKind
         root.hoverTopology = pick
+        // The pointer moved along the same face or edge: its highlight stands, only the snap
+        // point and the chip follow.
+        if (same) return
         hoverFaceHighlight.clearTopology()
         hoverEdgeGeometry.clearEdges()
-        if (!pick) return
+        if (!pick || !pick.sourceGeometry || !pick.topologyId) return
         if (pick.entityKind === "face") {
             hoverFaceHighlight.position = placementPosition(pick)
             hoverFaceHighlight.rotation = placementRotation(pick)
@@ -1661,30 +1832,43 @@ Item {
         hoverEdgeGeometry.clearEdges()
     }
 
-    function acceptMeasurementHit(hit) {
+    function acceptMeasurementHit(hit, additive) {
         const mode = root.controller.measurement.mode
-        if (mode === 0) {
-            root.controller.acceptViewPick(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                           hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
-            return
-        }
         if (mode === 6 || mode === 7) {
+            // Shift or Ctrl/Cmd adds parts, and volume and bounds add them up.
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z)
+                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive === true)
             return
         }
-        const pick = topologyPickFromHit(hit)
-        if (!pick) return
-        if (!root.controller.acceptTopologyPick(pick.nodeId, pick.entityKind, pick.topologyId,
-                                                pick.point.x, pick.point.y, pick.point.z,
-                                                pick.normal.x, pick.normal.y, pick.normal.z,
-                                                pick.measureMm, pick.radiusMm)) return
-        const maximum = mode === 2 || mode === 4 ? 2 : 1
-        let next = root.acceptedTopologies.slice()
-        if (next.length >= maximum) next = []
-        next.push(pick)
-        root.acceptedTopologies = next
+        // Surface to surface measures between whole faces, so it takes the face's triangles.
+        const pick = measureCandidateAt(hit, mode === 2)
+        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity, additive === true)) return
+        syncAcceptedTopologies(pick)
         showHoverTopology(null)
+        // The hover is the next candidate, at once: no move needed to see it.
+        updateHover(input.mouseX, input.mouseY)
+    }
+
+    // The lit faces and edges follow the controller's picks: a new measurement starts them
+    // over, an added pick joins them, one taken back out of a total leaves.
+    function syncAcceptedTopologies(latest) {
+        const picked = root.controller ? root.controller.measurement.pickedEntities : []
+        const known = root.acceptedTopologies.slice()
+        if (latest && latest.sourceGeometry && latest.topologyId
+                && (latest.info.kind === "edge" || latest.info.kind === "face")) known.push(latest)
+        const next = []
+        for (const entry of picked) {
+            if (entry.entityKind !== "edge" && entry.entityKind !== "face") continue
+            for (let index = known.length - 1; index >= 0; --index) {
+                const candidate = known[index]
+                if (candidate.nodeId === entry.nodeId && candidate.topologyId === entry.topologyId
+                        && candidate.entityKind === entry.entityKind) {
+                    next.push(candidate)
+                    break
+                }
+            }
+        }
+        root.acceptedTopologies = next
     }
 
     // A face pick independent of the measurement mode, so the drawing workspace can pick and
@@ -1807,13 +1991,14 @@ Item {
     }
 
     function updateHover(x, y) {
+        root.hoverPointer = Qt.point(x, y)
         const hit = view.pick(x, y)
         const nodeId = hit.objectHit && hit.objectHit.nodeId ? hit.objectHit.nodeId : ""
         if (hoveredNodeId !== nodeId) hoveredNodeId = nodeId
         if (root.faceFrameSelectionEnabled)
             showHoverTopology(root.facePickFromHit(hit))
         else if (root.measurementActive && hit.objectHit && hit.objectHit.nodeId)
-            showHoverTopology(topologyPickFromHit(hit))
+            showHoverTopology(measureCandidateAt(hit, false))
         else if (root.hoverTopology)
             showHoverTopology(null)
     }
@@ -1922,7 +2107,9 @@ Item {
                                          && root.controller.isNodeSelected(nodeId))
                                         || root.nodeMatchesSelection(nodeId, root.externalHighlightNodeId))
             property bool hovered: !selected && root.hoveredNodeId === nodeId
-            property bool inspectionHovered: hovered && !root.measurementActive && root.componentHoverEnabled
+            // Volume and bounds measure the whole part, so the part is what the hover shows.
+            property bool inspectionHovered: hovered && root.componentHoverEnabled
+                                             && (!root.measurementActive || root.showComponentSelection)
             property bool transparent: false
             // The part's own opacity while transparent (Properties > Opacity).
             property real transparentOpacity: 0.45
@@ -2519,43 +2706,27 @@ Item {
         }
     }
 
-    Item {
-        id: measurementPickOverlay
-        visible: !root.presentationOnly && root.controller && root.controller.measurement.pickedPoints.length > 0
+    MeasurementOverlay {
+        id: measurementOverlay
+        objectName: "measurementOverlay"
         anchors.fill: parent
         z: 4
         enabled: false
-
-        Repeater {
-            model: root.controller ? root.controller.measurement.pickedPoints : []
-            delegate: Rectangle {
-                required property var modelData
-                readonly property point screenPosition: {
-                    // mapFrom3DScene has no declared camera dependency, so keep
-                    // the overlay projection synchronized with navigation.
-                    const navigationRevision = navigation.revision
-                    if (navigationRevision < 0) return Qt.point(-10000, -10000)
-                    return view.mapFrom3DScene(modelData)
-                }
-                width: 24
-                height: 24
-                radius: 12
-                x: screenPosition.x - width / 2
-                y: screenPosition.y - height / 2
-                color: viewportVisualTheme.selectionColor
-                border.color: viewportVisualTheme.markerBorder
-                border.width: 2
-                visible: screenPosition.x >= -width && screenPosition.x <= parent.width
-                         && screenPosition.y >= -height && screenPosition.y <= parent.height
-
-                Label {
-                    anchors.centerIn: parent
-                    text: index + 1
-                    color: viewportVisualTheme.sectionLabel
-                    font.bold: true
-                }
-            }
-        }
+        theme: root.theme
+        visualTheme: viewportVisualTheme
+        view: view
+        revision: navigation.revision
+        measurement: root.controller ? root.controller.measurement : null
+        // Pinned results stay when the tool closes; the one in progress shows while measuring.
+        visible: !root.presentationOnly && root.controller !== null
+                 && (root.measurementActive || root.controller.measurement.pickedPoints.length > 0
+                     || root.controller.measurement.pinnedResults.length > 0)
+        showCurrent: root.measurementActive || (root.controller !== null && root.controller.measurement.pickedPoints.length > 0)
+        // The hover is for aiming; a capture shows the result only, and only if asked to.
+        hover: root.measurementActive ? root.hoverTopology : null
+        pointer: root.hoverPointer
+        showHover: root.measurementActive && !root.captureUiHidden && input.containsMouse && input.pressedButtons === Qt.NoButton
+        showResult: !root.captureUiHidden || (root.controller !== null && root.controller.capture.includeMeasurements)
     }
 
     // Two-finger touch gestures: pinch to zoom, drag to pan, twist to roll.
@@ -2743,6 +2914,7 @@ Item {
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Hide"), qsTr("Hide %1 selected")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.hideActiveNode() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: root.transparencyActionText(); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.toggleTransparentSelection() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Make others transparent"); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.makeOthersTransparent() }
+        ThemedMenuItem { theme: componentContextMenu.theme; text: root.selectionActionText(qsTr("Make unselectable"), qsTr("Make %1 parts unselectable")); enabled: root.controller && root.controller.activeNodeId.length > 0; onTriggered: root.controller.setSelectionSelectable(false) }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Show all"); enabled: root.controller; onTriggered: root.controller.showAllNodes() }
         ThemedMenuItem { theme: componentContextMenu.theme; text: qsTr("Undo visibility change"); enabled: root.controller && root.controller.canRestoreVisibility; onTriggered: root.controller.restoreVisibility() }
         ThemedMenuSeparator { theme: componentContextMenu.theme; visible: root.explodedLayout }
@@ -2941,10 +3113,19 @@ Item {
                  && !root.isTextEditFocused()
         onActivated: root.explode.redo()
     }
+    // Esc clears the measurement first; pressed again it does what it otherwise does.
+    readonly property bool measurementHasPicks: root.measurementActive && root.controller !== null
+                                               && root.controller.measurement.pickedEntities.length > 0
+    Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && !root.presentationOnly && root.measurementHasPicks && !sectionArrowInput.dragging
+                 && root.handleDrag === null && !root.pickingPivot
+        onActivated: root.controller.measurement.clearPicks()
+    }
     Shortcut {
         sequence: "Esc"
         enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null
-                                  && !root.pickingPivot)
+                                  && !root.pickingPivot && !root.measurementHasPicks)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")
@@ -3003,6 +3184,9 @@ Item {
         function onResultChanged() {
             if (root.controller && root.controller.measurement.pickedEntities.length === 0)
                 root.clearMeasurementHighlights()
+            // A pick taken out of a total from the panel.
+            else if (root.acceptedTopologies.length > root.controller.measurement.pickedEntities.length)
+                root.syncAcceptedTopologies(null)
         }
     }
 }

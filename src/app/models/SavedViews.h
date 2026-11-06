@@ -9,8 +9,9 @@
 namespace loupe::app::models {
 
 // The Inspect workspace's saved views (Views tool window), like Photoshop snapshots or a
-// CAD tool's saved orientations: named display states (what is hidden or transparent)
-// and named camera views (where the camera is). Kept per STEP file on this computer --
+// CAD tool's saved orientations: named display states (what is hidden or transparent),
+// named camera views (where the camera is) and named exploded layouts (where each part
+// has been moved and turned to). Kept per STEP file on this computer --
 // in the app's settings, keyed by the file's path, with a thumbnail image each -- and
 // never written into the file.
 class SavedViews final : public QObject {
@@ -19,6 +20,7 @@ class SavedViews final : public QObject {
     // epoch), thumbnail (a file URL, or empty). Newest first.
     Q_PROPERTY(QVariantList displayStates READ displayStates NOTIFY changed)
     Q_PROPERTY(QVariantList cameraViews READ cameraViews NOTIFY changed)
+    Q_PROPERTY(QVariantList explodeLayouts READ explodeLayouts NOTIFY changed)
 
 public:
     explicit SavedViews(QObject* parent = nullptr);
@@ -31,10 +33,13 @@ public:
     [[nodiscard]] QVariantMap data(const QString& id) const;
     [[nodiscard]] QVariantList displayStates() const { return entriesOf(QStringLiteral("display")); }
     [[nodiscard]] QVariantList cameraViews() const { return entriesOf(QStringLiteral("camera")); }
+    [[nodiscard]] QVariantList explodeLayouts() const { return entriesOf(QStringLiteral("layout")); }
+    // Save over an entry, keeping its name and place: what it holds now.
+    bool replace(const QString& id, const QString& summary, const QVariantMap& data);
 
     Q_INVOKABLE void rename(const QString& id, const QString& name);
     Q_INVOKABLE void remove(const QString& id);
-    // "Display 3", "View 2": the next unused default name for a kind.
+    // "Display 3", "View 2", "Layout 4": the next unused default name for a kind.
     Q_INVOKABLE [[nodiscard]] QString nextName(const QString& kind) const;
     // Where the viewport saves an entry's thumbnail, and to call once it has.
     Q_INVOKABLE [[nodiscard]] QString thumbnailPath(const QString& id) const;
