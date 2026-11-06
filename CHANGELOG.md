@@ -14,9 +14,14 @@ v0.1.6-beta.3 is included.
   blue, teal, rose, violet, slate).
 - **Measurement tags are cards**: the theme's surface and text with an outline in the
   result's colour, instead of white on brown, so they read in both themes.
+- **Bounds reads as a box**: its faces are shaded faintly under the dashed edges, with its X,
+  Y and Z sizes on three of them.
 
 ### Fixed
 
+- **Adding to a measurement with Shift or Ctrl/⌘** did nothing in beta.3: edge length and
+  area did not add up, and volume and bounds did not take more parts. The click passed the
+  modifier keys on as a number where a yes or no was expected.
 - **Updating a copy in Program Files, again** (Windows): the update still left the old version
   in place. Before asking for administrator permission, the update first tried the copy as
   you, and Windows refused each of the package's ~2500 files only after two retries, five

@@ -1837,12 +1837,12 @@ Item {
         if (mode === 6 || mode === 7) {
             // Shift or Ctrl/Cmd adds parts, and volume and bounds add them up.
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive === true)
+                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, !!additive)
             return
         }
         // Surface to surface measures between whole faces, so it takes the face's triangles.
         const pick = measureCandidateAt(hit, mode === 2)
-        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity, additive === true)) return
+        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity, !!additive)) return
         syncAcceptedTopologies(pick)
         showHoverTopology(null)
         // The hover is the next candidate, at once: no move needed to see it.
@@ -2643,9 +2643,9 @@ Item {
                 root.reportFaceFrameAt(mouse.x, mouse.y)
             }
             if (!dragging && pressButton === Qt.LeftButton && root.selectionEnabled) {
-                const additive = (mouse.modifiers & Qt.ShiftModifier)
-                        || (mouse.modifiers & Qt.ControlModifier)
-                        || (mouse.modifiers & Qt.MetaModifier)
+                // A boolean, not the modifier bits: `additive === true` downstream took the
+                // bits for "no", and Shift or Ctrl/Cmd never added a pick to a total.
+                const additive = (mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)) !== 0
                 root.pickAt(mouse.x, mouse.y, additive)
                 root.rememberFaceAt(mouse.x, mouse.y)
             }

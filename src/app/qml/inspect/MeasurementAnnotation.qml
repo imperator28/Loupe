@@ -234,6 +234,51 @@ Item {
         return chosen
     }
 
+    // The box's six faces, faintly shaded in its colour, so it reads as a solid box and not
+    // only as lines; where faces overlap on screen the shade deepens, which shows its depth.
+    readonly property var boxFaces: [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]]
+    readonly property color faceShade: Qt.rgba(lineColor.r, lineColor.g, lineColor.b, pinned ? 0.05 : 0.07)
+    function facePath(face) {
+        if (corners.length !== 8) return []
+        const f = boxFaces[face]
+        return [corners[f[0]], corners[f[1]], corners[f[2]], corners[f[3]], corners[f[0]]]
+    }
+    Shape {
+        objectName: "measurementBoxFaces"
+        anchors.fill: parent
+        visible: root.kind === "box" && root.corners.length === 8
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathPolyline { path: root.facePath(0) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathPolyline { path: root.facePath(1) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathPolyline { path: root.facePath(2) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathPolyline { path: root.facePath(3) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathPolyline { path: root.facePath(4) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathPolyline { path: root.facePath(5) }
+        }
+    }
     Shape {
         objectName: "measurementBox"
         anchors.fill: parent
