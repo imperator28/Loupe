@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.1.6-beta.4
+
+A testing build that fixes in-app updates of a copy in `C:\Program Files` on Windows.
+Published as a pre-release; everything in v0.1.6-beta.3 is included.
 
 ### Fixed
 
@@ -10,6 +13,10 @@
   times over: hours, in a hidden window, before the prompt. It now checks once whether it can
   write to Loupe's folder and, when it cannot, asks for permission straight away. The update
   panel says beforehand that Windows will ask.
+
+Coming from beta.2 or beta.3 installed in Program Files: those versions still run the old
+update, so install this beta once by hand (unzip it over the Loupe folder as an
+administrator). Updates after this one work in place.
 
 ## v0.1.6-beta.3
 
