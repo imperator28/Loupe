@@ -27,6 +27,9 @@ function(loupe_add_worker target use_mimalloc)
             # The redirect takes effect only when mimalloc.dll comes first in the executable's
             # import table, which the link order does not guarantee: mimalloc's own minject
             # moves it there. Without it the worker runs on the system allocator, and says so.
+            # Import order cannot help where an endpoint-security agent injects a module that
+            # starts the C runtime before any of the worker's imports (SentinelOne does): the
+            # redirect then declines, and the worker names that module in its allocator report.
             find_program(LOUPE_MINJECT minject
                 HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/mimalloc" NO_DEFAULT_PATH)
             if (LOUPE_MINJECT)
