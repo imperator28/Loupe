@@ -94,6 +94,14 @@ Item {
         }
         return result
     }
+    // As an SVG path: what the icons draw with, on every graphics back end.
+    readonly property string hoverPath: {
+        const points = hoverPolyline
+        if (points.length < 2) return ""
+        let path = "M " + points[0].x.toFixed(1) + " " + points[0].y.toFixed(1)
+        for (let index = 1; index < points.length; ++index) path += " L " + points[index].x.toFixed(1) + " " + points[index].y.toFixed(1)
+        return path
+    }
     Shape {
         objectName: "measurementHoverEdge"
         anchors.fill: parent
@@ -105,7 +113,7 @@ Item {
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathPolyline { path: root.hoverPolyline }
+            PathSvg { path: root.hoverPath }
         }
         ShapePath {
             strokeColor: root.hoverColor
@@ -113,7 +121,7 @@ Item {
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathPolyline { path: root.hoverPolyline }
+            PathSvg { path: root.hoverPath }
         }
     }
 

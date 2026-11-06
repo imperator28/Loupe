@@ -19,6 +19,9 @@ v0.1.6-beta.3 is included.
 
 ### Fixed
 
+- **The bounds box drew only its sizes** on Windows in beta.3, without the box: its dashed
+  edges never appeared. Measurement lines are now drawn the way the app's icons are, which
+  every graphics back end draws.
 - **Adding to a measurement with Shift or Ctrl/⌘** did nothing in beta.3: edge length and
   area did not add up, and volume and bounds did not take more parts. The click passed the
   modifier keys on as a number where a yes or no was expected.

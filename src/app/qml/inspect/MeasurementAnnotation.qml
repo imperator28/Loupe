@@ -45,6 +45,35 @@ Item {
         return pinned && title.length > 0 && kind !== "box" ? title + "  " + text : text
     }
 
+    // Lines are drawn as SVG path strings, and dashes are cut here rather than by the stroke:
+    // the curve renderer drew neither a PathMultiline nor a dashed stroke on Windows, so the
+    // bounds box showed its sizes and no box. PathSvg is what the icons draw with everywhere.
+    function svgLine(points, closed) {
+        if (!points || points.length < 2) return ""
+        let path = "M " + points[0].x.toFixed(1) + " " + points[0].y.toFixed(1)
+        for (let index = 1; index < points.length; ++index)
+            path += " L " + points[index].x.toFixed(1) + " " + points[index].y.toFixed(1)
+        return closed ? path + " Z" : path
+    }
+    // Each [from, to] pair as dashes `dash` long with `gap` between, on screen.
+    function svgDashes(pairs, dash, gap) {
+        let path = ""
+        for (const pair of pairs) {
+            const a = pair[0]
+            const b = pair[1]
+            const length = Math.hypot(b.x - a.x, b.y - a.y)
+            if (!(length > 0) || length > 20000) continue
+            const ux = (b.x - a.x) / length
+            const uy = (b.y - a.y) / length
+            for (let at = 0; at < length; at += dash + gap) {
+                const end = Math.min(length, at + dash)
+                path += " M " + (a.x + ux * at).toFixed(1) + " " + (a.y + uy * at).toFixed(1)
+                      + " L " + (a.x + ux * end).toFixed(1) + " " + (a.y + uy * end).toFixed(1)
+            }
+        }
+        return path
+    }
+
     function screenPath(scenePoints) {
         const result = []
         if (!scenePoints) return result
@@ -86,7 +115,7 @@ Item {
         delegate: Shape {
             id: edgeShape
             required property var modelData
-            readonly property var path: root.screenPath(modelData)
+            readonly property string path: root.svgLine(root.screenPath(modelData), false)
             anchors.fill: parent
             preferredRendererType: Shape.CurveRenderer
             ShapePath {
@@ -95,7 +124,7 @@ Item {
                 fillColor: "transparent"
                 capStyle: ShapePath.RoundCap
                 joinStyle: ShapePath.RoundJoin
-                PathPolyline { path: edgeShape.path }
+                PathSvg { path: edgeShape.path }
             }
             ShapePath {
                 strokeColor: root.lineColor
@@ -103,7 +132,7 @@ Item {
                 fillColor: "transparent"
                 capStyle: ShapePath.RoundCap
                 joinStyle: ShapePath.RoundJoin
-                PathPolyline { path: edgeShape.path }
+                PathSvg { path: edgeShape.path }
             }
         }
     }
@@ -153,7 +182,8 @@ Item {
     }
 
     // ---- Angle: an arc from one pick to the other, a leg along each ----
-    readonly property var arcPath: kind === "angle" ? screenPath(annotation.arc) : []
+    readonly property var arcPoints: kind === "angle" ? screenPath(annotation.arc) : []
+    readonly property string arcPath: svgLine(arcPoints, false)
     readonly property point arcCentre: kind === "angle" ? projector.project(annotation.centre) : Qt.point(0, 0)
     readonly property point legFrom: kind === "angle" ? projector.project(annotation.legFrom) : Qt.point(0, 0)
     readonly property point legTo: kind === "angle" ? projector.project(annotation.legTo) : Qt.point(0, 0)
@@ -161,7 +191,7 @@ Item {
     Shape {
         objectName: "measurementAngleArc"
         anchors.fill: parent
-        visible: root.kind === "angle" && root.arcPath.length > 1
+        visible: root.kind === "angle" && root.arcPoints.length > 1
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeColor: root.halo
@@ -169,7 +199,7 @@ Item {
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathPolyline { path: root.arcPath }
+            PathSvg { path: root.arcPath }
         }
         // The legs: from where the picks meet, out along each one, so it reads which to which.
         ShapePath {
@@ -177,12 +207,7 @@ Item {
             strokeWidth: 1.25
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
-            strokeStyle: ShapePath.DashLine
-            dashPattern: [4, 3]
-            PathMove { x: root.arcCentre.x; y: root.arcCentre.y }
-            PathLine { x: root.legFrom.x; y: root.legFrom.y }
-            PathMove { x: root.arcCentre.x; y: root.arcCentre.y }
-            PathLine { x: root.legTo.x; y: root.legTo.y }
+            PathSvg { path: root.svgDashes([[root.arcCentre, root.legFrom], [root.arcCentre, root.legTo]], 4, 3) }
         }
         ShapePath {
             strokeColor: root.lineColor
@@ -190,7 +215,7 @@ Item {
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathPolyline { path: root.arcPath }
+            PathSvg { path: root.arcPath }
         }
     }
 
@@ -241,7 +266,7 @@ Item {
     function facePath(face) {
         if (corners.length !== 8) return []
         const f = boxFaces[face]
-        return [corners[f[0]], corners[f[1]], corners[f[2]], corners[f[3]], corners[f[0]]]
+        return [corners[f[0]], corners[f[1]], corners[f[2]], corners[f[3]]]
     }
     Shape {
         objectName: "measurementBoxFaces"
@@ -251,32 +276,32 @@ Item {
         ShapePath {
             strokeColor: "transparent"
             fillColor: root.faceShade
-            PathPolyline { path: root.facePath(0) }
+            PathSvg { path: root.svgLine(root.facePath(0), true) }
         }
         ShapePath {
             strokeColor: "transparent"
             fillColor: root.faceShade
-            PathPolyline { path: root.facePath(1) }
+            PathSvg { path: root.svgLine(root.facePath(1), true) }
         }
         ShapePath {
             strokeColor: "transparent"
             fillColor: root.faceShade
-            PathPolyline { path: root.facePath(2) }
+            PathSvg { path: root.svgLine(root.facePath(2), true) }
         }
         ShapePath {
             strokeColor: "transparent"
             fillColor: root.faceShade
-            PathPolyline { path: root.facePath(3) }
+            PathSvg { path: root.svgLine(root.facePath(3), true) }
         }
         ShapePath {
             strokeColor: "transparent"
             fillColor: root.faceShade
-            PathPolyline { path: root.facePath(4) }
+            PathSvg { path: root.svgLine(root.facePath(4), true) }
         }
         ShapePath {
             strokeColor: "transparent"
             fillColor: root.faceShade
-            PathPolyline { path: root.facePath(5) }
+            PathSvg { path: root.svgLine(root.facePath(5), true) }
         }
     }
     Shape {
@@ -288,16 +313,14 @@ Item {
             strokeColor: root.lineColor
             strokeWidth: 1.25
             fillColor: "transparent"
-            strokeStyle: ShapePath.DashLine
-            dashPattern: [5, 3]
-            PathMultiline {
-                paths: {
-                    const result = []
-                    if (root.corners.length !== 8) return result
+            PathSvg {
+                path: {
+                    const pairs = []
+                    if (root.corners.length !== 8) return ""
                     for (const axis of root.boxEdges) {
-                        for (const pair of axis) result.push([root.corners[pair[0]], root.corners[pair[1]]])
+                        for (const pair of axis) pairs.push([root.corners[pair[0]], root.corners[pair[1]]])
                     }
-                    return result
+                    return root.svgDashes(pairs, 5, 3)
                 }
             }
         }
