@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.1.6-beta.4
+
+A testing build that fixes in-app updates of a copy in `C:\Program Files` on Windows, and
+lets pinned measurements be dragged and coloured. Published as a pre-release; everything in
+v0.1.6-beta.3 is included.
+
+### New
+
+- **Pinned measurements, laid out your way**: drag a pinned tag anywhere in the view; its
+  leader keeps pointing at what was measured as the view turns, and double-clicking puts it
+  back. Each pin takes a colour, in turn, and its swatch in the panel picks another (amber,
+  blue, teal, rose, violet, slate).
+- **Measurement tags are cards**: the theme's surface and text with an outline in the
+  result's colour, instead of white on brown, so they read in both themes.
+- **Bounds reads as a box**: its faces are shaded faintly under the dashed edges, with its X,
+  Y and Z sizes on three of them.
+
+### Fixed
+
+- **The bounds box drew only its sizes** on Windows in beta.3, without the box: its dashed
+  edges never appeared. Measurement lines are now drawn the way the app's icons are, which
+  every graphics back end draws.
+- **Adding to a measurement with Shift or Ctrl/⌘** did nothing in beta.3: edge length and
+  area did not add up, and volume and bounds did not take more parts. The click passed the
+  modifier keys on as a number where a yes or no was expected.
+- **Updating a copy in Program Files, again** (Windows): the update still left the old version
+  in place. Before asking for administrator permission, the update first tried the copy as
+  you, and Windows refused each of the package's ~2500 files only after two retries, five
+  times over: hours, in a hidden window, before the prompt. It now checks once whether it can
+  write to Loupe's folder and, when it cannot, asks for permission straight away. The update
+  panel says beforehand that Windows will ask.
+
+Coming from beta.2 or beta.3 installed in Program Files: those versions still run the old
+update, so install this beta once by hand (unzip it over the Loupe folder as an
+administrator). Updates after this one work in place.
+
 ## v0.1.6-beta.3
 
 A testing build of the reworked Measure tool, filled section caps, and saved exploded

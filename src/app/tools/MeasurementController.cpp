@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QPointF>
 
 #include <algorithm>
 #include <cmath>
@@ -327,7 +328,13 @@ void MeasurementController::pinResult()
             edges.append(QVariant(line));
         }
     }
+    // In turn, so pins made one after another read apart; amber, the measurement colour, first.
+    static const QStringList colors{QStringLiteral("amber"), QStringLiteral("blue"), QStringLiteral("teal"),
+                                    QStringLiteral("rose"), QStringLiteral("violet"), QStringLiteral("slate")};
+    const auto color = colors.at(pinCounter_ % colors.size());
     pinned_.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("pin-%1").arg(++pinCounter_)},
+                               {QStringLiteral("color"), color},
+                               {QStringLiteral("offset"), QPointF{}},
                                {QStringLiteral("title"), resultTitle()},
                                {QStringLiteral("text"), QStringLiteral("%1 %2").arg(resultText(), resultUnit()).trimmed()},
                                {QStringLiteral("annotation"), result_.annotation},
@@ -343,6 +350,32 @@ void MeasurementController::unpin(const QString& id)
     for (qsizetype index = 0; index < pinned_.size(); ++index) {
         if (pinned_.at(index).toMap().value(QStringLiteral("id")).toString() != id) continue;
         pinned_.removeAt(index);
+        emit pinnedChanged();
+        return;
+    }
+}
+
+void MeasurementController::setPinColor(const QString& id, const QString& colorKey)
+{
+    for (auto& value : pinned_) {
+        auto pin = value.toMap();
+        if (pin.value(QStringLiteral("id")).toString() != id) continue;
+        if (pin.value(QStringLiteral("color")).toString() == colorKey || colorKey.isEmpty()) return;
+        pin.insert(QStringLiteral("color"), colorKey);
+        value = pin;
+        emit pinnedChanged();
+        return;
+    }
+}
+
+void MeasurementController::setPinOffset(const QString& id, const double x, const double y)
+{
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    for (auto& value : pinned_) {
+        auto pin = value.toMap();
+        if (pin.value(QStringLiteral("id")).toString() != id) continue;
+        pin.insert(QStringLiteral("offset"), QPointF{x, y});
+        value = pin;
         emit pinnedChanged();
         return;
     }

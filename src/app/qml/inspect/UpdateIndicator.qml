@@ -25,7 +25,8 @@ Item {
         bytesReceived: 0,
         bytesTotal: 0,
         availableVersion: "",
-        currentVersion: ""
+        currentVersion: "",
+        installNeedsPermission: false
     })
     function read(name) { return updates ? updates[name] : fallbacks[name] }
     function call(name) { if (updates) updates[name]() }
@@ -207,6 +208,15 @@ Item {
                 Layout.fillWidth: true
                 visible: root.ready
                 text: qsTr("Loupe restarts with your files closed; the new version opens in the same place.")
+                color: root.theme.muted
+                wrapMode: Text.WordWrap
+            }
+            // Program Files: say before the restart that Windows will ask, so the prompt is expected.
+            Label {
+                objectName: "updateNeedsPermission"
+                Layout.fillWidth: true
+                visible: root.ready && root.read("installNeedsPermission") === true
+                text: qsTr("Loupe is in a folder only an administrator can change, so Windows will ask for permission to update it.")
                 color: root.theme.muted
                 wrapMode: Text.WordWrap
             }

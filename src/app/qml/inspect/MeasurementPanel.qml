@@ -220,13 +220,13 @@ Rectangle {
                     implicitWidth: 20
                     implicitHeight: 20
                     radius: 10
-                    color: slot.entry ? root.theme.selectedBody : "transparent"
-                    border.color: slot.entry ? root.theme.selectedBody : slot.next ? root.theme.accent : root.theme.borderStrong
+                    color: slot.entry ? root.theme.measureColor("amber") : "transparent"
+                    border.color: slot.entry ? root.theme.measureColor("amber") : slot.next ? root.theme.accent : root.theme.borderStrong
                     border.width: slot.next ? 2 : 1
                     Label {
                         anchors.centerIn: parent
                         text: slot.index + 1
-                        color: slot.entry ? root.theme.accentForeground : root.subduedForeground
+                        color: slot.entry ? root.theme.surface3 : root.subduedForeground
                         font.pixelSize: root.theme.fontCaption
                         font.weight: Font.Bold
                     }
@@ -472,13 +472,89 @@ Rectangle {
                     onClicked: root.taskController.clearPinned()
                 }
             }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Drag a tag in the view to move it; double-click puts it back.")
+                wrapMode: Text.WordWrap
+                color: root.tertiaryForeground
+                font.pixelSize: root.theme.fontCaption
+            }
             Repeater {
                 model: root.pinned
                 delegate: RowLayout {
+                    id: pinRow
                     required property var modelData
                     Layout.fillWidth: true
                     spacing: 8
-                    ToolIcon { width: 14; height: 14; name: "pin"; color: root.theme.selectedBody }
+                    // Its colour in the view; click to choose another, for what it should say.
+                    AbstractButton {
+                        id: swatch
+                        objectName: "measurePinColor-" + pinRow.modelData.id
+                        implicitWidth: 22
+                        implicitHeight: 22
+                        hoverEnabled: true
+                        Accessible.name: qsTr("Colour of %1").arg(pinRow.modelData.title)
+                        onClicked: palette.opened ? palette.close() : palette.open()
+                        background: Rectangle {
+                            radius: root.theme.radius1
+                            color: swatch.hovered || palette.opened ? root.theme.control : "transparent"
+                        }
+                        contentItem: Item {
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 12
+                                height: 12
+                                radius: 6
+                                color: root.theme.measureColor(pinRow.modelData.color)
+                            }
+                        }
+                        ThemedToolTip { theme: root.theme; text: qsTr("Colour"); visible: swatch.hovered && !palette.opened }
+                        Popup {
+                            id: palette
+                            y: swatch.height + 4
+                            padding: 6
+                            background: Rectangle {
+                                color: root.theme.surface3
+                                radius: root.theme.radius3
+                                border.color: root.theme.border
+                            }
+                            contentItem: Row {
+                                spacing: 4
+                                Repeater {
+                                    model: root.theme.measureColorKeys
+                                    delegate: AbstractButton {
+                                        id: choice
+                                        required property string modelData
+                                        readonly property bool current: pinRow.modelData.color === modelData
+                                        implicitWidth: 24
+                                        implicitHeight: 24
+                                        hoverEnabled: true
+                                        Accessible.name: modelData
+                                        onClicked: {
+                                            root.taskController.setPinColor(pinRow.modelData.id, modelData)
+                                            palette.close()
+                                        }
+                                        background: Rectangle {
+                                            radius: 12
+                                            color: "transparent"
+                                            // The current one ringed, not told by colour alone.
+                                            border.color: choice.current || choice.hovered ? root.theme.foreground : "transparent"
+                                            border.width: choice.current ? 2 : 1
+                                        }
+                                        contentItem: Item {
+                                            Rectangle {
+                                                anchors.centerIn: parent
+                                                width: 16
+                                                height: 16
+                                                radius: 8
+                                                color: root.theme.measureColor(choice.modelData)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Label {
                         text: modelData.title
                         color: root.subduedForeground
