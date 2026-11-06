@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loupe — built by an engineer</title>
+<meta name="description" content="Loupe is a free desktop STEP inspector built by an engineer: open a file fast, present it, explode it, cut it open, measure it, weigh it, and export every part as its own STEP.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#06070B">
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="v2.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js" } }
+</script>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="1.2"/></symbol>
+    <symbol id="i-isolate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></symbol>
+    <symbol id="i-hide" viewBox="0 0 24 24"><path d="M9.9 9.9a3 3 0 1 0 4.2 4.2M10.7 5.1A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13 13 0 0 1-1.7 2.7M6.6 6.6A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6M2 2l20 20"/></symbol>
+    <symbol id="i-transparent" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/></symbol>
+    <symbol id="i-section" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15 21 9"/></symbol>
+    <symbol id="i-explode" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="m10.5 10.5 3 3m0-3-3 3"/></symbol>
+    <symbol id="i-measure" viewBox="0 0 24 24"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.4 2.4 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0ZM14.5 12.5l2-2M11.5 9.5l2-2M8.5 6.5l2-2M17.5 15.5l2-2"/></symbol>
+    <symbol id="i-views" viewBox="0 0 24 24"><path d="M12.8 2.2a2 2 0 0 0-1.6 0L2.6 6.1a1 1 0 0 0 0 1.8l8.6 3.9a2 2 0 0 0 1.6 0l8.6-3.9a1 1 0 0 0 0-1.8ZM22 17.6l-9.2 4.2a2 2 0 0 1-1.6 0L2 17.6M22 12.6l-9.2 4.2a2 2 0 0 1-1.6 0L2 12.6"/></symbol>
+    <symbol id="i-capture" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3Z"/><circle cx="12" cy="13" r="3"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 21h16"/></symbol>
+    <symbol id="i-apple" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9s-1.8-.9-3-.9c-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.7ZM14.1 5.8c.6-.8 1.1-1.8 1-2.8-.9 0-2 .6-2.7 1.4-.6.7-1.1 1.7-1 2.7 1 .1 2-.5 2.7-1.3Z"/></symbol>
+    <symbol id="i-windows" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M3 5.5 10.4 4.5v7H3v-6Zm0 13 7.4 1v-7H3v6Zm8.3 1.1L21 21v-8.4h-9.7v7Zm0-15.2v7.1H21V3l-9.7 1.4Z"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav">
+  <a class="brand" href="./"><img src="../icon.svg" alt="" width="26" height="26">Loupe</a>
+  <nav aria-label="Page">
+    <a href="#stage-copy">Features</a>
+    <a href="#story">Why Loupe</a>
+    <a href="https://github.com/imperator28/Loupe">GitHub</a>
+    <a class="nav-cta" href="#download">Download</a>
+  </nav>
+</header>
+
+<main>
+  <!-- One pinned theatre carries the hero, the zoom into the screen, and every scene. -->
+  <section class="theater" id="theater" aria-label="Loupe, scene by scene">
+
+    <div class="hero-copy" id="hero-copy">
+      <h1><span class="h1-a">Built by an engineer.</span> <span class="h1-b">For the review, not the redraw.</span></h1>
+      <p class="rotator" aria-live="off">
+        <span class="rot-track" id="rot-track">
+          <span class="rot-line">The <b>fastest STEP viewer</b> you'll open today.</span>
+          <span class="rot-line">A <b>Swiss Army knife</b> for design review.</span>
+          <span class="rot-line"><b>Every part</b> as its own STEP, in one go.</span>
+          <span class="rot-line"><b>Deck-ready</b> renders on a transparent background.</span>
+          <span class="rot-line"><b>Cut it open.</b> Lay the slice flat.</span>
+          <span class="rot-line"><b>Laser-cut outlines</b> without making a drawing.</span>
+        </span>
+      </p>
+      <div class="dl-row" data-downloads>
+        <a class="dl" data-asset="macos-arm64" href="https://github.com/imperator28/Loupe/releases/latest"><svg><use href="#i-apple"/></svg>macOS <span>Apple silicon</span></a>
+        <a class="dl" data-asset="windows-x64" href="https://github.com/imperator28/Loupe/releases/latest"><svg><use href="#i-windows"/></svg>Windows 11 <span>x64</span></a>
+        <a class="dl-more" href="#download">Intel Mac and release notes</a>
+      </div>
+    </div>
+
+    <div class="rig" id="rig">
+      <div class="laptop" id="laptop">
+        <div class="lid" id="lid">
+          <div class="screen" id="screen">
+            <span class="cam" aria-hidden="true"></span>
+
+            <!-- The app, drawn at a fixed logical size and scaled to fit whatever frame holds it. -->
+            <div class="app" id="app" data-ws="inspect" role="img" aria-label="The Loupe app, with a linear stage assembly open in the Inspect workspace.">
+              <div class="app-top">
+                <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="btn">Open STEP…</span>
+                <span class="seg ws-seg" id="ws-seg">
+                  <span class="seg-ind" id="seg-ind"></span>
+                  <span data-tab="inspect" class="on">Inspect</span><span data-tab="export">Export</span><span data-tab="drawing">Drawing</span>
+                </span>
+                <span class="grow"></span>
+                <span class="btn">Units: mm</span>
+              </div>
+              <div class="app-tabs"><span class="doc-tab">linear-stage.step <i>×</i></span><span class="plus">+</span></div>
+
+              <div class="app-body">
+                <!-- Left panel: three workspace variants side by side; the strip slides horizontally. -->
+                <div class="side side-l"><div class="slide" id="slide-l">
+                  <div class="pane">
+                    <h4>Assembly tree</h4>
+                    <div class="find">Find part (Ctrl+F)</div>
+                    <ul class="tree" id="tree-inspect"></ul>
+                  </div>
+                  <div class="pane">
+                    <h4>Assembly <small>tick to export</small></h4>
+                    <ul class="tree checks" id="tree-export"></ul>
+                  </div>
+                  <div class="pane">
+                    <h4>Parts</h4>
+                    <ul class="tree" id="tree-drawing"></ul>
+                  </div>
+                </div></div>
+
+                <div class="viewport" id="viewport">
+                  <canvas id="gl" aria-hidden="true"></canvas>
+                  <div class="vp-checker" id="vp-checker"></div>
+                  <div class="vp-label" id="vp-label">Master assembly</div>
+                  <div class="vp-drops"><span class="btn">Orthographic <svg><use href="#i-chev"/></svg></span><span class="btn">Solid + Edges <svg><use href="#i-chev"/></svg></span></div>
+                  <svg class="viewcube" viewBox="0 0 60 60" aria-hidden="true">
+                    <path d="M30 8 50 19 30 30 10 19Z" class="vc-top"/><path d="M10 19 30 30v22L10 41Z" class="vc-l"/><path d="M50 19 30 30v22l20-11Z" class="vc-r"/>
+                    <path d="M30 30v-26" stroke="#47CD89"/><path d="M30 30 54 44" stroke="#F97066"/><path d="M30 30 6 44" stroke="#8B93F8"/>
+                  </svg>
+                  <svg class="overlay" id="overlay" aria-hidden="true"></svg>
+
+                  <!-- Floating tool windows, as in the app. -->
+                  <div class="tw" id="tw-section"><div class="tw-h">Section</div>
+                    <div class="tw-seg"><span class="on">X</span><span>Y</span><span>Z</span></div>
+                    <div class="tw-row">Position <b class="num" id="sec-pos">0.0</b></div>
+                    <div class="tw-row">Cap cut faces <i class="sw on"></i></div>
+                    <div class="tw-row">2D slice <i class="sw" id="sw-slice"></i></div>
+                  </div>
+                  <div class="tw" id="tw-explode"><div class="tw-h">Explode</div>
+                    <div class="tw-seg"><span>Assembled</span><span class="on">Exploded</span></div>
+                    <div class="tw-row">Spread <b class="num" id="ex-val">0%</b></div>
+                    <div class="slider"><i id="ex-fill"></i></div>
+                    <div class="tw-row dim">Move by <b class="num">25.0 mm</b></div>
+                  </div>
+                  <div class="tw" id="tw-measure"><div class="tw-h">Measure</div>
+                    <div class="tw-row">Diameter <b class="num m">Ø 18.000 mm</b></div>
+                    <div class="tw-row">Rod spacing <b class="num m">40.000 mm</b></div>
+                    <div class="tw-row dim">ΔX 0.000 · ΔY 0.000 · ΔZ 40.000</div>
+                  </div>
+                  <div class="tw" id="tw-capture"><div class="tw-h">Capture</div>
+                    <div class="tw-seg"><span>2×</span><span>3×</span><span class="on">5×</span></div>
+                    <div class="tw-row">Background <b>Transparent</b></div>
+                    <div class="tw-row dim">Output <b class="num" id="cap-px">5400 × 3375 px</b></div>
+                  </div>
+
+                  <div class="toolbar" id="toolbar">
+                    <span data-tool="fit"><svg><use href="#i-fit"/></svg>Fit</span>
+                    <span data-tool="isolate"><svg><use href="#i-isolate"/></svg>Isolate</span>
+                    <span data-tool="hide"><svg><use href="#i-hide"/></svg>Hide</span>
+                    <span data-tool="transparent"><svg><use href="#i-transparent"/></svg>Transparent</span>
+                    <b class="tsep"></b>
+                    <span data-tool="section"><svg><use href="#i-section"/></svg>Section</span>
+                    <span data-tool="explode"><svg><use href="#i-explode"/></svg>Explode</span>
+                    <span data-tool="measure"><svg><use href="#i-measure"/></svg>Measure</span>
+                    <span data-tool="views"><svg><use href="#i-views"/></svg>Views</span>
+                    <span data-tool="capture"><svg><use href="#i-capture"/></svg>Capture</span>
+                  </div>
+                </div>
+
+                <!-- Right panel: three workspace variants. -->
+                <div class="side side-r"><div class="slide" id="slide-r">
+                  <div class="pane">
+                    <h4 id="props-title">Document properties</h4>
+                    <div class="props" id="props-doc">
+                      <div class="pr"><span>Part colours</span><b>Auto · warm</b></div>
+                      <div class="pr head"><span>Opening time</span><em>this file</em></div>
+                      <div class="pr"><span>Ready to view</span><b class="num" data-count="119">119 ms</b></div>
+                      <div class="pr"><span>All parts shown</span><b class="num" data-count="196">196 ms</b></div>
+                      <div class="pr"><span>Fully detailed</span><b class="num" data-count="733">733 ms</b></div>
+                      <div class="pr"><span class="btn sm">Opening History…</span></div>
+                    </div>
+                    <div class="props" id="props-mass">
+                      <div class="pr head"><span>Materials</span><em>8 parts</em></div>
+                      <ul class="mats" id="mats"></ul>
+                      <div class="pr total"><span>Assembly mass</span><b class="num" id="mass-total">0.0 g</b></div>
+                    </div>
+                  </div>
+                  <div class="pane">
+                    <h4>Export bucket <small id="bucket-n">0 files</small></h4>
+                    <ul class="bucket" id="bucket"></ul>
+                    <div class="pr"><span>Format</span><b>STEP</b></div>
+                    <div class="pr"><span>Naming</span><b>Keep component name</b></div>
+                    <span class="btn primary wide" id="export-btn">Export files</span>
+                  </div>
+                  <div class="pane">
+                    <h4>2D preview <small>70.00 × 70.00 mm</small></h4>
+                    <div class="preview2d"><svg viewBox="-45 -45 90 90" id="pv2d"></svg></div>
+                    <div class="pr"><span>View</span><b>Top</b></div>
+                    <div class="pr"><span>Content</span><b>Cut</b></div>
+                    <div class="pr"><span>Scale</span><b>1:1</b></div>
+                    <div class="pr dim"><span id="contours">6 closed contours</span></div>
+                    <span class="btn primary wide">Add to queue</span>
+                  </div>
+                </div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="base" aria-hidden="true"><i class="scoop"></i></div>
+      </div>
+    </div>
+
+    <!-- The "pop" layer: page-scale elements that leap out of the app for each scene. -->
+    <div class="pops" id="pops" aria-hidden="true">
+      <div class="pop race" id="pop-race">
+        <div class="race-h">Large assembly, double-click to rotatable <em>placeholder until benchmarked</em></div>
+        <div class="bar l"><span>Loupe</span><i style="--w:.34"></i><b>— s</b></div>
+        <div class="bar"><span>SolidWorks</span><i style="--w:.78"></i><b>— s</b></div>
+        <div class="bar"><span>Creo</span><i style="--w:.92"></i><b>— s</b></div>
+      </div>
+      <figure class="pop png" id="pop-png"><span class="png-slot" id="png-slot"></span><figcaption>linear-stage.png <span>5400 × 3375 · transparent</span></figcaption></figure>
+      <figure class="pop slice" id="pop-slice">
+        <svg viewBox="-42 -4 84 76" id="slice-svg"></svg>
+        <figcaption>2D slice at X = 0 · filled + outline</figcaption>
+      </figure>
+      <div class="pop mass" id="pop-mass"><b class="num" id="pop-mass-v">0</b><span>grams, from the material list</span></div>
+      <div class="pop files" id="pop-files"></div>
+      <div class="pop onefile" id="pop-onefile"><svg><use href="#i-file"/></svg><span>linear-stage <em>without motor</em>.step</span><small>tree, names, colours and units kept</small></div>
+      <figure class="pop outline" id="pop-outline">
+        <svg viewBox="-48 -48 96 96" id="outline-svg"></svg>
+        <figcaption><span class="chip">DXF</span><span class="chip">SVG</span><span class="chip">PDF</span> true 1:1</figcaption>
+      </figure>
+    </div>
+
+    <!-- Copy column for the scenes. Real text; the script crossfades one block at a time. -->
+    <div class="stage-copy" id="stage-copy">
+      <article class="sc" data-scene="speed">
+        <h2>Open it before your CAD finishes loading.</h2>
+        <p>Loupe does one job: open a STEP file and let you look. Parts appear as they load, and you can orbit while the rest fills in. Every open is timed, so you can check it against your own CAD.</p>
+      </article>
+      <article class="sc" data-scene="present">
+        <h2>Make it look the way you'll present it.</h2>
+        <p>Auto colour palettes, materials, see-through housings and pinned dimensions. Then capture at 2×, 3×, 5× or any scale on a transparent background, ready to drop into a review deck.</p>
+      </article>
+      <article class="sc" data-scene="explode">
+        <h2>See how it goes together.</h2>
+        <p>One Spread slider pulls the assembly apart. Drag any part along X, Y or Z with snapping, or move it by an exact distance. Save the layout and come back to it in one click.</p>
+      </article>
+      <article class="sc" data-scene="section">
+        <h2>Cut it open. Lay it flat.</h2>
+        <p>Slide a section through any axis or face, with capped cuts. Then turn the cut into a filled 2D slice: the clearest way to show how parts mate.</p>
+      </article>
+      <article class="sc" data-scene="measure">
+        <h2>Measure like you would in CAD.</h2>
+        <p>Distance, edge length, gap between faces, radius, angle, area, volume and bounds. Loupe lights up what you're about to pick and snaps to circle centres, so the number is the one you meant. Pin results to keep them in view.</p>
+      </article>
+      <article class="sc" data-scene="mass">
+        <h2>Mass, before anyone asks.</h2>
+        <p>Assign materials from a library built around real products: aluminium, zinc alloy, PC, PA, FR4, silicone and more. Read the mass of a part, a subassembly or any selection.</p>
+      </article>
+      <article class="sc" data-scene="split">
+        <h2>Every part, its own STEP. In one go.</h2>
+        <p>Tick the parts a vendor needs and Loupe writes each as a separate STEP or STL, named your way, every file checked as it's written. In a full CAD program that's a save-as per part.</p>
+      </article>
+      <article class="sc" data-scene="trim">
+        <h2>Trim it down. Send the rest.</h2>
+        <p>Hide what shouldn't leave the building and save the rest as one STEP, with the tree, names, colours and units intact. No deleting bodies, no suppressing components, no broken references.</p>
+      </article>
+      <article class="sc" data-scene="drawing">
+        <h2>Outlines for the laser and the die cutter.</h2>
+        <p>Project a part flat at true 1:1 and save DXF, SVG or PDF with real arcs and circles. No drawing file, no title block, just the path.</p>
+        <p class="note">The Drawing workspace is new. Check each drawing before you cut.</p>
+      </article>
+    </div>
+
+    <!-- Workspace rail: the cards under the screen slide sideways as the workspace changes. -->
+    <div class="rail" id="rail" aria-hidden="true">
+      <div class="rail-track" id="rail-track">
+        <div class="card" data-ws="inspect"><b>Inspect</b><span>Present · Explode · Section · Measure · Mass</span></div>
+        <div class="card" data-ws="export"><b>Export</b><span>Every part its own file · Trimmed assembly</span></div>
+        <div class="card" data-ws="drawing"><b>Drawing</b><span>True-scale 2D for cutting and quotes</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story" id="story">
+    <div class="story-in">
+      <p class="story-lede">I spent years in NX, SolidWorks, Creo and Fusion&nbsp;360. Each is great at something. None of them is quick when all you need is to open a STEP file, understand it, and pass on the right parts. So I built the tool I kept wishing I had.</p>
+      <p class="story-sig">The engineer behind Loupe</p>
+      <div class="keys">
+        <h3>Your hands already know it.</h3>
+        <ul>
+          <li><kbd>F</kbd><span>Fit</span></li>
+          <li><kbd>I</kbd><span>Isolate</span></li>
+          <li><kbd>H</kbd><span>Hide</span></li>
+          <li><kbd>T</kbd><span>Transparent</span></li>
+          <li><kbd>⌘</kbd><kbd>F</kbd><span>Find a part</span></li>
+          <li><kbd>⌘</kbd><kbd>8</kbd><span>Normal to face</span></li>
+          <li><kbd>V</kbd><span>Saved views</span></li>
+        </ul>
+        <p>Orbit around the point under your cursor, a view cube for the standard views, right-click where you are. The habits you have from your CAD program carry straight over.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="download" id="download">
+    <div class="dl-in">
+      <h2>Try it on the file in your inbox.</h2>
+      <p>Free and open source. Your files never leave your computer.</p>
+      <div class="dl-row big" data-downloads>
+        <a class="dl" data-asset="macos-arm64" href="https://github.com/imperator28/Loupe/releases/latest"><svg><use href="#i-apple"/></svg>macOS <span>Apple silicon</span></a>
+        <a class="dl" data-asset="macos-x64" href="https://github.com/imperator28/Loupe/releases/latest"><svg><use href="#i-apple"/></svg>macOS <span>Intel</span></a>
+        <a class="dl" data-asset="windows-x64" href="https://github.com/imperator28/Loupe/releases/latest"><svg><use href="#i-windows"/></svg>Windows 11 <span>x64</span></a>
+      </div>
+      <p class="meta"><span data-version>Latest release</span> · Apache 2.0 · <a data-notes href="https://github.com/imperator28/Loupe/releases/latest">Release notes</a></p>
+      <div class="firstrun">
+        <div>
+          <h3>First open on macOS</h3>
+          <p>Loupe isn't code-signed yet. If macOS says it “is damaged”, open System Settings → Privacy &amp; Security and click <strong>Open Anyway</strong>, or run the <em>Open Loupe (first run)</em> helper in the zip. From Terminal: <code>xattr -dr com.apple.quarantine Loupe.app</code></p>
+        </div>
+        <div>
+          <h3>First open on Windows 11</h3>
+          <p>Run <code>Loupe.exe</code>. If SmartScreen warns about an unrecognized publisher, choose <strong>More info → Run anyway</strong>. Keep the unzipped folder together; Loupe loads its runtime from it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>Loupe is open source under the Apache License 2.0.</span>
+  <span><a href="https://github.com/imperator28/Loupe">Source</a> · <a href="https://github.com/imperator28/Loupe/blob/master/CHANGELOG.md">Changelog</a> · <a href="https://github.com/imperator28/Loupe/issues">Report an issue</a> · <a href="../">Current site</a></span>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js"></script>
+<script type="module" src="v2.js"></script>
+</body>
+</html>
