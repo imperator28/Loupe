@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Updating a copy in Program Files, again** (Windows): the update still left the old version
+  in place. Before asking for administrator permission, the update first tried the copy as
+  you, and Windows refused each of the package's ~2500 files only after two retries, five
+  times over: hours, in a hidden window, before the prompt. It now checks once whether it can
+  write to Loupe's folder and, when it cannot, asks for permission straight away. The update
+  panel says beforehand that Windows will ask.
+
 ## v0.1.6-beta.3
 
 A testing build of the reworked Measure tool, filled section caps, and saved exploded

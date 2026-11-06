@@ -1,5 +1,7 @@
 #include <QtTest/QSignalSpy>
 #include <QtTest/QTest>
+#include <QScopeGuard>
+#include <QElapsedTimer>
 
 #include <QFile>
 #include <QDir>
@@ -35,6 +37,7 @@ private slots:
     void anUpdateThatCouldNotBeInstalledSaysWhyInsteadOfOfferingItAgain();
 #ifdef Q_OS_WIN
     void theWindowsSwapLeavesAResultWhenTheFilesCannotBeReplaced();
+    void theWindowsSwapAsksForAnAdministratorAtOnceWhenTheFolderIsClosedToTheUser();
 #endif
     void whatsNewIsReadForTheReleaseAndShownOncePerRelease();
     void everyReleaseShipsWhatsNewWithIconsThatExist();
@@ -258,6 +261,66 @@ void UpdateControllerTest::theWindowsSwapLeavesAResultWhenTheFilesCannotBeReplac
     QVERIFY(lines.size() >= 3);
     QCOMPARE(lines.at(0).trimmed().remove(QChar(0xFEFF)), QStringLiteral("9.9.9"));
     QVERIFY(lines.at(2).trimmed().toInt() >= 8);
+}
+
+void UpdateControllerTest::theWindowsSwapAsksForAnAdministratorAtOnceWhenTheFolderIsClosedToTheUser()
+{
+    // Program Files refuses every file to a user. The script used to try the copy as the user
+    // first: robocopy spent two seconds of retries on each of the package's ~2500 files, five
+    // times over, before asking for an administrator -- hours in a hidden window, so the update
+    // looked as if it had not happened. A folder the user cannot write to now goes straight to
+    // the administrator copy (here declined, by LOUPE_UPDATE_NO_ELEVATION), in seconds.
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QDir base(root.path());
+    QVERIFY(base.mkpath(QStringLiteral("old")) && base.mkpath(QStringLiteral("new")));
+    const auto system = QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:/Windows"))).filePath(QStringLiteral("System32"));
+    QVERIFY(QFile::copy(QDir(system).filePath(QStringLiteral("whoami.exe")), base.filePath(QStringLiteral("old/Loupe.exe"))));
+    QVERIFY(QFile::copy(QDir(system).filePath(QStringLiteral("hostname.exe")), base.filePath(QStringLiteral("new/Loupe.exe"))));
+    // Enough files that trying each as the user, as before, would outlast the limit below.
+    for (int index = 0; index < 40; ++index) {
+        QFile part(base.filePath(QStringLiteral("new/part%1.dll").arg(index)));
+        QVERIFY(part.open(QIODevice::WriteOnly));
+        part.write(QByteArray("new version ") + QByteArray::number(index));
+    }
+    const auto oldFolder = QDir::toNativeSeparators(base.filePath(QStringLiteral("old")));
+    const auto user = qEnvironmentVariable("USERNAME");
+    QVERIFY(!user.isEmpty());
+    // Closed to this user, as Program Files is: a deny on writing, which holds even for an
+    // administrator's account until it is elevated.
+    QCOMPARE(QProcess::execute(QStringLiteral("icacls"), {oldFolder, QStringLiteral("/deny"), user + QStringLiteral(":(OI)(CI)(W)")}), 0);
+    const auto restore = qScopeGuard([&] { QProcess::execute(QStringLiteral("icacls"), {oldFolder, QStringLiteral("/remove:d"), user}); });
+
+    const auto scriptPath = base.filePath(QStringLiteral("install.ps1"));
+    {
+        QFile script(scriptPath);
+        QVERIFY(script.open(QIODevice::WriteOnly));
+        script.write(UpdateController::windowsInstallScript().toUtf8());
+    }
+    const auto resultPath = base.filePath(QStringLiteral("result.txt"));
+    QProcess powershell;
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("LOUPE_UPDATE_NO_ELEVATION"), QStringLiteral("1"));
+    powershell.setProcessEnvironment(environment);
+    QElapsedTimer clock;
+    clock.start();
+    powershell.start(QStringLiteral("powershell.exe"),
+                     {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"), QStringLiteral("-File"),
+                      QDir::toNativeSeparators(scriptPath), QStringLiteral("0"), oldFolder,
+                      QDir::toNativeSeparators(base.filePath(QStringLiteral("new"))), QDir::toNativeSeparators(base.filePath(QStringLiteral("install.log"))),
+                      QDir::toNativeSeparators(resultPath), QStringLiteral("9.9.9")});
+    QVERIFY(powershell.waitForFinished(180000));
+    const auto elapsed = clock.elapsed();
+    // Seconds, not the minutes of per-file retries the old order spent first.
+    QVERIFY2(elapsed < 30000, qPrintable(QStringLiteral("took %1 ms").arg(elapsed)));
+    QFile result(resultPath);
+    QVERIFY2(result.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(QString::fromLocal8Bit(powershell.readAll())));
+    const auto lines = QString::fromUtf8(result.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QVERIFY(lines.size() >= 3);
+    QCOMPARE(lines.at(0).trimmed().remove(QChar(0xFEFF)), QStringLiteral("9.9.9"));
+    QVERIFY(lines.at(2).trimmed().toInt() >= 8);
+    // Nothing was half-copied into the folder the user could not write.
+    QVERIFY(!QFile::exists(base.filePath(QStringLiteral("old/part0.dll"))));
 }
 #endif
 
