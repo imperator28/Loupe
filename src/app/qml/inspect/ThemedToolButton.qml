@@ -8,7 +8,7 @@ ToolButton {
     readonly property color foreground: theme ? theme.foreground : "transparent"
     readonly property color subduedForeground: theme ? theme.muted : "transparent"
     readonly property color stateLayer: theme && theme.accentTint !== undefined ? theme.accentTint : "transparent"
-    readonly property color checkedFill: theme ? theme.selection : "transparent"
+    property color checkedFill: theme ? theme.selection : "transparent"
     readonly property color accentFill: theme ? theme.accent : "transparent"
     // radius.2 for a standalone button; a button inside a row sets radius.1 to sit
     // concentric with the row's own highlight.
