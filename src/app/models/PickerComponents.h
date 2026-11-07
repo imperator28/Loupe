@@ -19,6 +19,10 @@ struct PickerComponent final {
     QString parentId;
     QString name;
     QString hierarchyPath;
+    // The part definition this row places, for a part; empty for an assembly. Every copy of
+    // one part has the same one, which is what tells copies apart from parts that only share
+    // a name.
+    QString definitionId;
     int kind{};
     int depth{};
     bool exportable{};
@@ -44,11 +48,25 @@ public:
     // still selects something.
     [[nodiscard]] QString pickerNodeForSceneNode(const QString& nodeId) const;
 
+    // Equal for two rows exactly when exporting either writes the same thing, apart from
+    // where it sits in the assembly. A part is identified by its definition, so every copy of
+    // it matches and two different parts that happen to share a name do not. A sub-assembly
+    // has no definition in the snapshot, so it is identified by its name and the identities
+    // of what it contains: a second copy of "Carriage" brings in the same part definitions,
+    // so it matches the first. Empty for an unknown node.
+    [[nodiscard]] QString identityKey(const QString& nodeId) const;
+    // The name of a part definition (the STEP product), or empty when it is not known.
+    [[nodiscard]] QString definitionName(const QString& definitionId) const { return definitionNames_.value(definitionId); }
+
 private:
     [[nodiscard]] QString hierarchyPathFor(const QString& nodeId, QSet<QString>& resolving) const;
+    [[nodiscard]] QString identityKeyFor(int index, QSet<int>& resolving) const;
 
     QVector<PickerComponent> components_;
     QHash<QString, int> indexById_;
+    QHash<QString, QVector<int>> childrenById_;
+    QHash<QString, QString> definitionNames_;
+    mutable QHash<int, QString> identityKeys_;
     QString effectiveUnit_{QStringLiteral("mm")};
     double sourceToMillimeters_{1.0};
 };

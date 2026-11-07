@@ -17,7 +17,7 @@ Inspect.ElevatedPanel {
         Inspect.PanelTitle {
             theme: root.theme
             text: qsTr("Export bucket")
-            detail: !root.draft ? "" : root.draft.checkedCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft.checkedCount)
+            detail: !root.draft ? "" : root.draft.fileCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft.fileCount)
         }
 
         ListView {
@@ -186,7 +186,11 @@ Inspect.ElevatedPanel {
                         Label {
                             id: sourceNameLabel
                             Layout.fillWidth: true
-                            text: bucketRow.modelData.name
+                            // Copies of one part share a single file; the count says how many
+                            // checked components that file stands for.
+                            text: (bucketRow.modelData.copyCount || 1) > 1
+                                  ? qsTr("%1 ×%2").arg(bucketRow.modelData.name).arg(bucketRow.modelData.copyCount)
+                                  : bucketRow.modelData.name
                             color: root.foreground
                             elide: Text.ElideRight
                             font.bold: true
@@ -259,7 +263,7 @@ Inspect.ElevatedPanel {
                         theme: root.theme
                         glyph: "close"
                         enabled: !root.draft || !root.draft.exporting
-                        onClicked: root.draft.setChecked(bucketRow.modelData.nodeId, false)
+                        onClicked: root.draft.removeBucketRow(bucketRow.modelData.nodeId)
                         Inspect.ThemedToolTip {
                             theme: root.theme
                             text: qsTr("Remove from export bucket")
