@@ -145,5 +145,14 @@ int main(int argc, char* argv[])
     if (!server.listen(serverName)) {
         return 2;
     }
+    // Launched by the app on the file it was opened with: import at once, rather than
+    // waiting for the app to connect and ask (see app/worker/WorkerLaunch.h).
+    const auto openOption = arguments.indexOf(QStringLiteral("--open"));
+    const auto requestOption = arguments.indexOf(QStringLiteral("--request-id"));
+    if (openOption >= 0 && openOption + 1 < arguments.size() && requestOption >= 0 && requestOption + 1 < arguments.size()) {
+        bool valid = false;
+        const auto requestId = arguments.at(requestOption + 1).toULongLong(&valid);
+        if (valid && requestId != 0) server.openBeforeConnection(requestId, arguments.at(openOption + 1));
+    }
     return application.exec();
 }

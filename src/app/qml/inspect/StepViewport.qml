@@ -1112,7 +1112,13 @@ Item {
             sceneMinimum = Qt.vector3d(Math.min(sceneMinimum.x, minimum.x), Math.min(sceneMinimum.y, minimum.y), Math.min(sceneMinimum.z, minimum.z))
             sceneMaximum = Qt.vector3d(Math.max(sceneMaximum.x, maximum.x), Math.max(sceneMaximum.y, maximum.y), Math.max(sceneMaximum.z, maximum.z))
         }
-        fitTimer.restart()
+        // Framed now, before the frame that first shows this geometry: a fit that waited
+        // for the stream to pause (it once did, by 120 ms) let the first frames of a model
+        // show it at the default camera, zoomed in, before jumping out to the whole of it.
+        // The plain fit is a few property writes; the filtered and exploded ones look at
+        // every part, so a burst of arrivals shares one.
+        if (displayOnlyNodeId.length === 0 && !explodedLayout) fitCamera()
+        else Qt.callLater(root.fitCamera)
     }
 
     function clearMeshes() {
@@ -2089,10 +2095,6 @@ Item {
     Component { id: geometryComponent; MeshGeometry {} }
     Component { id: partNodeComponent; Node {} }
     Component { id: edgeGeometryComponent; CadEdgeGeometry {} }
-    // Coalesces the burst of arriving meshes into one fit, and -- because
-    // fitCamera() only clears pendingFit once it actually fits -- is also what
-    // retries a fit that was requested before its geometry existed.
-    Timer { id: fitTimer; interval: 120; onTriggered: root.fitCamera() }
     Timer { id: sectionApplyTimer; interval: 0; repeat: false; onTriggered: root.applyNextSectionItem() }
     Component {
         id: modelComponent
