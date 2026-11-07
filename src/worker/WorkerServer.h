@@ -22,6 +22,10 @@ class WorkerServer final : public QObject {
 public:
     explicit WorkerServer(QObject* parent = nullptr);
     [[nodiscard]] bool listen(const QString& serverName);
+    // Starts importing before any client connects (the app launched this worker on the file
+    // it was opened with). What the import sends is held until a client connects, then
+    // delivered in order; with no client within a couple of minutes the worker quits.
+    void openBeforeConnection(std::uint64_t requestId, const QString& path);
 
 private slots:
     void acceptConnection();
@@ -48,6 +52,9 @@ private:
 
     QLocalServer server_;
     QPointer<QLocalSocket> socket_;
+    // Frames sent before the first client connected, when an import was started without one.
+    bool holdUntilConnected_{false};
+    QList<QByteArray> heldFrames_;
     protocol::FrameDecoder commandFrames_;
     QHash<std::uint64_t, std::shared_ptr<ImportJob>> activeSessions_;
     QHash<std::uint64_t, std::shared_ptr<ExportJob>> activeExports_;

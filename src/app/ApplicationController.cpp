@@ -1,5 +1,7 @@
 #include "app/ApplicationController.h"
+#include "app/platform/StartupTrace.h"
 #include "app/platform/UpdateController.h"
+#include "app/worker/WorkerLaunch.h"
 #include "protocol/GeometryPayload.h"
 #include "app/cache/CacheKey.h"
 #include "app/cache/CacheStore.h"
@@ -61,37 +63,12 @@ constexpr auto kGeometryCacheMagic = "LGC1";
 }
 constexpr auto kWorkerConnectionAttempts = 4'800;
 
-QString defaultWorkerExecutable()
-{
-    auto name = QStringLiteral("loupe-worker");
-#ifdef Q_OS_WIN
-    name += QStringLiteral(".exe");
-#endif
-    const auto applicationDir = QDir(QCoreApplication::applicationDirPath());
-    const auto packagedWorker = applicationDir.filePath(name);
-    if (QFileInfo::exists(packagedWorker)) {
-        return packagedWorker;
-    }
-
-    const auto buildTreeWorkers = {
-        QDir::cleanPath(applicationDir.filePath(QStringLiteral("../worker/%1").arg(name))),
-        QDir::cleanPath(applicationDir.filePath(QStringLiteral("../../../../worker/%1").arg(name))),
-    };
-    for (const auto& buildTreeWorker : buildTreeWorkers) {
-        if (QFileInfo::exists(buildTreeWorker)) {
-            return buildTreeWorker;
-        }
-    }
-
-    return packagedWorker;
-}
-
 } // namespace
 
 namespace loupe::app {
 
 ApplicationController::ApplicationController(QObject* parent)
-    : ApplicationController(defaultWorkerExecutable(), cache::CacheStore::defaultRoot(), parent)
+    : ApplicationController(worker::defaultWorkerExecutable(), cache::CacheStore::defaultRoot(), parent)
 {
 }
 
@@ -109,12 +86,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         overrideStore_ = std::make_unique<cache::OverrideStore>(QDir(cacheRoot).filePath(QStringLiteral("unit-overrides.sqlite")));
     } catch (const std::exception&) {
     }
-    auto workerEnvironment = QProcessEnvironment::systemEnvironment();
-    workerEnvironment.remove(QStringLiteral("__CFBundleIdentifier"));
-    workerEnvironment.remove(QStringLiteral("XPC_SERVICE_NAME"));
-    workerEnvironment.remove(QStringLiteral("XPC_FLAGS"));
-    workerProcess_.setProcessEnvironment(workerEnvironment);
-    workerProcess_.setProcessChannelMode(QProcess::ForwardedChannels);
+    useWorkerProcess(std::make_unique<QProcess>());
     // A layout set aside when an edit starts over from the assembly is kept, unless it is
     // one already saved, so starting over never loses a layout.
     // Volume and bounds with nothing selected are of the whole model, whose parts may have
@@ -128,32 +100,9 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         }
         savedViews_.add(QStringLiteral("layout"), {}, tr("Set aside · %1").arg(summary), snapshot);
     });
-    connect(&workerProcess_, &QProcess::started, this, [this] {
-        setImportProgress(tr("Starting STEP importer"), 0.005);
-        connectWorker();
-    });
-    connect(&workerProcess_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
-        if (stoppingWorker_) {
-            return;
-        }
-        setErrorMessage(tr("Could not start the STEP importer: %1").arg(workerProcess_.errorString()));
-        documentState_ = DocumentState::WorkerFailed;
-        emit documentStateChanged();
-    });
-    connect(&workerProcess_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-            [this](const int, const QProcess::ExitStatus) {
-                if (!stoppingWorker_ && activeExportRequestId_ != 0) {
-                    activeExportRequestId_ = 0;
-                    exportWorkspaceController_.handleExportFailed(tr("The export worker exited unexpectedly"));
-                    return;
-                }
-                if (stoppingWorker_ || documentState_ != DocumentState::Opening || activeRequestId_ != 0) return;
-                setErrorMessage(tr("The STEP importer exited before it became ready."));
-                documentState_ = DocumentState::WorkerFailed;
-                emit documentStateChanged();
-            });
     connect(&workerClient_, &worker::WorkerClient::snapshotReady, this, [this](quint64 requestId, const QByteArray& snapshot) {
         if (requestId != activeRequestId_) return;
+        platform::startupMark("snapshot received");
         if (cacheHit_ && !snapshotJson_.isEmpty()) {
             // The cache already established the identical tree and replayed its geometry. Keep it visible
             // while the worker retains the XCAF document and streams any settled replacements.
@@ -244,6 +193,7 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         if (requestId != activeRequestId_) return;
         setImportProgress(stage, fraction);
         if (fraction >= 1.0) {
+            platform::startupMark("import complete");
             exportWorkspaceController_.setDocumentReady(true);
             drawingWorkspaceController_.setDocumentReady(true);
             saveGeometryCache();
@@ -455,13 +405,44 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
     connect(&geometryReplayTimer_, &QTimer::timeout, this, &ApplicationController::replayGeometryChunk);
 }
 
+void ApplicationController::useWorkerProcess(std::unique_ptr<QProcess> process)
+{
+    workerProcess_ = std::move(process);
+    workerProcess_->setParent(nullptr);
+    connect(workerProcess_.get(), &QProcess::started, this, [this] {
+        platform::startupMark("worker started signal");
+        setImportProgress(tr("Starting STEP importer"), 0.005);
+        connectWorker();
+    });
+    connect(workerProcess_.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
+        if (stoppingWorker_) {
+            return;
+        }
+        setErrorMessage(tr("Could not start the STEP importer: %1").arg(workerProcess_->errorString()));
+        documentState_ = DocumentState::WorkerFailed;
+        emit documentStateChanged();
+    });
+    connect(workerProcess_.get(), qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this](const int, const QProcess::ExitStatus) {
+                if (!stoppingWorker_ && activeExportRequestId_ != 0) {
+                    activeExportRequestId_ = 0;
+                    exportWorkspaceController_.handleExportFailed(tr("The export worker exited unexpectedly"));
+                    return;
+                }
+                if (stoppingWorker_ || documentState_ != DocumentState::Opening || activeRequestId_ != 0) return;
+                setErrorMessage(tr("The STEP importer exited before it became ready."));
+                documentState_ = DocumentState::WorkerFailed;
+                emit documentStateChanged();
+            });
+}
+
 ApplicationController::~ApplicationController()
 {
-    if (workerProcess_.state() != QProcess::NotRunning) {
-        workerProcess_.terminate();
-        if (!workerProcess_.waitForFinished(1'000)) {
-            workerProcess_.kill();
-            workerProcess_.waitForFinished(1'000);
+    if (workerProcess_->state() != QProcess::NotRunning) {
+        workerProcess_->terminate();
+        if (!workerProcess_->waitForFinished(1'000)) {
+            workerProcess_->kill();
+            workerProcess_->waitForFinished(1'000);
         }
     }
     if (!stagedWorkerPath_.isEmpty()) QFile::remove(stagedWorkerPath_);
@@ -544,6 +525,7 @@ void ApplicationController::setSelection(const QStringList& nodeIds, const QStri
 
 void ApplicationController::openFile(const QUrl& file)
 {
+    platform::startupMark("openFile");
     setErrorMessage({});
     if (!file.isLocalFile() || !QFileInfo::exists(file.toLocalFile())) {
         setErrorMessage(tr("The selected file does not exist or is not a local file."));
@@ -562,10 +544,10 @@ void ApplicationController::openFile(const QUrl& file)
     viewerPresentation_ = ViewerPresentation::Full;
     sectionController_.setEnabled(false);
     measurementController_.clearPicks();
-    if (workerProcess_.state() != QProcess::NotRunning) {
+    if (workerProcess_->state() != QProcess::NotRunning) {
         stoppingWorker_ = true;
-        workerProcess_.kill();
-        workerProcess_.waitForFinished(1'000);
+        workerProcess_->kill();
+        workerProcess_->waitForFinished(1'000);
         stoppingWorker_ = false;
     }
     setErrorMessage({});
@@ -652,9 +634,8 @@ void ApplicationController::openFile(const QUrl& file)
     activeAssemblyExportRequestId_ = 0;
     assemblyExportMessage_.clear();
     cacheHit_ = false;
-    serverName_ = QStringLiteral("/tmp/loupe-%1-%2")
-                      .arg(QCoreApplication::applicationPid())
-                      .arg(QUuid::createUuid().toString(QUuid::WithoutBraces).left(8));
+    serverName_ = worker::newWorkerServerName();
+    adoptedRequestId_ = 0;
     documentState_ = DocumentState::Opening;
     resetImportProgress();
     emit snapshotChanged();
@@ -681,6 +662,22 @@ void ApplicationController::openFile(const QUrl& file)
             replayCachedGeometry(geometryCacheArchive_);
         }
     }
+    // The importer started at launch on this very file, when it is the one Loupe was opened
+    // with: it has been importing since then, so it is connected to rather than replaced.
+    // Not with a remembered unit, which it was not started with.
+    if (auto prelaunched = worker::takePrelaunchedWorker(pendingPath_)) {
+        if (!pendingUnitOverride_ && prelaunched->executable == workerExecutable_) {
+            useWorkerProcess(std::move(prelaunched->process));
+            serverName_ = prelaunched->serverName;
+            adoptedRequestId_ = prelaunched->requestId;
+            emit documentStateChanged();
+            setImportProgress(tr("Starting STEP importer"), 0.005);
+            connectWorker();
+            return;
+        }
+        prelaunched->process->kill();
+        prelaunched->process->waitForFinished(1'000);
+    }
     emit documentStateChanged();
     auto launchWorker = workerExecutable_;
 #ifdef Q_OS_MACOS
@@ -705,7 +702,8 @@ void ApplicationController::openFile(const QUrl& file)
     }
     if (workerIsBundled) launchWorker = stagedWorkerPath_;
 #endif
-    workerProcess_.start(launchWorker, {QStringLiteral("--server-name"), serverName_});
+    platform::startupMark("worker launching");
+    workerProcess_->start(launchWorker, {QStringLiteral("--server-name"), serverName_});
 }
 
 void ApplicationController::cancelImport()
@@ -1072,7 +1070,10 @@ void ApplicationController::setSelectionOpacity(const double opacity)
 void ApplicationController::connectWorker()
 {
     if (workerClient_.connectToServer(serverName_, 100)) {
-        activeRequestId_ = workerClient_.openFile(pendingPath_, pendingUnitOverride_);
+        platform::startupMark("worker connected");
+        // An importer started at launch is already importing the file, as this request.
+        activeRequestId_ = adoptedRequestId_ != 0 ? workerClient_.adoptRequest(std::exchange(adoptedRequestId_, 0))
+                                                  : workerClient_.openFile(pendingPath_, pendingUnitOverride_);
         return;
     }
     if (++connectionAttempts_ >= kWorkerConnectionAttempts) {
