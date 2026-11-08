@@ -86,7 +86,11 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         overrideStore_ = std::make_unique<cache::OverrideStore>(QDir(cacheRoot).filePath(QStringLiteral("unit-overrides.sqlite")));
     } catch (const std::exception&) {
     }
-    useWorkerProcess(std::make_unique<QProcess>());
+    // The importer launched for each file is set up the way a prelaunched one is: its own
+    // environment, its output forwarded to Loupe's.
+    auto workerProcess = std::make_unique<QProcess>();
+    worker::configureWorkerProcess(*workerProcess);
+    useWorkerProcess(std::move(workerProcess));
     // A layout set aside when an edit starts over from the assembly is kept, unless it is
     // one already saved, so starting over never loses a layout.
     // Volume and bounds with nothing selected are of the whole model, whose parts may have

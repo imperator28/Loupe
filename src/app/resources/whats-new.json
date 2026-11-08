@@ -33,6 +33,11 @@
           "icon": "check",
           "title": "Every copy of a sub-assembly",
           "body": "An assembly using the same sub-assembly several times now shows and exports each copy, not just the first."
+        },
+        {
+          "icon": "download",
+          "title": "Export repeated parts",
+          "body": "Select all exports every part once, numbering different parts that share a name instead of refusing the batch."
         }
       ]
     },

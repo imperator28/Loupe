@@ -2,12 +2,21 @@
 
 ## v0.1.6-beta.4
 
-A testing build that fixes in-app updates of a copy in `C:\Program Files` on Windows, and
-lets pinned measurements be dragged and coloured. Published as a pre-release; everything in
-v0.1.6-beta.3 is included.
+A testing build that opens the launch file sooner, exports assemblies with repeated parts,
+restyles the view toolbar, fixes in-app updates of a copy in `C:\Program Files` on Windows,
+and lets pinned measurements be dragged and coloured. Published as a pre-release;
+everything in v0.1.6-beta.3 is included.
 
 ### New
 
+- **Opens the file you launched with sooner**: its import starts as Loupe starts, not once
+  the window is up, and the window's first frame already shows the model in the remembered
+  theme, without a dark-to-light flash. Export and Drawing are built when first opened (or
+  in the background a few seconds in), and on Windows the graphics driver starts while the
+  window is built.
+- **The view toolbar is restyled**: a compact floating bar with outline icons over short
+  labels, every tool the same width; the lit tool sits on an accent wash. Tools, order and
+  shortcuts are unchanged.
 - **Pinned measurements, laid out your way**: drag a pinned tag anywhere in the view; its
   leader keeps pointing at what was measured as the view turns, and double-clicking puts it
   back. Each pin takes a colour, in turn, and its swatch in the panel picks another (amber,
@@ -19,6 +28,13 @@ v0.1.6-beta.3 is included.
 
 ### Fixed
 
+- **Exporting an assembly with repeated parts**: Select all in Export refused the whole
+  batch when a part or sub-assembly was placed twice, or two parts shared a name. Every
+  copy of a part is now one file, written once; different parts that share a name are
+  numbered "-2", "-3" in tree order, and a name you typed is never changed. The bucket
+  shows one row per file, with "×N" for copies.
+- **The view cube held up the first frame** on Windows: its labels asked for a font
+  Windows does not have, and the search for a stand-in blocked drawing for up to a second.
 - **The bounds box drew only its sizes** on Windows in beta.3, without the box: its dashed
   edges never appeared. Measurement lines are now drawn the way the app's icons are, which
   every graphics back end draws.
