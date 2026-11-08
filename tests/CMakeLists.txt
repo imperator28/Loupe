@@ -33,6 +33,7 @@ add_executable(loupe-core-tests
     core/test_drawing_validation.cpp
     core/test_drawing_writers.cpp
     core/test_export_plan.cpp
+    core/test_output_naming.cpp
     core/test_selected_export.cpp
     core/test_assembly_export.cpp
     core/test_output_validation.cpp

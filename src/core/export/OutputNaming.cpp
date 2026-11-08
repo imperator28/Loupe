@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
+#include <set>
 #include <utility>
 
 #include <QByteArrayView>
@@ -136,6 +138,64 @@ std::string sanitizedLeaf(const std::string_view hierarchyPath)
 std::u16string windowsComparablePath(std::string path)
 {
     return anonymousWindowsComparablePath(std::move(path));
+}
+
+std::vector<std::string> uniqueLeafNames(const std::vector<LeafNameRequest>& requests)
+{
+    struct Entry {
+        std::string leaf;
+        std::optional<std::u16string> comparable;
+        bool named{};
+    };
+    std::vector<Entry> entries;
+    entries.reserve(requests.size());
+    for (const auto& request : requests) {
+        Entry entry{request.name, std::nullopt, false};
+        try {
+            entry.leaf = anonymousSanitizedLeaf(request.name);
+            entry.comparable = anonymousWindowsComparablePath(entry.leaf);
+        } catch (const OutputNamingError&) {
+            // Left as given: the plan that receives it reports the unsafe name.
+            entry.leaf = request.name;
+            entry.comparable.reset();
+        }
+        entries.push_back(std::move(entry));
+    }
+
+    std::set<std::u16string> taken;
+    // Typed names first, so a generated name never takes one from the user.
+    for (std::size_t index = 0; index < requests.size(); ++index) {
+        auto& entry = entries[index];
+        if (!requests[index].typedByUser || !entry.comparable) {
+            entry.named = !entry.comparable.has_value();
+            continue;
+        }
+        taken.insert(*entry.comparable);
+        entry.named = true;
+    }
+    // Then the first holder of every generated name, so a name that appears once is never
+    // displaced by another name's sequence number.
+    for (auto& entry : entries) {
+        if (entry.named) continue;
+        if (taken.insert(*entry.comparable).second) entry.named = true;
+    }
+    // The rest are copies of a name already taken.
+    for (auto& entry : entries) {
+        if (entry.named) continue;
+        for (int sequence = 2;; ++sequence) {
+            auto candidate = entry.leaf + "-" + std::to_string(sequence);
+            auto comparable = anonymousWindowsComparablePath(candidate);
+            if (!taken.insert(comparable).second) continue;
+            entry.leaf = std::move(candidate);
+            entry.named = true;
+            break;
+        }
+    }
+
+    std::vector<std::string> result;
+    result.reserve(entries.size());
+    for (auto& entry : entries) result.push_back(std::move(entry.leaf));
+    return result;
 }
 
 } // namespace loupe::exporting::detail
