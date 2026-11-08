@@ -23,7 +23,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
   const paths = $$('.bp-lines .bp-o path');
   if (paths.length < 5) return;
   const SQ = CSS.supports('corner-shape', 'squircle');
-  const e = SQ ? 0.5 : 1; // superellipse x^4 + y^4 = 1 is (cos t)^(1/2), (sin t)^(1/2); exponent 1 is the circle
+  let e = SQ ? 0.5 : 1; // superellipse x^4 + y^4 = 1 is (cos t)^(1/2), (sin t)^(1/2); exponent 1 is the circle
   const N = 24, f = v => +v.toFixed(2);
   const pt = (cx, cy, rx, ry, deg) => {
     const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -45,8 +45,12 @@ const lerp = (a, b, t) => a + (b - a) * t;
   const deck = [2, 2], pill = [4.68, 4.68];
   paths[0].setAttribute('d', rrect(74.5, 0, 851, 561.1, R.lid, R.lid, R.lid, R.lid));          // lid
   paths[1].setAttribute('d', rrect(86.5, 12, 827, 534.6, R.screen, R.screen, R.screen, R.screen)); // screen
-  // camera: .cam is 2.7% x 1.75% of the screen (827 x 534.6), 0.6% down, centred
+  // camera: .cam is 2.7% x 1.75% of the screen (827 x 534.6), 0.6% down, centred. A true pill with
+  // semicircular ends: a squircle with radius = half the height reads as a rounded rectangle.
+  const shape = e;
+  e = 1;
   paths[2].setAttribute('d', rrect(500 - 11.165, 12 + 3.21, 22.33, 9.36, pill, pill, pill, pill));
+  e = shape;
   paths[3].setAttribute('d', rrect(0, 561.1, 1000, 33, deck, deck, R.base, R.base));           // base
   // the thumb scoop: open at the deck, 10 across and its full depth down at each corner
   const sx = 427.5, sw = 145, sy = 561.1, sh = 11.88, rx = 10;

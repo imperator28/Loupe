@@ -1176,7 +1176,7 @@ html .rig { transition: opacity 500ms var(--ease-out); }
     corner-shape: squircle;
     border-radius: calc(1.209% + (1 - var(--frame)) * 0.27%) / calc(1.871% + (1 - var(--frame)) * 0.4%); /* 10 units */
   }
-  .cam, .base .scoop { corner-shape: squircle; }
+  .base .scoop { corner-shape: squircle; } /* not .cam: a pill keeps semicircular ends */
   .base { corner-shape: squircle; border-radius: calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.018) calc(var(--lw, 1120px) * 0.018); } /* 2 and 18 units */
 }
 .base .scoop { border-radius: 0 0 calc(var(--lw, 1120px) * 0.01) calc(var(--lw, 1120px) * 0.01) / 0 0 100% 100%; } /* 10 units across, the full depth down */
