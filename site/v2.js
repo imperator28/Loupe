@@ -1423,10 +1423,16 @@ function loop(now) {
 // ---------------------------------------------------------------------------------------------
 // Downloads: point each button at its zip in the latest release.
 // ---------------------------------------------------------------------------------------------
+// The visitor's platform, from the same check the download buttons use: it picks the highlighted
+// download and the copy shortcut's modifier key (Cmd on Apple devices, Ctrl everywhere else).
+const PLATFORM_UA = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+const IS_WINDOWS = /win/i.test(PLATFORM_UA);
+const IS_APPLE = !IS_WINDOWS && /mac|iphone|ipad|ipod/i.test(PLATFORM_UA);
+$$('kbd[data-mod]').forEach(k => { k.textContent = IS_APPLE ? '\u2318' : 'Ctrl'; k.title = IS_APPLE ? 'Command' : 'Control'; });
+
 function downloads() {
   const buttons = $$('[data-downloads] .dl');
-  const ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
-  const mine = /win/i.test(ua) ? 'windows-x64' : 'macos-arm64';
+  const mine = IS_WINDOWS ? 'windows-x64' : 'macos-arm64';
   buttons.forEach(b => { if (b.dataset.asset === mine) b.classList.add('primary'); });
   fetch('https://api.github.com/repos/imperator28/Loupe/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
