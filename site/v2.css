@@ -1183,3 +1183,12 @@ html .rig { transition: opacity 500ms var(--ease-out); }
 /* Until the story is ready (html.preload), hold the load-in animations so the blueprint, which sits
    inside the still-hidden laptop, plays from its start when the laptop appears. */
 html.preload .theater, html.preload .theater * { animation-play-state: paused !important; }
+/* Phones: the open card loses its subtitle and footnote so it fits under the scene copy */
+@media (max-width: 599px) {
+  .race .race-h span, .race .mini-key { display: none; }
+  .race { padding: 12px 14px 10px; }
+  .race .race-h { margin-bottom: 6px; }
+  .race .race-h b { font-size: 13px; }
+  .race .bar { height: 22px; }
+  .race .mini-foot { margin-top: 4px; }
+}
