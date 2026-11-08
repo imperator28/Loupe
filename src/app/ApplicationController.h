@@ -369,6 +369,8 @@ signals:
 
 private:
     void connectWorker();
+    // Takes the importer process to talk to and watches it for failure.
+    void useWorkerProcess(std::unique_ptr<QProcess> process);
     void setErrorMessage(const QString& errorMessage);
     void applySnapshotToTree(const QByteArray& snapshot);
     void applyActiveGeometryToMeasurement();
@@ -429,7 +431,10 @@ private:
     QString snapshotJson_;
     QString errorMessage_;
     DocumentState documentState_{DocumentState::Empty};
-    QProcess workerProcess_;
+    // Replaced, not restarted, when a document takes over the importer started at launch.
+    std::unique_ptr<QProcess> workerProcess_;
+    // The request an importer started at launch is already running, until connected to.
+    std::uint64_t adoptedRequestId_{};
     bool stoppingWorker_{false};
     worker::WorkerClient workerClient_{this};
     int connectionAttempts_{};

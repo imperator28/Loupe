@@ -30,6 +30,8 @@ public:
     // The assembly as the exploded view has it (#17), in any of the assembly formats.
     [[nodiscard]] std::uint64_t exportAssembly(protocol::ExportAssembly request);
     void cancel(std::uint64_t requestId);
+    // A request the worker was given on its command line, as if this client had sent it.
+    [[nodiscard]] std::uint64_t adoptRequest(std::uint64_t requestId);
 
 signals:
     void progress(quint64 requestId, const QString& stage, double fraction);

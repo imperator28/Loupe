@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
 #include <exception>
 #include <variant>
 
@@ -35,6 +36,12 @@ std::uint64_t WorkerClient::openFile(const QString& path, const std::optional<QS
     const auto overrideValue = unitOverride ? std::optional<protocol::UnitOverride>{protocol::UnitOverride{*unitOverride, 1.0, QStringLiteral("User requested unit interpretation")}}
                                            : std::nullopt;
     writeCommand(protocol::encode(protocol::OpenFile{requestId, path, overrideValue}));
+    return requestId;
+}
+
+std::uint64_t WorkerClient::adoptRequest(const std::uint64_t requestId)
+{
+    nextRequestId_ = std::max(nextRequestId_, requestId + 1);
     return requestId;
 }
 

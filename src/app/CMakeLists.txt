@@ -7,6 +7,10 @@ qt_add_executable(loupe-app
     platform/FileAssociation.h
     platform/FileOpenRouter.cpp
     platform/FileOpenRouter.h
+    platform/GraphicsWarmup.cpp
+    platform/GraphicsWarmup.h
+    platform/StartupTrace.cpp
+    platform/StartupTrace.h
     platform/WindowManager.cpp
     platform/WindowManager.h
     platform/TempHygiene.cpp
@@ -49,6 +53,8 @@ qt_add_executable(loupe-app
     cache/SourceFingerprint.h
     worker/WorkerClient.cpp
     worker/WorkerClient.h
+    worker/WorkerLaunch.cpp
+    worker/WorkerLaunch.h
     tools/MeasurementController.cpp
     tools/MeasurementController.h
     tools/MeasureGeometry.cpp

@@ -41,6 +41,8 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
+
+#include <utility>
 #include <QElapsedTimer>
 
 #include <BRep_Builder.hxx>
@@ -553,6 +555,20 @@ void WorkerServer::acceptConnection()
         QCoreApplication::quit();
     });
     send({{QStringLiteral("type"), QStringLiteral("ready")}});
+    holdUntilConnected_ = false;
+    for (const auto& frame : std::exchange(heldFrames_, {})) socket_->write(frame);
+    socket_->flush();
+}
+
+void WorkerServer::openBeforeConnection(const std::uint64_t requestId, const QString& path)
+{
+    holdUntilConnected_ = true;
+    open(requestId, path, std::nullopt);
+    // An app that never connects (it crashed, or was closed first) must not leave this
+    // process behind for good.
+    QTimer::singleShot(120'000, this, [this] {
+        if (!socket_ && holdUntilConnected_) QCoreApplication::quit();
+    });
 }
 
 void WorkerServer::readCommands()
@@ -597,17 +613,22 @@ void WorkerServer::readCommands()
 
 void WorkerServer::send(QJsonObject event)
 {
-    if (!socket_) {
+    if (!socket_ && !holdUntilConnected_) {
         return;
     }
     event.insert(QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}});
-    socket_->write(protocol::encodeFrame(protocol::FrameType::ControlJson, QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n'));
+    auto frame = protocol::encodeFrame(protocol::FrameType::ControlJson, QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n');
+    if (!socket_) {
+        heldFrames_.append(std::move(frame));
+        return;
+    }
+    socket_->write(frame);
     socket_->flush();
 }
 
 void WorkerServer::sendGeometry(const protocol::GeometryPayload& payload)
 {
-    if (!socket_) return;
+    if (!socket_ && !holdUntilConnected_) return;
     // encodeGeometry validates the payload and throws ProtocolError on any
     // malformed body. This runs on the main thread via a queued call from the
     // tessellation thread, so an escaping exception has no handler and would
@@ -618,6 +639,10 @@ void WorkerServer::sendGeometry(const protocol::GeometryPayload& payload)
         frame = protocol::encodeFrame(protocol::FrameType::Geometry, protocol::encodeGeometry(payload));
     } catch (const std::exception& error) {
         qWarning("loupe-worker: dropping geometry payload that failed to encode: %s", error.what());
+        return;
+    }
+    if (!socket_) {
+        heldFrames_.append(std::move(frame));
         return;
     }
     socket_->write(frame);

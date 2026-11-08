@@ -106,6 +106,8 @@ add_executable(loupe-application-controller-tests
     app/test_application_controller.cpp
     fixtures/FixtureFactory.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/StartupTrace.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerLaunch.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
@@ -227,6 +229,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
     "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/StartupTrace.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerLaunch.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"

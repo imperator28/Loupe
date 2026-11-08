@@ -33,6 +33,7 @@ private slots:
     void readyThenCancel();
     void invalidFileDoesNotCrashWorker();
     void validStepProducesNonEmptySnapshot();
+    void anImportStartedAtLaunchIsHeldUntilTheAppConnects();
     void validStepStreamsTriangulatedMesh();
     void everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady();
     void copiesOfAPartShareOneMeshAndArePlacedApart();
@@ -234,6 +235,60 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
 #else
     QCOMPARE(allocator, QStringLiteral("system"));
 #endif
+}
+
+// The app hands the worker the file it was launched with on the command line, so the import
+// runs while the window is still being built (app/worker/WorkerLaunch.h). Everything it sends
+// before the app connects is kept and delivered, in order, after "ready".
+void WorkerProcessTest::anImportStartedAtLaunchIsHeldUntilTheAppConnects()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("worker-prelaunch.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name,
+                                                     QStringLiteral("--open"), QString::fromStdString(fixture.string()),
+                                                     QStringLiteral("--request-id"), QStringLiteral("7")});
+    QVERIFY(worker.waitForStarted(3'000));
+    // Long enough for this small file to be read and meshed with nobody listening.
+    QTest::qWait(2'000);
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    QCOMPARE(readEvent(socket, decoder).value(QStringLiteral("type")).toString(), QStringLiteral("ready"));
+
+    // Nothing is sent: the import was asked for on the command line.
+    bool sawFirstProgress = false;
+    bool sawSnapshot = false;
+    int geometryFrames = 0;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 20'000) {
+        const auto frame = readFrame(socket, decoder);
+        QVERIFY(frame.has_value());
+        if (frame->type == loupe::protocol::FrameType::Geometry) {
+            QVERIFY(sawSnapshot);
+            ++geometryFrames;
+            continue;
+        }
+        const auto event = QJsonDocument::fromJson(frame->payload).object();
+        const auto type = event.value(QStringLiteral("type")).toString();
+        QVERIFY2(type != QStringLiteral("failed"), qPrintable(event.value(QStringLiteral("message")).toString()));
+        if (type == QStringLiteral("progress") || type == QStringLiteral("snapshotReady")) {
+            QCOMPARE(event.value(QStringLiteral("requestId")).toInteger(), 7);
+        }
+        if (type == QStringLiteral("progress") && !sawFirstProgress) {
+            // Held from the very start of the import, not just what came after connecting.
+            QCOMPARE(event.value(QStringLiteral("stage")).toString(), QStringLiteral("Reading STEP file"));
+            sawFirstProgress = true;
+        }
+        if (type == QStringLiteral("snapshotReady")) sawSnapshot = true;
+        if (type == QStringLiteral("progress") && event.value(QStringLiteral("fraction")).toDouble() >= 1.0) break;
+    }
+    QVERIFY(sawFirstProgress);
+    QVERIFY(sawSnapshot);
+    QVERIFY(geometryFrames > 0);
+    QVERIFY(worker.state() == QProcess::Running);
 }
 
 void WorkerProcessTest::validStepStreamsTriangulatedMesh()

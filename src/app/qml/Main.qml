@@ -26,7 +26,8 @@ ApplicationWindow {
     readonly property int workspaceIndex: workspaceIndexOf(root.controller)
     width: 1280
     height: 800
-    visible: true
+    // Shown by Component.onCompleted, once the theme is applied.
+    visible: false
     title: root.controller.documentName.length > 0 ? qsTr("%1 — Loupe").arg(root.controller.documentName) : qsTr("Loupe")
     color: appTheme.surface
     palette.window: appTheme.surface
@@ -118,6 +119,9 @@ ApplicationWindow {
 
     Theme {
         id: appTheme
+        // The remembered mode from the start, not assigned later: the first frame is drawn
+        // in whatever this is when the window is shown.
+        mode: root.themePreference.mode
         systemDark: systemPalette.window.r + systemPalette.window.g + systemPalette.window.b < 1.5
         // The OS does not re-skin native chrome (e.g. the macOS title bar)
         // when only the in-app theme changes, so that has to be driven
@@ -173,8 +177,11 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
-        appTheme.mode = themePreference.mode
+        // Shown only now, with the title bar already in the theme's light or dark: showing
+        // a window draws its first frame there and then, so a window declared visible drew
+        // it before this handler ran -- in the wrong theme, which then flashed to the right one.
         windowChrome.applyAppearance(root, appTheme.dark)
+        root.visible = true
         Windows.registerWindow(root)
         root.applyNewDocumentPreferences(root.documents.documentAt(0))
         if (root.adoptDocument) {
@@ -745,16 +752,40 @@ ApplicationWindow {
                     preferences: root.themePreference
                     onOpenFileRequested: openStepDialog.open()
                 }
-                Export.ExportWorkspace {
-                    controller: documentView.document
-                    theme: appTheme
-                    preferences: root.themePreference
+                // Export and Drawing are built when first entered, or in the background a
+                // little after launch, rather than with the window: together they were about
+                // half of the window's creation time, before anything could be drawn. Once
+                // built they stay, like Inspect.
+                Loader {
+                    active: documentView.built.indexOf(1) >= 0
+                    asynchronous: documentView.currentIndex !== 1
+                    sourceComponent: Export.ExportWorkspace {
+                        controller: documentView.document
+                        theme: appTheme
+                        preferences: root.themePreference
+                    }
                 }
-                Drawing.DrawingWorkspace {
-                    objectName: "drawingWorkspace"
-                    controller: documentView.document
-                    theme: appTheme
-                    preferences: root.themePreference
+                Loader {
+                    active: documentView.built.indexOf(2) >= 0
+                    asynchronous: documentView.currentIndex !== 2
+                    sourceComponent: Drawing.DrawingWorkspace {
+                        objectName: "drawingWorkspace"
+                        controller: documentView.document
+                        theme: appTheme
+                        preferences: root.themePreference
+                    }
+                }
+
+                // The workspaces (by index) built so far.
+                property var built: [0]
+                function markBuilt(index) { if (built.indexOf(index) < 0) built = built.concat([index]) }
+                onCurrentIndexChanged: markBuilt(currentIndex)
+                Component.onCompleted: markBuilt(currentIndex)
+                Timer {
+                    // After the window and a first file are up, not competing with them.
+                    interval: 4000
+                    running: true
+                    onTriggered: documentView.built = [0, 1, 2]
                 }
             }
         }

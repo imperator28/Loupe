@@ -2,6 +2,8 @@
 #include "app/DocumentTabs.h"
 #include "app/platform/FileAssociation.h"
 #include "app/platform/FileOpenRouter.h"
+#include "app/platform/GraphicsWarmup.h"
+#include "app/platform/StartupTrace.h"
 #include "app/platform/TempHygiene.h"
 #include "app/platform/UpdateController.h"
 #include "app/platform/WindowManager.h"
@@ -9,6 +11,7 @@
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/HandleRingGeometry.h"
 #include "app/render/MeshGeometry.h"
+#include "app/worker/WorkerLaunch.h"
 #include "app/models/ThemePreference.h"
 
 #include <QDir>
@@ -18,14 +21,49 @@
 #include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QQuickWindow>
+#include <QScopeGuard>
 #include <qqml.h>
+
+namespace {
+
+// With LOUPE_STARTUP_TRACE set: marks when each window is first exposed and its first frames.
+class StartupFrameTrace final : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::Expose) {
+            if (auto* window = qobject_cast<QQuickWindow*>(watched); window && !traced_) {
+                traced_ = true;
+                loupe::app::platform::startupMark("window exposed");
+                QObject::connect(window, &QQuickWindow::frameSwapped, window, [] {
+                    static int frames = 0;
+                    if (++frames <= 400) loupe::app::platform::startupMark("frame swapped");
+                }, Qt::DirectConnection);
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    bool traced_{false};
+};
+
+} // namespace
 
 int main(int argc, char* argv[])
 {
+    loupe::app::platform::startupMark("main");
     // The native macOS control style does not reliably honor the dynamic QML
     // palette. Basic keeps every control on the semantic theme roles below.
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     QGuiApplication application(argc, argv);
+    loupe::app::platform::startupMark("application constructed");
+    StartupFrameTrace frameTrace;
+    if (loupe::app::platform::startupTraceEnabled()) application.installEventFilter(&frameTrace);
     application.setOrganizationName(QStringLiteral("imperator28"));
     application.setApplicationName(QStringLiteral("Loupe"));
     application.setWindowIcon(QIcon(QStringLiteral(":/branding/loupe-app-icon.png")));
@@ -76,6 +114,13 @@ int main(int argc, char* argv[])
     const bool selfCheck = QCoreApplication::arguments().contains(QStringLiteral("--self-check"));
     const auto launchFiles = loupe::app::platform::FileOpenRouter::stepFilesIn(QCoreApplication::arguments());
     if (!selfCheck && loupe::app::platform::FileOpenRouter::forwardToRunningInstance(launchFiles)) return 0;
+    // Both run alongside the window's creation below, which takes a while.
+    loupe::app::platform::startGraphicsWarmup();
+    const auto finishWarmup = qScopeGuard([] { loupe::app::platform::finishGraphicsWarmup(); });
+    // The import of the file Loupe was opened with starts now, in its own process, and runs
+    // while the window below is built; the document that opens it takes the process over.
+    if (!selfCheck && !launchFiles.isEmpty()) loupe::app::worker::prelaunchWorker(launchFiles.constFirst());
+    const auto discardUnclaimedImport = qScopeGuard([] { loupe::app::worker::discardPrelaunchedWorker(); });
     loupe::app::platform::FileOpenRouter fileOpenRouter;
     if (!selfCheck) fileOpenRouter.listenForOtherInstances();
 
@@ -86,13 +131,20 @@ int main(int argc, char* argv[])
     // What's New shows once after an update; never during the packaging self-check.
     loupe::app::platform::UpdateController::setShowWhatsNewOnLaunch(!selfCheck);
     QQmlApplicationEngine engine;
+    loupe::app::platform::startupMark("loading QML");
     engine.loadFromModule("Loupe.App", "Main");
+    loupe::app::platform::startupMark("QML loaded");
     if (engine.rootObjects().isEmpty()) {
         return 1;
     }
     fileOpenRouter.setWindow(engine.rootObjects().constFirst());
     fileOpenRouter.setWindowProvider([&windowManager] { return windowManager.preferredWindow(); });
     fileOpenRouter.open(launchFiles);
+    loupe::app::platform::startupMark("launch files handed over");
+    // Opening is synchronous, so a pre-launched import still unclaimed was refused.
+    loupe::app::worker::discardPrelaunchedWorker();
+    // The window has drawn its first frame, on a device of Qt's own, by now.
+    loupe::app::platform::finishGraphicsWarmup();
     // --self-check: start exactly as a user's launch does -- real platform plugin, the whole
     // QML UI -- then confirm the worker sits beside the executable, and exit. Release CI runs
     // it on the packaged folder, so a package that cannot start (a missing Qt plugin, a
