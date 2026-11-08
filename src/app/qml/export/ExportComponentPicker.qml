@@ -104,7 +104,7 @@ Inspect.ElevatedPanel {
         Inspect.PanelTitle {
             theme: root.theme
             text: qsTr("Components")
-            detail: root.draft && root.draft.checkedCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft ? root.draft.checkedCount : 0)
+            detail: root.draft && root.draft.fileCount === 1 ? qsTr("1 file") : qsTr("%1 files").arg(root.draft ? root.draft.fileCount : 0)
         }
 
         RowLayout {

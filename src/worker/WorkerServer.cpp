@@ -22,6 +22,14 @@
 #include <mimalloc.h>
 #endif
 
+#if defined(LOUPE_WORKER_MIMALLOC) && defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
+
 #include <QFileInfo>
 #include <QCoreApplication>
 #include <QDir>
@@ -33,6 +41,8 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
+
+#include <utility>
 #include <QElapsedTimer>
 
 #include <BRep_Builder.hxx>
@@ -82,16 +92,60 @@
 namespace loupe::worker {
 namespace {
 
+#if defined(LOUPE_WORKER_MIMALLOC) && defined(_WIN32)
+// Modules from outside Windows and the worker's own folder that the loader brought in before
+// mimalloc's redirect DLL. Endpoint-security agents (SentinelOne's InProcessClient64.dll, for
+// one) inject such a module into every process ahead of the executable's own imports, and when
+// it starts the C runtime (ucrtbase.dll) first the redirect declines to replace malloc, however
+// the worker's imports are ordered. Naming it tells that machine apart from a broken build.
+QStringList modulesLoadedBeforeRedirect()
+{
+    const HMODULE redirect = GetModuleHandleW(L"mimalloc-redirect.dll");
+    if (redirect == nullptr) return {};
+    std::vector<HMODULE> modules(1024);
+    DWORD needed = 0;
+    if (!K32EnumProcessModules(GetCurrentProcess(), modules.data(), static_cast<DWORD>(modules.size() * sizeof(HMODULE)),
+                               &needed)) {
+        return {};
+    }
+    modules.resize(std::min<std::size_t>(needed / sizeof(HMODULE), modules.size()));
+    wchar_t windowsDirectory[MAX_PATH] = {};
+    GetWindowsDirectoryW(windowsDirectory, MAX_PATH);
+    const auto systemRoot = QDir::cleanPath(QString::fromWCharArray(windowsDirectory)) + QLatin1Char('/');
+    const auto ownFolder = QDir::cleanPath(QCoreApplication::applicationDirPath()) + QLatin1Char('/');
+    QStringList found;
+    // The list is in load order and starts with the executable itself.
+    for (std::size_t index = 1; index < modules.size() && modules[index] != redirect; ++index) {
+        wchar_t path[MAX_PATH] = {};
+        if (GetModuleFileNameW(modules[index], path, MAX_PATH) == 0) continue;
+        const auto modulePath = QDir::cleanPath(QDir::fromNativeSeparators(QString::fromWCharArray(path)));
+        if (modulePath.startsWith(systemRoot, Qt::CaseInsensitive) || modulePath.startsWith(ownFolder, Qt::CaseInsensitive)) {
+            continue;
+        }
+        found.append(QFileInfo(modulePath).fileName());
+    }
+    return found;
+}
+#endif
+
 // The allocator malloc actually goes to, for the import metrics: a build that links mimalloc
 // but whose override did not take (a DLL loaded too late, a static link that kept the system
 // malloc) reports it, rather than benchmarking the system allocator under mimalloc's name.
+// On Windows it also names any module that got into the process ahead of mimalloc's redirect,
+// which is what stops the override on machines running some endpoint-security agents.
 QString activeAllocator()
 {
 #ifdef LOUPE_WORKER_MIMALLOC
     void* probe = std::malloc(64);
     const bool fromMimalloc = mi_is_in_heap_region(probe);
     std::free(probe);
-    return fromMimalloc ? QStringLiteral("mimalloc") : QStringLiteral("system (mimalloc not in effect)");
+    if (fromMimalloc) return QStringLiteral("mimalloc");
+#ifdef _WIN32
+    if (const auto blockers = modulesLoadedBeforeRedirect(); !blockers.isEmpty()) {
+        return QStringLiteral("system (mimalloc not in effect; loaded before it: %1)").arg(blockers.join(QStringLiteral(", ")));
+    }
+#endif
+    return QStringLiteral("system (mimalloc not in effect)");
 #else
     return QStringLiteral("system");
 #endif
@@ -501,6 +555,20 @@ void WorkerServer::acceptConnection()
         QCoreApplication::quit();
     });
     send({{QStringLiteral("type"), QStringLiteral("ready")}});
+    holdUntilConnected_ = false;
+    for (const auto& frame : std::exchange(heldFrames_, {})) socket_->write(frame);
+    socket_->flush();
+}
+
+void WorkerServer::openBeforeConnection(const std::uint64_t requestId, const QString& path)
+{
+    holdUntilConnected_ = true;
+    open(requestId, path, std::nullopt);
+    // An app that never connects (it crashed, or was closed first) must not leave this
+    // process behind for good.
+    QTimer::singleShot(120'000, this, [this] {
+        if (!socket_ && holdUntilConnected_) QCoreApplication::quit();
+    });
 }
 
 void WorkerServer::readCommands()
@@ -545,17 +613,22 @@ void WorkerServer::readCommands()
 
 void WorkerServer::send(QJsonObject event)
 {
-    if (!socket_) {
+    if (!socket_ && !holdUntilConnected_) {
         return;
     }
     event.insert(QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}});
-    socket_->write(protocol::encodeFrame(protocol::FrameType::ControlJson, QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n'));
+    auto frame = protocol::encodeFrame(protocol::FrameType::ControlJson, QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n');
+    if (!socket_) {
+        heldFrames_.append(std::move(frame));
+        return;
+    }
+    socket_->write(frame);
     socket_->flush();
 }
 
 void WorkerServer::sendGeometry(const protocol::GeometryPayload& payload)
 {
-    if (!socket_) return;
+    if (!socket_ && !holdUntilConnected_) return;
     // encodeGeometry validates the payload and throws ProtocolError on any
     // malformed body. This runs on the main thread via a queued call from the
     // tessellation thread, so an escaping exception has no handler and would
@@ -566,6 +639,10 @@ void WorkerServer::sendGeometry(const protocol::GeometryPayload& payload)
         frame = protocol::encodeFrame(protocol::FrameType::Geometry, protocol::encodeGeometry(payload));
     } catch (const std::exception& error) {
         qWarning("loupe-worker: dropping geometry payload that failed to encode: %s", error.what());
+        return;
+    }
+    if (!socket_) {
+        heldFrames_.append(std::move(frame));
         return;
     }
     socket_->write(frame);

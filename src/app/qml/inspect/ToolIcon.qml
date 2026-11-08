@@ -15,8 +15,83 @@ Item {
     implicitHeight: 20
 
     // Each entry: s = stroked subpaths, f = solid-filled subpaths,
-    // t = translucent tinted region. All in a 20x20 viewbox.
+    // t = translucent tinted region. All in a 20x20 viewbox unless the entry gives
+    // its own square box in b.
     readonly property var glyphs: ({
+        // The viewport toolbar's set: plain outlines in a 24x24 box, no fills or tints.
+        "toolbarFit": {
+            b: 24,
+            s: "M3 7 V5 A2 2 0 0 1 5 3 H7 M17 3 H19 A2 2 0 0 1 21 5 V7 "
+               + "M21 17 V19 A2 2 0 0 1 19 21 H17 M7 21 H5 A2 2 0 0 1 3 19 V17 "
+               + "M10.8 12 A1.2 1.2 0 1 0 13.2 12 A1.2 1.2 0 1 0 10.8 12 Z",
+            f: "",
+            t: ""
+        },
+        "toolbarIsolate": {
+            b: 24,
+            s: "M3 12 A9 9 0 1 0 21 12 A9 9 0 1 0 3 12 Z "
+               + "M9.5 12 A2.5 2.5 0 1 0 14.5 12 A2.5 2.5 0 1 0 9.5 12 Z",
+            f: "",
+            t: ""
+        },
+        "toolbarHide": {
+            b: 24,
+            s: "M9.9 9.9 A3 3 0 1 0 14.1 14.1 "
+               + "M10.7 5.1 A10.4 10.4 0 0 1 12 5 C19 5 22 12 22 12 A13 13 0 0 1 20.3 14.7 "
+               + "M6.6 6.6 A13.5 13.5 0 0 0 2 12 C2 12 5 19 12 19 A9.7 9.7 0 0 0 17.4 17.4 "
+               + "M2 2 L22 22",
+            f: "",
+            t: ""
+        },
+        "toolbarTransparent": {
+            b: 24,
+            s: "M10 8 H19 A2 2 0 0 1 21 10 V19 A2 2 0 0 1 19 21 H10 A2 2 0 0 1 8 19 V10 A2 2 0 0 1 10 8 Z "
+               + "M4 16 A2 2 0 0 1 2 14 V4 A2 2 0 0 1 4 2 H14 A2 2 0 0 1 16 4",
+            f: "",
+            t: ""
+        },
+        "toolbarSection": {
+            b: 24,
+            s: "M5 3 H19 A2 2 0 0 1 21 5 V19 A2 2 0 0 1 19 21 H5 A2 2 0 0 1 3 19 V5 A2 2 0 0 1 5 3 Z "
+               + "M3 15 L21 9",
+            f: "",
+            t: ""
+        },
+        "toolbarExplode": {
+            b: 24,
+            s: "M4 3 H8 A1 1 0 0 1 9 4 V8 A1 1 0 0 1 8 9 H4 A1 1 0 0 1 3 8 V4 A1 1 0 0 1 4 3 Z "
+               + "M16 3 H20 A1 1 0 0 1 21 4 V8 A1 1 0 0 1 20 9 H16 A1 1 0 0 1 15 8 V4 A1 1 0 0 1 16 3 Z "
+               + "M4 15 H8 A1 1 0 0 1 9 16 V20 A1 1 0 0 1 8 21 H4 A1 1 0 0 1 3 20 V16 A1 1 0 0 1 4 15 Z "
+               + "M16 15 H20 A1 1 0 0 1 21 16 V20 A1 1 0 0 1 20 21 H16 A1 1 0 0 1 15 20 V16 A1 1 0 0 1 16 15 Z "
+               + "M10.5 10.5 L13.5 13.5 M13.5 10.5 L10.5 13.5",
+            f: "",
+            t: ""
+        },
+        "toolbarMeasure": {
+            b: 24,
+            s: "M21.3 15.3 A2.4 2.4 0 0 1 21.3 18.7 L18.7 21.3 A2.4 2.4 0 0 1 15.3 21.3 L2.7 8.7 "
+               + "A2.4 2.4 0 0 1 2.7 5.3 L5.3 2.7 A2.4 2.4 0 0 1 8.7 2.7 Z "
+               + "M14.5 12.5 L16.5 10.5 M11.5 9.5 L13.5 7.5 M8.5 6.5 L10.5 4.5 M17.5 15.5 L19.5 13.5",
+            f: "",
+            t: ""
+        },
+        "toolbarViews": {
+            b: 24,
+            s: "M12.8 2.2 A2 2 0 0 0 11.2 2.2 L2.6 6.1 A1 1 0 0 0 2.6 7.9 L11.2 11.8 A2 2 0 0 0 12.8 11.8 "
+               + "L21.4 7.9 A1 1 0 0 0 21.4 6.1 Z "
+               + "M22 17.6 L12.8 21.8 A2 2 0 0 1 11.2 21.8 L2 17.6 "
+               + "M22 12.6 L12.8 16.8 A2 2 0 0 1 11.2 16.8 L2 12.6",
+            f: "",
+            t: ""
+        },
+        "toolbarCapture": {
+            b: 24,
+            s: "M14.5 4 H9.5 L7 7 H4 A2 2 0 0 0 2 9 V18 A2 2 0 0 0 4 20 H20 A2 2 0 0 0 22 18 V9 "
+               + "A2 2 0 0 0 20 7 H17 Z "
+               + "M9 13 A3 3 0 1 0 15 13 A3 3 0 1 0 9 13 Z",
+            f: "",
+            t: ""
+        },
         "fit": {
             s: "M6.5 3 H4.5 Q3 3 3 4.5 V6.5 M13.5 3 H15.5 Q17 3 17 4.5 V6.5 "
                + "M17 13.5 V15.5 Q17 17 15.5 17 H13.5 M3 13.5 V15.5 Q3 17 4.5 17 H6.5",
@@ -279,15 +354,16 @@ Item {
     })
 
     readonly property var glyph: glyphs[name] !== undefined ? glyphs[name] : { s: "", f: "", t: "" }
+    readonly property real box: glyph.b !== undefined ? glyph.b : 20
 
-    // Drawn in a 20 px box and scaled to the item's size, the stroke kept at its width.
-    readonly property real drawScale: Math.max(0.01, Math.min(width, height) / 20)
+    // Drawn in its box and scaled to the item's size, the stroke kept at its width.
+    readonly property real drawScale: Math.max(0.01, Math.min(width, height) / box)
 
     Shape {
-        width: 20
-        height: 20
-        x: (root.width - 20 * root.drawScale) / 2
-        y: (root.height - 20 * root.drawScale) / 2
+        width: root.box
+        height: root.box
+        x: (root.width - root.box * root.drawScale) / 2
+        y: (root.height - root.box * root.drawScale) / 2
         transform: Scale { xScale: root.drawScale; yScale: root.drawScale }
         preferredRendererType: Shape.CurveRenderer
 

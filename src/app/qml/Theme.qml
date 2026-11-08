@@ -49,6 +49,14 @@ QtObject {
     readonly property color accentTint: dark ? Qt.rgba(0.545, 0.576, 0.973, 0.16)
                                              : Qt.rgba(0.310, 0.275, 0.898, 0.12)
     readonly property color selectionFill: dark ? "#2E3560" : "#DEE1FB"
+    // The viewport toolbar floating over the model: surface.1, almost opaque, with a
+    // hairline ring and a soft drop shadow; a lit tool sits on a wash of the accent.
+    readonly property color viewportToolbarFill: dark ? Qt.rgba(0.082, 0.094, 0.137, 0.96)
+                                                      : Qt.rgba(1, 1, 1, 0.96)
+    readonly property color viewportToolbarHairline: dark ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(0, 0, 0, 0.08)
+    readonly property color viewportToolbarShadow: dark ? Qt.rgba(0, 0, 0, 0.6) : Qt.rgba(0.06, 0.08, 0.16, 0.18)
+    readonly property color viewportToolbarActive: dark ? Qt.rgba(0.545, 0.576, 0.973, 0.2)
+                                                        : Qt.rgba(0.310, 0.275, 0.898, 0.14)
     readonly property color warning: dark ? "#FDB022" : "#B54708"
     readonly property color errorColor: dark ? "#F97066" : "#B42318"
     readonly property color success: dark ? "#47CD89" : "#067647"

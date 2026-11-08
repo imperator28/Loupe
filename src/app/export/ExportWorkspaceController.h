@@ -19,6 +19,9 @@ class ExportWorkspaceController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList components READ components NOTIFY componentsChanged)
     Q_PROPERTY(int checkedCount READ checkedCount NOTIFY selectionChanged)
+    // How many files the export writes: one per distinct part or sub-assembly, however many
+    // copies of it are checked.
+    Q_PROPERTY(int fileCount READ fileCount NOTIFY planChanged)
     Q_PROPERTY(int selectionRevision READ selectionRevision NOTIFY selectionChanged)
     Q_PROPERTY(QString focusedNodeId READ focusedNodeId WRITE setFocusedNodeId NOTIFY previewChanged)
     Q_PROPERTY(QString hoveredNodeId READ hoveredNodeId WRITE setHoveredNodeId NOTIFY previewChanged)
@@ -49,6 +52,7 @@ public:
 
     [[nodiscard]] QVariantList components() const;
     [[nodiscard]] int checkedCount() const noexcept { return static_cast<int>(checkedNodeIds_.size()); }
+    [[nodiscard]] int fileCount() const noexcept { return static_cast<int>(outputs_.size()); }
     [[nodiscard]] int selectionRevision() const noexcept { return selectionRevision_; }
     [[nodiscard]] const QString& focusedNodeId() const noexcept { return focusedNodeId_; }
     [[nodiscard]] const QString& hoveredNodeId() const noexcept { return hoveredNodeId_; }
@@ -88,6 +92,8 @@ public:
 
     Q_INVOKABLE void setChecked(const QString& nodeId, bool checked);
     Q_INVOKABLE void setAllChecked(bool checked);
+    // Takes a bucket row out of the export: the component and every checked copy of it.
+    Q_INVOKABLE void removeBucketRow(const QString& nodeId);
     Q_INVOKABLE bool isChecked(const QString& nodeId) const;
     Q_INVOKABLE bool containsNode(const QString& selectionId, const QString& nodeId) const;
     Q_INVOKABLE void setFocusedNodeId(const QString& nodeId);
@@ -118,7 +124,18 @@ signals:
     void cancelRequested(quint64 requestId);
 
 private:
-    [[nodiscard]] QString generatedLeafName(const QString& nodeId, int bucketIndex) const;
+    // One file of the export: a checked component and every other checked copy of it. The
+    // first one checked stands for them all and is what the worker writes.
+    struct OutputGroup {
+        QVector<QString> nodeIds;
+        QString leafName;
+        bool filenameOverridden{};
+    };
+
+    [[nodiscard]] QVector<OutputGroup> groupedOutputs() const;
+    [[nodiscard]] QString baseName(const OutputGroup& group, int fileIndex) const;
+    void assignLeafNames(QVector<OutputGroup>& groups) const;
+    [[nodiscard]] int groupIndexOf(const QString& nodeId) const;
     void refreshPlan();
     void clearPlan();
     [[nodiscard]] QByteArray reviewedPlanJson() const;
@@ -137,6 +154,7 @@ private:
     QString grouping_{QStringLiteral("Separate files")};
     QString namingStrategy_{QStringLiteral("keep")};
     QString namingValue_;
+    QVector<OutputGroup> outputs_;
     QVariantList planRows_;
     QString planFingerprint_;
     QString planError_;

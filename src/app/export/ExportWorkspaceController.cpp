@@ -2,6 +2,7 @@
 
 #include "core/domain/AssemblyTypes.h"
 #include "core/export/ExportPlan.h"
+#include "core/export/OutputNaming.h"
 
 #include <QDir>
 #include <QJsonDocument>
@@ -131,6 +132,23 @@ void ExportWorkspaceController::setAllChecked(const bool checked)
     emit selectionChanged();
 }
 
+void ExportWorkspaceController::removeBucketRow(const QString& nodeId)
+{
+    if (exporting_) return;
+    const auto groups = groupedOutputs();
+    const auto group = std::ranges::find_if(groups, [&nodeId](const OutputGroup& candidate) {
+        return candidate.nodeIds.contains(nodeId);
+    });
+    if (group == groups.end()) return;
+    for (const auto& member : group->nodeIds) {
+        checkedNodeIds_.removeAll(member);
+        filenameOverrides_.remove(member);
+    }
+    refreshPlan();
+    ++selectionRevision_;
+    emit selectionChanged();
+}
+
 bool ExportWorkspaceController::isChecked(const QString& nodeId) const
 {
     return checkedNodeIds_.contains(nodeId);
@@ -239,18 +257,21 @@ void ExportWorkspaceController::setNamingValue(const QString& value)
     emit settingsChanged();
 }
 
+// Indexes are bucket rows, i.e. files: a row moves together with every copy it stands for.
 void ExportWorkspaceController::moveBucketItem(const int from, const int to)
 {
     if (exporting_) return;
-    if (from < 0 || from >= checkedNodeIds_.size() || to < 0 || to >= checkedNodeIds_.size() || from == to) return;
-    checkedNodeIds_.move(from, to);
+    auto groups = groupedOutputs();
+    if (from < 0 || from >= groups.size() || to < 0 || to >= groups.size() || from == to) return;
+    groups.move(from, to);
+    checkedNodeIds_.clear();
+    for (const auto& group : groups) checkedNodeIds_.append(group.nodeIds);
     refreshPlan();
 }
 
 void ExportWorkspaceController::moveBucketItemById(const QString& nodeId, const int to)
 {
-    const auto from = static_cast<int>(checkedNodeIds_.indexOf(nodeId));
-    moveBucketItem(from, to);
+    moveBucketItem(groupIndexOf(nodeId), to);
 }
 
 void ExportWorkspaceController::setFilenameOverride(const QString& nodeId, const QString& filename)
@@ -275,21 +296,92 @@ QString ExportWorkspaceController::focusSceneNode(const QString& nodeId)
 bool ExportWorkspaceController::canExport() const noexcept
 {
     return documentReady_ && !exporting_ && !checkedNodeIds_.isEmpty() && !destination_.trimmed().isEmpty()
-        && planError_.isEmpty() && planRows_.size() == checkedNodeIds_.size();
+        && planError_.isEmpty() && !outputs_.isEmpty() && planRows_.size() == outputs_.size();
 }
 
-QString ExportWorkspaceController::generatedLeafName(const QString& nodeId, const int bucketIndex) const
+QVector<ExportWorkspaceController::OutputGroup> ExportWorkspaceController::groupedOutputs() const
 {
-    const auto override = filenameOverrides_.constFind(nodeId);
-    if (override != filenameOverrides_.cend()) return override.value();
-    const auto componentIndex = picker_.indexOf(nodeId);
-    if (componentIndex < 0) return tr("Unnamed component");
-    const auto& component = picker_.components().at(componentIndex);
-    if (namingStrategy_ == QStringLiteral("sequence")) {
-        return QStringLiteral("%1-%2").arg(namingValue_.trimmed()).arg(bucketIndex + 1, 3, 10, QLatin1Char('0'));
+    QVector<OutputGroup> groups;
+    QHash<QString, int> groupByIdentity;
+    for (const auto& nodeId : checkedNodeIds_) {
+        if (picker_.indexOf(nodeId) < 0) continue;
+        const auto identity = picker_.identityKey(nodeId);
+        const auto existing = groupByIdentity.constFind(identity);
+        if (existing != groupByIdentity.cend()) {
+            groups[existing.value()].nodeIds.append(nodeId);
+            continue;
+        }
+        groupByIdentity.insert(identity, static_cast<int>(groups.size()));
+        groups.append(OutputGroup{{nodeId}, {}, false});
     }
-    if (namingStrategy_ == QStringLiteral("prefix")) return namingValue_ + component.name;
-    return component.name;
+    return groups;
+}
+
+int ExportWorkspaceController::groupIndexOf(const QString& nodeId) const
+{
+    const auto groups = groupedOutputs();
+    for (int index = 0; index < groups.size(); ++index) {
+        if (groups.at(index).nodeIds.contains(nodeId)) return index;
+    }
+    return -1;
+}
+
+QString ExportWorkspaceController::baseName(const OutputGroup& group, const int fileIndex) const
+{
+    if (namingStrategy_ == QStringLiteral("sequence")) {
+        return QStringLiteral("%1-%2").arg(namingValue_.trimmed()).arg(fileIndex + 1, 3, 10, QLatin1Char('0'));
+    }
+    const auto* first = picker_.find(group.nodeIds.constFirst());
+    if (!first) return tr("Unnamed component");
+    // Copies usually carry the part's own name. When they are named one by one instead
+    // ("Bolt:1", "Bolt:2"), the file is named after the part they are all copies of.
+    QString name = first->name;
+    if (group.nodeIds.size() > 1) {
+        const bool sameName = std::ranges::all_of(group.nodeIds, [this, first](const QString& nodeId) {
+            const auto* component = picker_.find(nodeId);
+            return component && component->name == first->name;
+        });
+        const auto definitionName = picker_.definitionName(first->definitionId);
+        if (!sameName && !definitionName.isEmpty()) name = definitionName;
+    }
+    if (namingStrategy_ == QStringLiteral("prefix")) return namingValue_ + name;
+    return name;
+}
+
+// Gives every file its name. Typed names are kept as they are. Generated names that would
+// write to the same file are told apart with "-2", "-3", numbered in assembly tree order
+// rather than bucket order, so a part gets the same name however it was checked and on every
+// run of the same file.
+void ExportWorkspaceController::assignLeafNames(QVector<OutputGroup>& groups) const
+{
+    std::vector<int> treeOrder;
+    treeOrder.reserve(static_cast<std::size_t>(groups.size()));
+    for (int fileIndex = 0; fileIndex < groups.size(); ++fileIndex) {
+        auto& group = groups[fileIndex];
+        QString overridden;
+        for (const auto& nodeId : group.nodeIds) {
+            if (const auto found = filenameOverrides_.constFind(nodeId); found != filenameOverrides_.cend()) {
+                overridden = found.value();
+                break;
+            }
+        }
+        group.filenameOverridden = !overridden.isEmpty();
+        group.leafName = group.filenameOverridden ? overridden : baseName(group, fileIndex);
+        treeOrder.push_back(fileIndex);
+    }
+    std::ranges::stable_sort(treeOrder, {}, [this, &groups](const int fileIndex) {
+        return picker_.indexOf(groups.at(fileIndex).nodeIds.constFirst());
+    });
+    std::vector<loupe::exporting::detail::LeafNameRequest> requests;
+    requests.reserve(treeOrder.size());
+    for (const auto fileIndex : treeOrder) {
+        const auto& group = groups.at(fileIndex);
+        requests.push_back({group.leafName.toUtf8().toStdString(), group.filenameOverridden});
+    }
+    const auto names = loupe::exporting::detail::uniqueLeafNames(requests);
+    for (std::size_t position = 0; position < treeOrder.size(); ++position) {
+        groups[treeOrder[position]].leafName = QString::fromUtf8(names[position]);
+    }
 }
 
 void ExportWorkspaceController::refreshPlan()
@@ -298,7 +390,8 @@ void ExportWorkspaceController::refreshPlan()
     planRows_.clear();
     planFingerprint_.clear();
     planError_.clear();
-    if (checkedNodeIds_.isEmpty()) {
+    outputs_ = groupedOutputs();
+    if (outputs_.isEmpty()) {
         emit planChanged();
         return;
     }
@@ -307,6 +400,7 @@ void ExportWorkspaceController::refreshPlan()
         planError_ = namingStrategy_ == QStringLiteral("sequence")
             ? tr("Enter a base name for sequential files") : tr("Enter a filename prefix");
     }
+    assignLeafNames(outputs_);
 
     loupe::exporting::PlanRequest request;
     request.destination = destination_.trimmed().isEmpty()
@@ -318,55 +412,52 @@ void ExportWorkspaceController::refreshPlan()
     request.requestedUnitToMillimeters = 1.0;
     request.unitDecision = {picker_.effectiveUnit() == QStringLiteral("in") ? loupe::units::LengthUnit::Inch : loupe::units::LengthUnit::Millimeter,
                             loupe::units::UnitConfidence::Confirmed, picker_.sourceToMillimeters(), "reviewed in Loupe"};
-    for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
-        const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-        const auto index = picker_.indexOf(nodeId);
-        if (index < 0) continue;
-        const auto& component = picker_.components().at(index);
-        request.selections.push_back({nodeId.toUtf8().toStdString(), selectionKindFor(component.kind)});
-        request.hierarchyPaths.emplace(nodeId.toUtf8().toStdString(), component.hierarchyPath.toUtf8().toStdString());
-        request.outputLeafNames.emplace(nodeId.toUtf8().toStdString(), generatedLeafName(nodeId, bucketIndex).toUtf8().toStdString());
+    for (const auto& group : outputs_) {
+        const auto& nodeId = group.nodeIds.constFirst();
+        const auto* component = picker_.find(nodeId);
+        const auto id = nodeId.toUtf8().toStdString();
+        request.selections.push_back({id, selectionKindFor(component->kind)});
+        request.hierarchyPaths.emplace(id, component->hierarchyPath.toUtf8().toStdString());
+        request.outputLeafNames.emplace(id, group.leafName.toUtf8().toStdString());
     }
+    const auto extension = format_ == QStringLiteral("STL") ? QStringLiteral(".stl") : QStringLiteral(".step");
+    const auto rowFor = [this](const OutputGroup& group, const QString& filename, const QString& path,
+                               const QString& status, const QString& error) {
+        const auto& nodeId = group.nodeIds.constFirst();
+        return QVariantMap{{QStringLiteral("nodeId"), nodeId},
+                           {QStringLiteral("name"), picker_.find(nodeId)->name},
+                           {QStringLiteral("filename"), filename},
+                           {QStringLiteral("filenameOverridden"), group.filenameOverridden},
+                           {QStringLiteral("path"), path},
+                           {QStringLiteral("format"), format_},
+                           // Checked copies of this component that the one file stands for.
+                           {QStringLiteral("copyCount"), static_cast<int>(group.nodeIds.size())},
+                           {QStringLiteral("status"), status},
+                           {QStringLiteral("error"), error}};
+    };
     try {
         const auto plan = loupe::exporting::buildPlan(request);
         QHash<QString, QString> pathByNode;
         for (const auto& output : plan.outputs()) {
             pathByNode.insert(QString::fromStdString(output.nodeId()), QString::fromStdString(output.finalPath()));
         }
-        for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
-            const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-            const auto componentIndex = picker_.indexOf(nodeId);
-            if (componentIndex < 0) continue;
-            const auto& component = picker_.components().at(componentIndex);
-            const auto path = pathByNode.value(nodeId);
-            planRows_.append(QVariantMap{{QStringLiteral("nodeId"), nodeId},
-                                         {QStringLiteral("name"), component.name},
-                                         {QStringLiteral("filename"), QFileInfo(path).fileName()},
-                                         {QStringLiteral("filenameOverridden"), filenameOverrides_.contains(nodeId)},
-                                         {QStringLiteral("path"), path},
-                                         {QStringLiteral("format"), format_},
-                                         {QStringLiteral("status"), destination_.trimmed().isEmpty()
-                                             ? tr("Choose destination folder") : tr("Ready")},
-                                         {QStringLiteral("error"), QString{}}});
+        for (const auto& group : outputs_) {
+            const auto path = pathByNode.value(group.nodeIds.constFirst());
+            planRows_.append(rowFor(group, QFileInfo(path).fileName(), path,
+                                    destination_.trimmed().isEmpty() ? tr("Choose destination folder") : tr("Ready"),
+                                    QString{}));
         }
         planFingerprint_ = QString::fromStdString(plan.fingerprint());
     } catch (const loupe::exporting::PlanError& error) {
-        if (planError_.isEmpty()) planError_ = QString::fromUtf8(error.what());
-        for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
-            const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-            const auto componentIndex = picker_.indexOf(nodeId);
-            if (componentIndex < 0) continue;
-            const auto& component = picker_.components().at(componentIndex);
-            const auto leaf = generatedLeafName(nodeId, bucketIndex)
-                + (format_ == QStringLiteral("STL") ? QStringLiteral(".stl") : QStringLiteral(".step"));
-            planRows_.append(QVariantMap{{QStringLiteral("nodeId"), nodeId},
-                                         {QStringLiteral("name"), component.name},
-                                         {QStringLiteral("filename"), leaf},
-                                         {QStringLiteral("filenameOverridden"), filenameOverrides_.contains(nodeId)},
-                                         {QStringLiteral("path"), leaf},
-                                         {QStringLiteral("format"), format_},
-                                         {QStringLiteral("status"), tr("Needs attention")},
-                                         {QStringLiteral("error"), planError_}});
+        if (planError_.isEmpty()) {
+            // Generated names never collide any more; only two names the user typed can.
+            planError_ = error.code() == loupe::exporting::PlanError::Code::OutputPathCollision
+                ? tr("Two file names you typed are the same. Change one of them.")
+                : QString::fromUtf8(error.what());
+        }
+        for (const auto& group : outputs_) {
+            const auto leaf = group.leafName + extension;
+            planRows_.append(rowFor(group, leaf, leaf, tr("Needs attention"), planError_));
         }
     }
     emit planChanged();
@@ -381,16 +472,15 @@ bool ExportWorkspaceController::rebuildPlan()
 QByteArray ExportWorkspaceController::reviewedPlanJson() const
 {
     QJsonArray selections;
-    for (int bucketIndex = 0; bucketIndex < checkedNodeIds_.size(); ++bucketIndex) {
-        const auto& nodeId = checkedNodeIds_.at(bucketIndex);
-        const auto componentIndex = picker_.indexOf(nodeId);
-        if (componentIndex < 0) continue;
-        const auto& component = picker_.components().at(componentIndex);
+    for (const auto& group : outputs_) {
+        const auto& nodeId = group.nodeIds.constFirst();
+        const auto* component = picker_.find(nodeId);
+        if (!component) continue;
         selections.append(QJsonObject{
             {QStringLiteral("nodeId"), nodeId},
-            {QStringLiteral("kind"), static_cast<int>(selectionKindFor(component.kind))},
-            {QStringLiteral("hierarchyPath"), component.hierarchyPath},
-            {QStringLiteral("leafName"), generatedLeafName(nodeId, bucketIndex)},
+            {QStringLiteral("kind"), static_cast<int>(selectionKindFor(component->kind))},
+            {QStringLiteral("hierarchyPath"), component->hierarchyPath},
+            {QStringLiteral("leafName"), group.leafName},
         });
     }
     return QJsonDocument(QJsonObject{
@@ -521,7 +611,8 @@ void ExportWorkspaceController::clearExportResult()
 
 void ExportWorkspaceController::clearPlan()
 {
-    if (planRows_.isEmpty() && planFingerprint_.isEmpty() && planError_.isEmpty()) return;
+    if (planRows_.isEmpty() && planFingerprint_.isEmpty() && planError_.isEmpty() && outputs_.isEmpty()) return;
+    outputs_.clear();
     planRows_.clear();
     planFingerprint_.clear();
     planError_.clear();

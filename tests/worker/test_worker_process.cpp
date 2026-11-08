@@ -33,6 +33,7 @@ private slots:
     void readyThenCancel();
     void invalidFileDoesNotCrashWorker();
     void validStepProducesNonEmptySnapshot();
+    void anImportStartedAtLaunchIsHeldUntilTheAppConnects();
     void validStepStreamsTriangulatedMesh();
     void everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady();
     void copiesOfAPartShareOneMeshAndArePlacedApart();
@@ -216,13 +217,77 @@ void WorkerProcessTest::validStepProducesNonEmptySnapshot()
     QVERIFY(metrics.value(QStringLiteral("previewTriangleCount")).toInteger() > 0);
     QVERIFY(metrics.value(QStringLiteral("refinedTriangleCount")).toInteger() > 0);
     QVERIFY(metrics.value(QStringLiteral("bodyCount")).toInt() > 0);
+    QVERIFY(worker.state() == QProcess::Running);
     // The allocator malloc goes to: a build linking mimalloc whose override did not take
     // (a DLL loaded too late, a static link keeping the system malloc) fails here.
+    const auto allocator = metrics.value(QStringLiteral("allocator")).toString();
 #ifdef LOUPE_EXPECT_WORKER_MIMALLOC
-    QCOMPARE(metrics.value(QStringLiteral("allocator")).toString(), QStringLiteral("mimalloc"));
+    // Except on a Windows machine where a module from outside Windows, such as an endpoint-security
+    // agent's, got into the worker ahead of mimalloc's redirect: no import order of the worker's
+    // overcomes that, so it says nothing about the build. CI's runners have no such module.
+    const auto blockedPrefix = QStringLiteral("system (mimalloc not in effect; loaded before it: ");
+    if (allocator.startsWith(blockedPrefix)) {
+        QSKIP(qPrintable(QStringLiteral("mimalloc's override is blocked on this machine by %1, which loads before the "
+                                        "worker's imports; the worker runs on the system allocator here")
+                             .arg(allocator.mid(blockedPrefix.size()).chopped(1))));
+    }
+    QCOMPARE(allocator, QStringLiteral("mimalloc"));
 #else
-    QCOMPARE(metrics.value(QStringLiteral("allocator")).toString(), QStringLiteral("system"));
+    QCOMPARE(allocator, QStringLiteral("system"));
 #endif
+}
+
+// The app hands the worker the file it was launched with on the command line, so the import
+// runs while the window is still being built (app/worker/WorkerLaunch.h). Everything it sends
+// before the app connects is kept and delivered, in order, after "ready".
+void WorkerProcessTest::anImportStartedAtLaunchIsHeldUntilTheAppConnects()
+{
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("worker-prelaunch.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name,
+                                                     QStringLiteral("--open"), QString::fromStdString(fixture.string()),
+                                                     QStringLiteral("--request-id"), QStringLiteral("7")});
+    QVERIFY(worker.waitForStarted(3'000));
+    // Long enough for this small file to be read and meshed with nobody listening.
+    QTest::qWait(2'000);
+
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    QCOMPARE(readEvent(socket, decoder).value(QStringLiteral("type")).toString(), QStringLiteral("ready"));
+
+    // Nothing is sent: the import was asked for on the command line.
+    bool sawFirstProgress = false;
+    bool sawSnapshot = false;
+    int geometryFrames = 0;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 20'000) {
+        const auto frame = readFrame(socket, decoder);
+        QVERIFY(frame.has_value());
+        if (frame->type == loupe::protocol::FrameType::Geometry) {
+            QVERIFY(sawSnapshot);
+            ++geometryFrames;
+            continue;
+        }
+        const auto event = QJsonDocument::fromJson(frame->payload).object();
+        const auto type = event.value(QStringLiteral("type")).toString();
+        QVERIFY2(type != QStringLiteral("failed"), qPrintable(event.value(QStringLiteral("message")).toString()));
+        if (type == QStringLiteral("progress") || type == QStringLiteral("snapshotReady")) {
+            QCOMPARE(event.value(QStringLiteral("requestId")).toInteger(), 7);
+        }
+        if (type == QStringLiteral("progress") && !sawFirstProgress) {
+            // Held from the very start of the import, not just what came after connecting.
+            QCOMPARE(event.value(QStringLiteral("stage")).toString(), QStringLiteral("Reading STEP file"));
+            sawFirstProgress = true;
+        }
+        if (type == QStringLiteral("snapshotReady")) sawSnapshot = true;
+        if (type == QStringLiteral("progress") && event.value(QStringLiteral("fraction")).toDouble() >= 1.0) break;
+    }
+    QVERIFY(sawFirstProgress);
+    QVERIFY(sawSnapshot);
+    QVERIFY(geometryFrames > 0);
     QVERIFY(worker.state() == QProcess::Running);
 }
 

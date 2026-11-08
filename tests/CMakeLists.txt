@@ -33,6 +33,7 @@ add_executable(loupe-core-tests
     core/test_drawing_validation.cpp
     core/test_drawing_writers.cpp
     core/test_export_plan.cpp
+    core/test_output_naming.cpp
     core/test_selected_export.cpp
     core/test_assembly_export.cpp
     core/test_output_validation.cpp
@@ -105,6 +106,8 @@ add_executable(loupe-application-controller-tests
     app/test_application_controller.cpp
     fixtures/FixtureFactory.cpp
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/StartupTrace.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerLaunch.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
@@ -226,6 +229,8 @@ add_executable(loupe-qml-smoke-tests
     "${PROJECT_SOURCE_DIR}/src/app/platform/UpdateController.h"
     "${PROJECT_SOURCE_DIR}/src/app/platform/WindowManager.h"
     "${PROJECT_SOURCE_DIR}/src/app/ApplicationController.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/platform/StartupTrace.cpp"
+    "${PROJECT_SOURCE_DIR}/src/app/worker/WorkerLaunch.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.cpp"
     "${PROJECT_SOURCE_DIR}/src/app/render/PartPalette.h"
     "${PROJECT_SOURCE_DIR}/src/app/models/RemainingTimeEstimator.cpp"
