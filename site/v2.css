@@ -214,7 +214,6 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round
 .base .scoop {
   position: absolute; top: 0; left: 50%; width: 14.5%; height: 36%;
   transform: translateX(-50%);
-  border-radius: 0 0 10px 10px / 0 0 100% 100%;
   background: linear-gradient(180deg, #121316, #34353b);
 }
 .base::before, .base::after { /* feet */
@@ -1164,3 +1163,23 @@ html.preload .stage-copy, html.preload .rail, html.preload .pops { visibility: h
 html.preload .rig { opacity: 0; }
 html .rig { transition: opacity 500ms var(--ease-out); }
 .secnav.peek .secnav-label b { color: var(--accent-hi); } /* previewing a tick, not the current section */
+
+/* ---------- The laptop's corners: continuous curvature (G2) ----------
+   corner-shape: squircle draws each corner as a superellipse (exponent 4), whose curvature falls to
+   zero where it meets the straight edge, so the outline has no curvature jump (circular border-radius
+   is only G1). A squircle reads tighter than a circle of the same radius, so the radii grow about
+   1.4x. Browsers without corner-shape keep the round corners above; the load-in blueprint (v2.js,
+   macBlueprint) traces whichever shape the browser draws. Units: the drawing is 1000 wide. */
+@supports (corner-shape: squircle) {
+  .lid { corner-shape: squircle; border-radius: 3.525% / 5.347%; }                 /* 30 units */
+  .screen {
+    corner-shape: squircle;
+    border-radius: calc(1.209% + (1 - var(--frame)) * 0.27%) / calc(1.871% + (1 - var(--frame)) * 0.4%); /* 10 units */
+  }
+  .cam, .base .scoop { corner-shape: squircle; }
+  .base { corner-shape: squircle; border-radius: calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.018) calc(var(--lw, 1120px) * 0.018); } /* 2 and 18 units */
+}
+.base .scoop { border-radius: 0 0 calc(var(--lw, 1120px) * 0.01) calc(var(--lw, 1120px) * 0.01) / 0 0 100% 100%; } /* 10 units across, the full depth down */
+/* Until the story is ready (html.preload), hold the load-in animations so the blueprint, which sits
+   inside the still-hidden laptop, plays from its start when the laptop appears. */
+html.preload .theater, html.preload .theater * { animation-play-state: paused !important; }

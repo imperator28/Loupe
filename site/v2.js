@@ -14,6 +14,44 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+
+// The laptop blueprint traced on load, drawn from the same corners as the CSS laptop: superellipse
+// (squircle, G2) corners where the browser supports corner-shape, otherwise circular ones. In the
+// drawing's units (1000 wide), y down. Each corner is sampled finely; at these sizes the polyline is
+// indistinguishable from the curve.
+(function macBlueprint() {
+  const paths = $$('.bp-lines .bp-o path');
+  if (paths.length < 5) return;
+  const SQ = CSS.supports('corner-shape', 'squircle');
+  const e = SQ ? 0.5 : 1; // superellipse x^4 + y^4 = 1 is (cos t)^(1/2), (sin t)^(1/2); exponent 1 is the circle
+  const N = 24, f = v => +v.toFixed(2);
+  const pt = (cx, cy, rx, ry, deg) => {
+    const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    return [cx + rx * Math.sign(c) * Math.abs(c) ** e, cy + ry * Math.sign(s) * Math.abs(s) ** e];
+  };
+  const arc = (cx, cy, rx, ry, from, to) => {
+    let d = '';
+    for (let i = 1; i <= N; i++) { const [x, y] = pt(cx, cy, rx, ry, from + (to - from) * i / N); d += `L${f(x)} ${f(y)}`; }
+    return d;
+  };
+  // rounded rectangle, corners as [rx, ry]: top-left, top-right, bottom-right, bottom-left
+  const rrect = (x, y, w, h, tl, tr, br, bl) =>
+    `M${f(x + tl[0])} ${f(y)}H${f(x + w - tr[0])}` + arc(x + w - tr[0], y + tr[1], tr[0], tr[1], -90, 0)
+    + `V${f(y + h - br[1])}` + arc(x + w - br[0], y + h - br[1], br[0], br[1], 0, 90)
+    + `H${f(x + bl[0])}` + arc(x + bl[0], y + h - bl[1], bl[0], bl[1], 90, 180)
+    + `V${f(y + tl[1])}` + arc(x + tl[0], y + tl[1], tl[0], tl[1], 180, 270) + 'Z';
+  const R = SQ ? { lid: [30, 30], screen: [10, 10], base: [18, 18] }
+               : { lid: [21.3, 21.9], screen: [7.4, 7.75], base: [13, 13] };
+  const deck = [2, 2], pill = [4.68, 4.68];
+  paths[0].setAttribute('d', rrect(74.5, 0, 851, 561.1, R.lid, R.lid, R.lid, R.lid));          // lid
+  paths[1].setAttribute('d', rrect(86.5, 12, 827, 534.6, R.screen, R.screen, R.screen, R.screen)); // screen
+  // camera: .cam is 2.7% x 1.75% of the screen (827 x 534.6), 0.6% down, centred
+  paths[2].setAttribute('d', rrect(500 - 11.165, 12 + 3.21, 22.33, 9.36, pill, pill, pill, pill));
+  paths[3].setAttribute('d', rrect(0, 561.1, 1000, 33, deck, deck, R.base, R.base));           // base
+  // the thumb scoop: open at the deck, 10 across and its full depth down at each corner
+  const sx = 427.5, sw = 145, sy = 561.1, sh = 11.88, rx = 10;
+  paths[4].setAttribute('d', `M${sx} ${sy}` + arc(sx + rx, sy, rx, sh, 180, 90) + `H${f(sx + sw - rx)}` + arc(sx + sw - rx, sy, rx, sh, 90, 0));
+})();
 const seg = (v, a, b) => clamp((v - a) / (b - a)); // 0..1 progress of v through [a, b]
 
 const theater = $('#theater');
