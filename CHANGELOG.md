@@ -3,7 +3,8 @@
 ## v0.1.6-beta.4
 
 A testing build that opens the launch file sooner, exports assemblies with repeated parts,
-restyles the view toolbar, fixes in-app updates of a copy in `C:\Program Files` on Windows,
+restyles the view toolbar, sections along a face you pick, snaps the exploded view's pivot,
+fixes in-app updates of a copy in `C:\Program Files` on Windows,
 and lets pinned measurements be dragged and coloured. Published as a pre-release;
 everything in v0.1.6-beta.3 is included.
 
@@ -14,6 +15,14 @@ everything in v0.1.6-beta.3 is included.
   theme, without a dark-to-light flash. Export and Drawing are built when first opened (or
   in the background a few seconds in), and on Windows the graphics driver starts while the
   window is built.
+- **Section along a face you pick**: Section > Pick face plane asks for a face in the view.
+  The face under the pointer is lit, with an arrow showing which way its plane faces; a
+  curved face says it has no plane to cut along. The face picked stays lit while the section
+  uses it, and the panel names it ("Plane of: Flat face on Bracket-2"). Esc cancels.
+- **The pivot snaps** (exploded view > Pick a point): to corners, edge midpoints, hole and
+  arc centres, and points on edges, with the same marker as measuring shows before the
+  click. A hole's centre turns the handle to the hole's axis, and the panel says what the
+  pivot is on. Point-to-point measuring snaps to edge midpoints too.
 - **The view toolbar is restyled**: a compact floating bar with outline icons over short
   labels, every tool the same width; the lit tool sits on an accent wash. Tools, order and
   shortcuts are unchanged.
@@ -33,6 +42,11 @@ everything in v0.1.6-beta.3 is included.
   copy of a part is now one file, written once; different parts that share a name are
   numbered "-2", "-3" in tree order, and a name you typed is never changed. The bucket
   shows one row per file, with "×N" for copies.
+- **The section arrow ran off the cut** when dragged quickly: the cut moved by a pixel scale
+  taken at the press, which drifts in perspective, and nothing kept it on the model. The cut
+  now goes where the pointer is along the section axis, held a little past the model's ends.
+- **Clicking a part moved a face-plane section** to that part's plane. The plane in use now
+  changes only when another is picked.
 - **The view cube held up the first frame** on Windows: its labels asked for a font
   Windows does not have, and the search for a stand-in blocked drawing for up to a second.
 - **The bounds box drew only its sizes** on Windows in beta.3, without the box: its dashed
