@@ -385,7 +385,9 @@ function apply(now = performance.now()) {
   const dt = Math.min(0.05, Math.max(0, (now - lastNow) / 1000)); lastNow = now;
 
   // --- model pose ---
-  if (!orbit.dragging) spinAngle += dt * 0.3;
+  // The hero spin. Kept within one turn (invisible while it spins) and frozen once the hand-off to the
+  // story starts, so blending it out unwinds at most half a turn instead of every turn since load.
+  if (!orbit.dragging && S.spin > 0.999) { spinAngle += dt * 0.3; spinAngle = Math.atan2(Math.sin(spinAngle), Math.cos(spinAngle)); }
   stepOrbit(dt);
   const idle = S.spin * spinAngle + (1 - S.spin) * Math.sin(t * 0.45) * 0.14 * (1 - S.top);
   pivot.rotation.y = S.rot + idle + orbit.yaw;
@@ -1080,6 +1082,8 @@ const navWs = $$('.nav a[data-ws]');
 // and scroll-snap-stop keeps a flick from skipping scenes. Scroll only picks WHICH scene is on;
 // the scene then plays on its own clock, eased, instead of being scrubbed by the scroll position.
 let sceneIdx = 0, sceneTween = null, jumping = false;
+// Deep link to a scene: ?scene=5 opens on the sixth snap point (also used for layout checks).
+let deepScene = +new URLSearchParams(location.search).get('scene') || 0;
 const PAGE_H = () => innerHeight; // one scene = one screen of scroll
 const sceneAtScroll = () => clamp(Math.round((scrollY - storyST.start) / PAGE_H()), 0, REST_TIMES().length - 1);
 function playScene(i) {
@@ -1256,7 +1260,14 @@ function buildTimeline() {
     onRefresh: self => {
       storyST = self;
       layoutSnaps();
+      document.documentElement.classList.add('snap'); // only now: see html.snap in v2.css
       measure(); apply();
+      if (deepScene > 0) { // ?scene=N, once there are snap points to land on
+        const d = clamp(deepScene, 0, REST_TIMES().length - 1);
+        deepScene = 0;
+        setTimeout(() => { sceneIdx = d; tl.time(REST_TIMES()[d]); window.scrollTo({ top: self.start + d * PAGE_H(), behavior: 'instant' }); }, 0);
+        return;
+      }
       // a reload part-way down, or a resize: land on the scene at this scroll position, unplayed
       const i = sceneAtScroll();
       if (i !== sceneIdx) { sceneIdx = i; sceneTween?.kill(); tl.time(REST_TIMES()[i]); }
@@ -1389,15 +1400,7 @@ if (motion) {
   rotator();
   addEventListener('resize', () => ScrollTrigger.refresh());
   document.fonts?.ready.then(() => ScrollTrigger.refresh());
-  // Deep link to a scene: ?scene=5 opens on the sixth snap point (also used for layout checks).
-  const deep = +new URLSearchParams(location.search).get('scene');
-  if (deep > 0) {
-    history.scrollRestoration = 'manual';
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      sceneIdx = deep; storyTL.time(REST_TIMES()[clamp(deep, 0, REST_TIMES().length - 1)]);
-      window.scrollTo({ top: storyST.start + deep * PAGE_H(), behavior: 'instant' });
-    }));
-  }
+  if (deepScene > 0) history.scrollRestoration = 'manual';
 } else {
   S.spin = 0;
   measure();

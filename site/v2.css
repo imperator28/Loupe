@@ -1048,11 +1048,13 @@ body.mx main.measured { border-top: 0; padding-top: calc(var(--nav-h) + clamp(40
 .mx-notes li + li { margin-top: 10px; }
 
 /* ---------- Scene snapping: one screen per story scene, native CSS scroll snap ---------- */
-html.motion { scroll-snap-type: y mandatory; }
+/* .snap goes on only once the story's snap points are placed (layoutSnaps); turned on earlier, the
+   nearest snap point to the top would be the benchmarks section and a fresh load would jump there */
+html.snap { scroll-snap-type: y mandatory; }
 .snaps { position: absolute; top: 0; left: 0; width: 1px; pointer-events: none; }
 .snaps i { position: absolute; left: 0; width: 1px; scroll-snap-align: start; scroll-snap-stop: always; }
-html.motion .measured, html.motion .story, html.motion .private, html.motion .download { scroll-snap-align: start; }
-html.motion .foot { scroll-snap-align: end; }
+html.snap .measured, html.snap .story, html.snap .private, html.snap .download { scroll-snap-align: start; }
+html.snap .foot { scroll-snap-align: end; }
 
 /* ---------- Two-scenario pop cards (open race, export race): arrows flip between scenarios ---------- */
 .mini-slides { display: grid; }
