@@ -80,6 +80,20 @@ QtObject {
     // The handle under the pointer, or being dragged.
     readonly property color handleActive: dark ? "#FDE272" : "#EAAA08"
 
+    // Measurement annotations: the colour a result is drawn in -- its lines, markers and
+    // the outline of its tag. Amber is the measurement role (the result in progress); a
+    // pinned result takes one of these, chosen or in turn, so several read apart. Each
+    // holds 3:1 or better against the viewport in its theme, and the tag text stays the
+    // theme's own text on the tag's surface, whatever the colour.
+    readonly property var measureColorKeys: ["amber", "blue", "teal", "rose", "violet", "slate"]
+    readonly property var measureColors: dark
+        ? ({ amber: "#FFC24B", blue: "#7AA7FF", teal: "#4FD1C5", rose: "#FB7185", violet: "#B794F6", slate: "#CBD5E1" })
+        : ({ amber: "#B86E00", blue: "#2563EB", teal: "#0F8A80", rose: "#E11D48", violet: "#7C3AED", slate: "#475569" })
+    function measureColor(key) {
+        const colors = measureColors
+        return colors[key] !== undefined ? colors[key] : colors.amber
+    }
+
     // Legacy role names consumed by existing panels and the C++ test harness.
     // They alias the palette above; new work should prefer the names above.
     readonly property color surface: canvas

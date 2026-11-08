@@ -62,8 +62,10 @@ class MeasurementController final : public QObject {
     // What volume and bounds are of: "Whole model", a part's or sub-assembly's name, or
     // "3 parts", with how many parts that is.
     Q_PROPERTY(QString selectionScope READ selectionScope NOTIFY resultChanged)
-    // Results pinned to the view: each {id, title, text, annotation, points, edges}, drawn
-    // where it was measured until unpinned, whatever is measured next.
+    // Results pinned to the view: each {id, title, text, annotation, points, edges, color,
+    // offset}, drawn where it was measured until unpinned, whatever is measured next. `color`
+    // is a key of the theme's measurement colours (new pins take them in turn); `offset` is
+    // where its tag has been dragged to, in pixels from where it sits by default.
     Q_PROPERTY(QVariantList pinnedResults READ pinnedResults NOTIFY pinnedChanged)
     Q_PROPERTY(bool canPin READ canPin NOTIFY resultChanged)
 
@@ -91,6 +93,8 @@ public:
     Q_INVOKABLE void removePick(int index);
     Q_INVOKABLE void pinResult();
     Q_INVOKABLE void unpin(const QString& id);
+    Q_INVOKABLE void setPinColor(const QString& id, const QString& colorKey);
+    Q_INVOKABLE void setPinOffset(const QString& id, double x, double y);
     Q_INVOKABLE void clearPinned();
     [[nodiscard]] bool multiPick() const noexcept;
     [[nodiscard]] QString selectionScope() const { return hasSelectedGeometry_ ? selectionScope_ : QString{}; }
@@ -98,8 +102,9 @@ public:
     [[nodiscard]] bool canPin() const noexcept { return result_.valid && !result_.annotation.isEmpty(); }
     // What a pick under the pointer would be, before it is made: {title, detail, eligible,
     // reason}. The hover chip shows it.
-    // Also {kind: "surfacePoint" | "edgePoint" | "vertex" | "centre" | "edge" | "face",
-    // topologyId, point} for the viewport to draw the hover with.
+    // Also {kind: "surfacePoint" | "edgePoint" | "vertex" | "midpoint" | "centre" | "edge" |
+    // "face", topologyId, point} for the viewport to draw the hover with, and its shape:
+    // {normal, planar, planeNormal, planePoint, linear, direction, circular, centre, axis}.
     Q_INVOKABLE [[nodiscard]] QVariantMap describe(const QVariant& entity) const;
     // A point on a face where the pointer is, for point to point away from any edge.
     Q_INVOKABLE [[nodiscard]] static QVariant surfacePointEntity(const QVector3D& point, const QVector3D& normal);

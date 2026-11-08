@@ -25,15 +25,53 @@ Item {
     // A pinned result names what it is on its tag ("Gap 5.000 mm").
     property string title: ""
     property bool pinned: false
-
-    readonly property color lineColor: visualTheme ? visualTheme.selectionColor : "transparent"
-    readonly property color tagTextColor: visualTheme ? visualTheme.sectionLabel : "transparent"
+    // The colour it is drawn in: lines, markers and the outline of its tags. The tag itself is
+    // a card in the theme's raised surface with the theme's text, so it reads on any colour.
+    property color lineColor: theme ? theme.measureColor("amber") : "transparent"
+    // Where its tag was dragged to, in pixels from where it sits by default, and whether it
+    // can be: pinned results can, so a review can lay them out clear of one another.
+    property point tagOffset: Qt.point(0, 0)
+    property bool draggable: false
+    signal tagMoved(real x, real y)
+    readonly property color tagTextColor: theme ? theme.foreground : "transparent"
+    readonly property color tagFill: theme ? theme.surface3 : "transparent"
+    // Text on a filled marker: the tag surface's colour, light on dark colours and the reverse.
+    readonly property color markerTextColor: theme ? theme.surface3 : "transparent"
     readonly property color haloColor: visualTheme ? visualTheme.markerBorder : "transparent"
     readonly property color halo: Qt.rgba(haloColor.r, haloColor.g, haloColor.b, 0.55)
     readonly property string kind: annotation && annotation.kind ? annotation.kind : ""
     readonly property string tagText: {
         const text = annotation && annotation.text ? annotation.text : ""
         return pinned && title.length > 0 && kind !== "box" ? title + "  " + text : text
+    }
+
+    // Lines are drawn as SVG path strings, and dashes are cut here rather than by the stroke:
+    // the curve renderer drew neither a PathMultiline nor a dashed stroke on Windows, so the
+    // bounds box showed its sizes and no box. PathSvg is what the icons draw with everywhere.
+    function svgLine(points, closed) {
+        if (!points || points.length < 2) return ""
+        let path = "M " + points[0].x.toFixed(1) + " " + points[0].y.toFixed(1)
+        for (let index = 1; index < points.length; ++index)
+            path += " L " + points[index].x.toFixed(1) + " " + points[index].y.toFixed(1)
+        return closed ? path + " Z" : path
+    }
+    // Each [from, to] pair as dashes `dash` long with `gap` between, on screen.
+    function svgDashes(pairs, dash, gap) {
+        let path = ""
+        for (const pair of pairs) {
+            const a = pair[0]
+            const b = pair[1]
+            const length = Math.hypot(b.x - a.x, b.y - a.y)
+            if (!(length > 0) || length > 20000) continue
+            const ux = (b.x - a.x) / length
+            const uy = (b.y - a.y) / length
+            for (let at = 0; at < length; at += dash + gap) {
+                const end = Math.min(length, at + dash)
+                path += " M " + (a.x + ux * at).toFixed(1) + " " + (a.y + uy * at).toFixed(1)
+                      + " L " + (a.x + ux * end).toFixed(1) + " " + (a.y + uy * end).toFixed(1)
+            }
+        }
+        return path
     }
 
     function screenPath(scenePoints) {
@@ -46,13 +84,38 @@ Item {
         return result
     }
 
+    // Drags a pinned result's tag: it takes the press itself, so the view underneath (which
+    // keeps every drag it starts) does not orbit instead. Double-click puts the tag back.
+    component TagDragArea: MouseArea {
+        property point pressedAt: Qt.point(0, 0)
+        anchors.fill: parent
+        enabled: root.draggable
+        acceptedButtons: Qt.LeftButton
+        hoverEnabled: true
+        cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+        onPressed: function(mouse) { pressedAt = mapToItem(root, mouse.x, mouse.y) }
+        onPositionChanged: function(mouse) {
+            if (!pressed) return
+            const at = mapToItem(root, mouse.x, mouse.y)
+            root.dragDelta = Qt.point(at.x - pressedAt.x, at.y - pressedAt.y)
+        }
+        onReleased: {
+            const x = root.tagOffset.x + root.dragDelta.x
+            const y = root.tagOffset.y + root.dragDelta.y
+            root.dragDelta = Qt.point(0, 0)
+            if (Math.abs(x - root.tagOffset.x) + Math.abs(y - root.tagOffset.y) > 0.5) root.tagMoved(x, y)
+        }
+        onCanceled: root.dragDelta = Qt.point(0, 0)
+        onDoubleClicked: root.tagMoved(0, 0)
+    }
+
     // ---- Picked edges, bold ----
     Repeater {
         model: root.edges
         delegate: Shape {
             id: edgeShape
             required property var modelData
-            readonly property var path: root.screenPath(modelData)
+            readonly property string path: root.svgLine(root.screenPath(modelData), false)
             anchors.fill: parent
             preferredRendererType: Shape.CurveRenderer
             ShapePath {
@@ -61,7 +124,7 @@ Item {
                 fillColor: "transparent"
                 capStyle: ShapePath.RoundCap
                 joinStyle: ShapePath.RoundJoin
-                PathPolyline { path: edgeShape.path }
+                PathSvg { path: edgeShape.path }
             }
             ShapePath {
                 strokeColor: root.lineColor
@@ -69,7 +132,7 @@ Item {
                 fillColor: "transparent"
                 capStyle: ShapePath.RoundCap
                 joinStyle: ShapePath.RoundJoin
-                PathPolyline { path: edgeShape.path }
+                PathSvg { path: edgeShape.path }
             }
         }
     }
@@ -119,7 +182,8 @@ Item {
     }
 
     // ---- Angle: an arc from one pick to the other, a leg along each ----
-    readonly property var arcPath: kind === "angle" ? screenPath(annotation.arc) : []
+    readonly property var arcPoints: kind === "angle" ? screenPath(annotation.arc) : []
+    readonly property string arcPath: svgLine(arcPoints, false)
     readonly property point arcCentre: kind === "angle" ? projector.project(annotation.centre) : Qt.point(0, 0)
     readonly property point legFrom: kind === "angle" ? projector.project(annotation.legFrom) : Qt.point(0, 0)
     readonly property point legTo: kind === "angle" ? projector.project(annotation.legTo) : Qt.point(0, 0)
@@ -127,7 +191,7 @@ Item {
     Shape {
         objectName: "measurementAngleArc"
         anchors.fill: parent
-        visible: root.kind === "angle" && root.arcPath.length > 1
+        visible: root.kind === "angle" && root.arcPoints.length > 1
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeColor: root.halo
@@ -135,7 +199,7 @@ Item {
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathPolyline { path: root.arcPath }
+            PathSvg { path: root.arcPath }
         }
         // The legs: from where the picks meet, out along each one, so it reads which to which.
         ShapePath {
@@ -143,12 +207,7 @@ Item {
             strokeWidth: 1.25
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
-            strokeStyle: ShapePath.DashLine
-            dashPattern: [4, 3]
-            PathMove { x: root.arcCentre.x; y: root.arcCentre.y }
-            PathLine { x: root.legFrom.x; y: root.legFrom.y }
-            PathMove { x: root.arcCentre.x; y: root.arcCentre.y }
-            PathLine { x: root.legTo.x; y: root.legTo.y }
+            PathSvg { path: root.svgDashes([[root.arcCentre, root.legFrom], [root.arcCentre, root.legTo]], 4, 3) }
         }
         ShapePath {
             strokeColor: root.lineColor
@@ -156,7 +215,7 @@ Item {
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathPolyline { path: root.arcPath }
+            PathSvg { path: root.arcPath }
         }
     }
 
@@ -200,6 +259,51 @@ Item {
         return chosen
     }
 
+    // The box's six faces, faintly shaded in its colour, so it reads as a solid box and not
+    // only as lines; where faces overlap on screen the shade deepens, which shows its depth.
+    readonly property var boxFaces: [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]]
+    readonly property color faceShade: Qt.rgba(lineColor.r, lineColor.g, lineColor.b, pinned ? 0.05 : 0.07)
+    function facePath(face) {
+        if (corners.length !== 8) return []
+        const f = boxFaces[face]
+        return [corners[f[0]], corners[f[1]], corners[f[2]], corners[f[3]]]
+    }
+    Shape {
+        objectName: "measurementBoxFaces"
+        anchors.fill: parent
+        visible: root.kind === "box" && root.corners.length === 8
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathSvg { path: root.svgLine(root.facePath(0), true) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathSvg { path: root.svgLine(root.facePath(1), true) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathSvg { path: root.svgLine(root.facePath(2), true) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathSvg { path: root.svgLine(root.facePath(3), true) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathSvg { path: root.svgLine(root.facePath(4), true) }
+        }
+        ShapePath {
+            strokeColor: "transparent"
+            fillColor: root.faceShade
+            PathSvg { path: root.svgLine(root.facePath(5), true) }
+        }
+    }
     Shape {
         objectName: "measurementBox"
         anchors.fill: parent
@@ -209,16 +313,14 @@ Item {
             strokeColor: root.lineColor
             strokeWidth: 1.25
             fillColor: "transparent"
-            strokeStyle: ShapePath.DashLine
-            dashPattern: [5, 3]
-            PathMultiline {
-                paths: {
-                    const result = []
-                    if (root.corners.length !== 8) return result
+            PathSvg {
+                path: {
+                    const pairs = []
+                    if (root.corners.length !== 8) return ""
                     for (const axis of root.boxEdges) {
-                        for (const pair of axis) result.push([root.corners[pair[0]], root.corners[pair[1]]])
+                        for (const pair of axis) pairs.push([root.corners[pair[0]], root.corners[pair[1]]])
                     }
-                    return result
+                    return root.svgDashes(pairs, 5, 3)
                 }
             }
         }
@@ -238,14 +340,16 @@ Item {
                 : Qt.point(-10000, -10000)
             objectName: "measurementBoxSize" + modelData.label
             visible: root.projector.onScreen(middle, 0)
-            x: Math.round(middle.x - width / 2)
-            y: Math.round(middle.y - height / 2)
+            x: Math.round(middle.x - width / 2 + root.liveOffset.x)
+            y: Math.round(middle.y - height / 2 + root.liveOffset.y)
             width: sizeRow.implicitWidth + 14
-            height: sizeRow.implicitHeight + 6
+            height: sizeRow.implicitHeight + 8
             radius: root.theme ? root.theme.radius2 : 0
-            color: root.lineColor
-            border.color: root.haloColor
-            border.width: 1
+            color: root.tagFill
+            border.color: root.lineColor
+            border.width: 1.5
+            // A pinned box's tags move together, as one annotation.
+            TagDragArea {}
             Row {
                 id: sizeRow
                 anchors.centerIn: parent
@@ -261,7 +365,7 @@ Item {
                         id: axisLetter
                         anchors.centerIn: parent
                         text: sizeTag.modelData.label
-                        color: root.haloColor
+                        color: root.markerTextColor
                         font.pixelSize: root.theme ? root.theme.fontCaption : 11
                         font.weight: Font.Bold
                     }
@@ -278,48 +382,92 @@ Item {
     }
 
     // ---- The value tag ----
+    // Dragged (pinned results), the tag follows the pointer and the offset is kept on release.
+    property point dragDelta: Qt.point(0, 0)
+    readonly property point liveOffset: Qt.point(tagOffset.x + dragDelta.x, tagOffset.y + dragDelta.y)
+    readonly property bool moved: Math.abs(liveOffset.x) + Math.abs(liveOffset.y) > 0.5
+
     Rectangle {
         id: valueTag
         objectName: "measurementValueTag"
-        readonly property bool onPoint: root.kind === "label" || root.kind === "angle"
         readonly property point anchorPoint: root.kind === "label" || root.kind === "angle" ? root.projector.project(root.annotation.at)
             : root.kind === "box" ? Qt.point(-10000, -10000)
             : Qt.point((root.fromScreen.x + root.toScreen.x) / 2, (root.fromScreen.y + root.toScreen.y) / 2)
+        // Where it sits before any drag: on a line or an arc, centred on it; on a point,
+        // above it, with a leader down to it.
+        readonly property point home: Qt.point(anchorPoint.x - width / 2,
+                                               root.kind === "label" ? anchorPoint.y - height - 10 : anchorPoint.y - height / 2)
         visible: root.kind.length > 0 && root.kind !== "box" && root.tagText.length > 0 && root.projector.onScreen(anchorPoint, 0)
-        // On a line or an arc, centred on it; on a point, above it with a leader.
-        x: Math.round(anchorPoint.x - width / 2)
-        y: Math.round(root.kind === "label" ? anchorPoint.y - height - 10 : anchorPoint.y - height / 2)
-        width: valueText.implicitWidth + 14
-        height: valueText.implicitHeight + 6
+        x: Math.round(home.x + root.liveOffset.x)
+        y: Math.round(home.y + root.liveOffset.y)
+        width: tagRow.implicitWidth + 16
+        height: tagRow.implicitHeight + 8
         radius: root.theme ? root.theme.radius2 : 0
-        color: root.lineColor
-        border.color: root.haloColor
-        border.width: 1
+        color: root.tagFill
+        border.color: root.lineColor
+        border.width: 1.5
 
-        Label {
-            id: valueText
+        Row {
+            id: tagRow
             anchors.centerIn: parent
-            text: root.tagText
-            color: root.tagTextColor
-            font.pixelSize: root.theme ? root.theme.fontSection : 12
-            font.weight: Font.DemiBold
-            font.features: { "tnum": 1 }
+            spacing: 6
+            // The result's colour, so a tag dragged clear of its lines still says which they are.
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 7
+                height: 7
+                radius: 3.5
+                color: root.lineColor
+            }
+            Label {
+                id: valueText
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.tagText
+                color: root.tagTextColor
+                font.pixelSize: root.theme ? root.theme.fontSection : 12
+                font.weight: Font.DemiBold
+                font.features: { "tnum": 1 }
+            }
         }
+
+        TagDragArea {}
     }
-    // A tag on a point: the leader from it down to the point it is about.
+    // The leader from the tag to what it is about: down to a picked point, and to the line or
+    // arc once the tag has been dragged off it.
+    readonly property point leaderStart: {
+        const cx = valueTag.x + valueTag.width / 2
+        const cy = valueTag.y + valueTag.height / 2
+        const dx = valueTag.anchorPoint.x - cx
+        const dy = valueTag.anchorPoint.y - cy
+        // Where the line to the anchor leaves the tag's edge.
+        const sx = dx !== 0 ? (valueTag.width / 2) / Math.abs(dx) : Infinity
+        const sy = dy !== 0 ? (valueTag.height / 2) / Math.abs(dy) : Infinity
+        const t = Math.min(sx, sy, 1)
+        return Qt.point(cx + dx * t, cy + dy * t)
+    }
     Shape {
         anchors.fill: parent
-        visible: valueTag.visible && root.kind === "label"
+        visible: valueTag.visible && (root.kind === "label" || root.moved)
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: root.halo
+            strokeWidth: 3
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            PathMove { x: root.leaderStart.x; y: root.leaderStart.y }
+            PathLine { x: valueTag.anchorPoint.x; y: valueTag.anchorPoint.y }
+        }
         ShapePath {
             strokeColor: root.lineColor
             strokeWidth: 1.25
             fillColor: "transparent"
-            PathMove { x: valueTag.anchorPoint.x; y: valueTag.y + valueTag.height }
+            capStyle: ShapePath.RoundCap
+            PathMove { x: root.leaderStart.x; y: root.leaderStart.y }
             PathLine { x: valueTag.anchorPoint.x; y: valueTag.anchorPoint.y }
         }
     }
     Rectangle {
-        visible: valueTag.visible && root.kind === "label"
+        visible: valueTag.visible && (root.kind === "label" || root.moved)
         x: Math.round(valueTag.anchorPoint.x - 3)
         y: Math.round(valueTag.anchorPoint.y - 3)
         width: 6
@@ -353,7 +501,7 @@ Item {
                 anchors.centerIn: parent
                 visible: root.numbered
                 text: index + 1
-                color: root.tagTextColor
+                color: root.markerTextColor
                 font.pixelSize: root.theme ? root.theme.fontCaption : 11
                 font.weight: Font.Bold
                 font.features: { "tnum": 1 }

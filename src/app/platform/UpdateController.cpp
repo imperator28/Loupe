@@ -1,5 +1,7 @@
 #include "app/platform/UpdateController.h"
 
+#include <QTemporaryFile>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
@@ -225,10 +227,13 @@ QString UpdateController::windowsInstallScript()
     // Waits for Loupe and its import workers to exit, copies the new version over the old one
     // (a few tries, while Windows lets go of the files), and starts it. Settings live elsewhere
     // and stay. A folder only an administrator may change (C:\Program Files) refuses the
-    // copy however often it is tried: Windows is then asked, once, to run the copy as an
-    // administrator -- Loupe itself still starts as the user. When the copy still fails, the
-    // result file says so, and the old version, started again, tells the user why it is still
-    // the old version rather than offering the same update as if nothing had happened.
+    // copy however often it is tried, so the script first asks whether it can write there at
+    // all: when it cannot, Windows is asked at once to run the copy as an administrator --
+    // Loupe itself still starts as the user. Trying first as the user cost robocopy two
+    // seconds of retries for every one of the package's ~2500 files, five times over: hours
+    // in a hidden window before the prompt, so the update looked as if it never happened.
+    // When the copy still fails, the result file says so, and the old version, started
+    // again, tells the user why it is still the old version.
     return QStringLiteral(R"PS(param([int]$ProcessId, [string]$Old, [string]$New, [string]$Log, [string]$Result, [string]$Version)
 Start-Transcript -Path $Log -Append | Out-Null
 try { Wait-Process -Id $ProcessId -Timeout 60 -ErrorAction SilentlyContinue } catch {}
@@ -236,11 +241,18 @@ Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.
     ForEach-Object { try { $_.WaitForExit(10000) | Out-Null } catch {} }
 Start-Sleep -Milliseconds 400
 $code = 16
-for ($attempt = 0; $attempt -lt 5; $attempt++) {
-    robocopy $New $Old /E /R:2 /W:1 /NFL /NDL /NJH /NP | Out-Host
-    $code = $LASTEXITCODE
-    if ($code -lt 8) { break }
-    Start-Sleep -Seconds 1
+$probe = Join-Path $Old ('.loupe-update-' + [guid]::NewGuid().ToString('N'))
+$writable = $false
+try { [IO.File]::WriteAllText($probe, ''); Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue; $writable = $true } catch {}
+if ($writable) {
+    for ($attempt = 0; $attempt -lt 5; $attempt++) {
+        robocopy $New $Old /E /R:2 /W:1 /NFL /NDL /NJH /NP | Out-Host
+        $code = $LASTEXITCODE
+        if ($code -lt 8) { break }
+        Start-Sleep -Seconds 1
+    }
+} else {
+    "$Old cannot be written as this user."
 }
 if ($code -ge 8 -and -not $env:LOUPE_UPDATE_NO_ELEVATION) {
     "Copying into $Old failed ($code); asking Windows to run it as an administrator."
@@ -495,6 +507,18 @@ void UpdateController::dismiss()
 {
     dismissed_ = true;
     emit changed();
+}
+
+bool UpdateController::installNeedsPermission() const
+{
+#if defined(Q_OS_WIN)
+    // What the install script finds out first: whether a file can be made in the folder.
+    // isWritable reads only the read-only attribute, which Program Files does not set.
+    QTemporaryFile probe(QDir(installPath()).filePath(QStringLiteral(".loupe-update-XXXXXX")));
+    return !probe.open();
+#else
+    return false;
+#endif
 }
 
 QString UpdateController::installPath() const

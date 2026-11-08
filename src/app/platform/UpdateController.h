@@ -46,6 +46,9 @@ class UpdateController final : public QObject {
     Q_PROPERTY(QVariantList whatsNewItems READ whatsNewItems CONSTANT)
     Q_PROPERTY(QString whatsNewVersion READ whatsNewVersion CONSTANT)
     Q_PROPERTY(bool whatsNewPending READ whatsNewPending NOTIFY changed)
+    // Loupe is in a folder only an administrator may change (C:\Program Files): Windows will
+    // ask for permission when the update is put in place.
+    Q_PROPERTY(bool installNeedsPermission READ installNeedsPermission NOTIFY changed)
 
 public:
     enum class State { Idle, Checking, UpToDate, Available, Downloading, Ready, Installing, Failed };
@@ -148,6 +151,7 @@ private:
     void finishExtract(int exitCode, QProcess::ExitStatus status);
     void finishSelfCheck(int exitCode, QProcess::ExitStatus status);
     [[nodiscard]] QString installPath() const;
+    [[nodiscard]] bool installNeedsPermission() const;
     [[nodiscard]] QString workDirectory() const;
     [[nodiscard]] QString findNewInstall() const;
     void stopProcess();

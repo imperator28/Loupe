@@ -86,7 +86,11 @@ ApplicationController::ApplicationController(const QString& workerExecutable, co
         overrideStore_ = std::make_unique<cache::OverrideStore>(QDir(cacheRoot).filePath(QStringLiteral("unit-overrides.sqlite")));
     } catch (const std::exception&) {
     }
-    useWorkerProcess(std::make_unique<QProcess>());
+    // The importer launched for each file is set up the way a prelaunched one is: its own
+    // environment, its output forwarded to Loupe's.
+    auto workerProcess = std::make_unique<QProcess>();
+    worker::configureWorkerProcess(*workerProcess);
+    useWorkerProcess(std::move(workerProcess));
     // A layout set aside when an edit starts over from the assembly is kept, unless it is
     // one already saved, so starting over never loses a layout.
     // Volume and bounds with nothing selected are of the whole model, whose parts may have
@@ -2185,6 +2189,16 @@ bool ApplicationController::acceptMeasureEntity(const QString& nodeId, const QVa
     if (pick.kind == tools::MeasureEntity::Kind::Face && pick.planar)
         sectionController_.setCandidatePlane(pick.planeNormal, pick.planePoint);
     return measurementController_.acceptEntity(pick, additive);
+}
+
+bool ApplicationController::sectionAlongFace(const QString& nodeId, const QVariant& entity)
+{
+    if (nodeId.isEmpty() || !entity.canConvert<tools::MeasureEntity>()) return false;
+    const auto face = entity.value<tools::MeasureEntity>();
+    if (face.kind != tools::MeasureEntity::Kind::Face || !face.planar || face.planeNormal.isNull()) return false;
+    sectionController_.usePlane(face.planeNormal, face.planePoint,
+                                tr("Flat face on %1").arg(displayNameByNode_.value(nodeId, tr("Component"))));
+    return true;
 }
 
 bool ApplicationController::acceptTopologyPick(const QString& nodeId, const QString& entityKind,

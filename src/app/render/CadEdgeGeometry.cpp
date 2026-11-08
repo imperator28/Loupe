@@ -188,11 +188,36 @@ QVariant CadEdgeGeometry::snapPointAt(const double x, const double y, const doub
             }
         }
     }
+    // The middle of the edge by its length, when the pointer is as near it as it would have to
+    // be to an end. Not of a circle: anywhere on one snaps to its centre.
+    std::optional<QVector3D> midpoint;
+    if (!vertex && !edge.circular && edge.polyline.size() > 1) {
+        double length = 0.0;
+        for (qsizetype index = 1; index < edge.polyline.size(); ++index)
+            length += static_cast<double>((edge.polyline.at(index) - edge.polyline.at(index - 1)).length());
+        double remaining = length * 0.5;
+        for (qsizetype index = 1; index < edge.polyline.size() && length > 0.0; ++index) {
+            const auto from = edge.polyline.at(index - 1);
+            const auto to = edge.polyline.at(index);
+            const auto step = static_cast<double>((to - from).length());
+            if (step <= 0.0) continue;
+            if (remaining <= step || index + 1 == edge.polyline.size()) {
+                const auto middle = from + (to - from) * static_cast<float>(std::min(1.0, remaining / step));
+                if ((middle - scenePoint).lengthSquared() <= static_cast<float>(vertexTolerance * vertexTolerance))
+                    midpoint = middle;
+                break;
+            }
+            remaining -= step;
+        }
+    }
     tools::MeasureEntity snap = edge;
     snap.triangles.clear();
     if (vertex) {
         snap.kind = tools::MeasureEntity::Kind::Vertex;
         snap.point = toScene.map(*vertex);
+    } else if (midpoint) {
+        snap.kind = tools::MeasureEntity::Kind::Midpoint;
+        snap.point = *midpoint;
     } else if (edge.circular) {
         snap.kind = tools::MeasureEntity::Kind::CircleCentre;
         snap.point = edge.centre;

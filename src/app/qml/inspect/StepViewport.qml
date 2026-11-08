@@ -356,6 +356,7 @@ Item {
 
     function cancelPivotPick() {
         pickingPivot = false
+        if (!measurementActive) showHoverTopology(null)
     }
 
     function clearPivot() {
@@ -366,19 +367,30 @@ Item {
         pickingPivot = false
     }
 
-    // The point (and face) under (x, y) as the pivot, in the part's own frame so it stays on
-    // the part wherever the part is moved. False when the click missed every part.
+    // The point under (x, y) as the pivot, snapped as measurement snaps (pivotCandidateAt), in
+    // the part's own frame so it stays on the part wherever the part is moved. The handle
+    // turns to the face clicked, or for a circle's centre to the circle's axis. False when
+    // the click missed every part.
     function pickPivotAt(x, y) {
         const hit = view.pick(x, y)
         if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return false
         const model = hit.objectHit
-        const normal = hit.sceneNormal ? model.mapDirectionFromScene(hit.sceneNormal) : null
-        handlePivot = { nodeId: model.nodeId, local: model.mapPositionFromScene(hit.scenePosition),
-                        normal: normal && normal.length() > 0 ? normal.normalized() : null }
+        const snap = pivotCandidateAt(hit)
+        const info = snap ? snap.info : null
+        let point = Qt.vector3d(hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z)
+        let direction = hit.sceneNormal ? Qt.vector3d(hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z) : null
+        if (info && info.point !== undefined) point = Qt.vector3d(info.point.x, info.point.y, info.point.z)
+        if (info && info.kind === "centre" && info.axis !== undefined && info.axis.length() > 0)
+            direction = Qt.vector3d(info.axis.x, info.axis.y, info.axis.z)
+        const normal = direction ? model.mapDirectionFromScene(direction) : null
+        handlePivot = { nodeId: model.nodeId, local: model.mapPositionFromScene(point),
+                        normal: normal && normal.length() > 0 ? normal.normalized() : null,
+                        snap: info ? info.kind : "" }
         const saved = savedPivots
         saved[pivotKey()] = handlePivot
         savedPivots = saved
         pickingPivot = false
+        if (!measurementActive) showHoverTopology(null)
         return true
     }
 
@@ -1072,6 +1084,23 @@ Item {
         if (hasVisibleGeometry) navigation.fitBounds(minimum, maximum)
     }
 
+    // How far along the line `origin + t * direction` (direction of unit length) the pointer at
+    // (x, y) points: the t of the line's point nearest the ray under the pointer. Null when
+    // the line runs (nearly) along the ray, where every t is as near as any other.
+    function sectionAlongAt(x, y, origin, direction) {
+        if (!view.camera) return null
+        return handleMath.alongLineNearestRay(view.mapTo3DScene(Qt.vector3d(x, y, 0)),
+                                              view.mapTo3DScene(Qt.vector3d(x, y, Math.max(1, root.sceneDiagonal))),
+                                              origin, direction)
+    }
+
+    // The one place the cut's position is held to the model: a little past its ends, as the
+    // fallback slider allows. The arrow is drawn from the cut, so the two never part.
+    function clampSectionPosition(position) {
+        const range = sectionOffsetRange
+        return Math.max(range.from, Math.min(range.to, position))
+    }
+
     function calculateSectionOffsetRange() {
         if (!controller || !hasSceneBounds) return { from: -1, to: 1 }
         const normal = effectiveSectionNormal
@@ -1123,6 +1152,7 @@ Item {
 
     function clearMeshes() {
         sectionApplyTimer.stop()
+        clearSectionPlaneFace()
         sectionApplyQueue = []
         sectionApplyRequest = null
         sectionBusyCount = 0
@@ -1716,11 +1746,13 @@ Item {
     //   { nodeId, entity (a MeasureEntity), info (its description), entityKind ("face" or
     //     "edge", what to highlight), topologyId, sourceGeometry, placementNode }
     // `withShape` asks for a face's triangles too: only an accepted surface-to-surface pick
-    // needs them, and copying them on every hover would cost for nothing.
-    function measureCandidateAt(hit, withShape) {
+    // needs them, and copying them on every hover would cost for nothing. `asMode` picks as
+    // that mode would, whatever mode is on: the section's plane pick and the exploded view's
+    // pivot pick snap the way measurement does, through this one picker.
+    function measureCandidateAt(hit, withShape, asMode) {
         if (!root.controller || !hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return null
         const measurement = root.controller.measurement
-        const mode = measurement.mode
+        const mode = asMode !== undefined ? asMode : measurement.mode
         if (mode === 6 || mode === 7) return null
         const model = hit.objectHit
         const nodeId = model.nodeId
@@ -1810,6 +1842,55 @@ Item {
         return pick && pick.placementNode ? pick.placementNode.rotation : Qt.quaternion(1, 0, 0, 0)
     }
 
+    // A face to section along, as Section > Pick face plane takes it: a flat face, whose plane
+    // the hover previews; a curved one is lit but refused.
+    function sectionPlaneCandidateAt(hit) {
+        const pick = measureCandidateAt(hit, false, 2)
+        if (!pick || !pick.info || pick.info.kind !== "face") return null
+        const flat = pick.info.planar === true
+        pick.info.eligible = flat
+        pick.info.detail = flat ? qsTr("Section along its plane") : ""
+        pick.info.reason = flat ? "" : qsTr("A curved face has no plane to cut along. Pick a flat face.")
+        pick.info.previewNormal = flat ? pick.info.planeNormal : undefined
+        pick.info.previewAt = flat ? pick.info.point : undefined
+        return pick
+    }
+
+    // The point the exploded view's pivot would go to, snapped as point to point measurement
+    // snaps: a vertex, an edge's midpoint, a circle's centre, a point on an edge, else the
+    // point on the face.
+    function pivotCandidateAt(hit) {
+        const pick = measureCandidateAt(hit, false, 0)
+        if (!pick || !pick.info) return null
+        pick.info.eligible = true
+        pick.info.reason = ""
+        pick.info.detail = pick.info.kind === "centre" ? qsTr("Pivot on its axis") : qsTr("Pivot here")
+        return pick
+    }
+
+    // Section > Pick face plane: a click on a flat face sections along its plane, and the
+    // face stays lit while the section uses it. A curved face is refused, and the pick goes on.
+    property var sectionPlaneFace: null
+    readonly property bool sectionPlaneFaceShown: sectionPlaneFace !== null && controller !== null && !captureUiHidden
+            && controller.section.enabled && controller.section.usingSelectedPlane
+    readonly property bool sectionPlanePicking: controller !== null && !presentationOnly && controller.section.pickingPlane
+    // Another tool is picking through the measurement picker, and shows its hover.
+    readonly property bool toolPicking: sectionPlanePicking || pickingPivot
+    function pickSectionPlaneAt(x, y) {
+        const pick = sectionPlaneCandidateAt(view.pick(x, y))
+        if (!pick || !pick.info.eligible || !root.controller.sectionAlongFace(pick.nodeId, pick.entity)) return false
+        root.sectionPlaneFace = { nodeId: pick.nodeId, entityKind: "face", topologyId: pick.topologyId,
+                                  sourceGeometry: pick.sourceGeometry, placementNode: pick.placementNode,
+                                  label: root.controller.section.planeLabel }
+        sectionPlaneFaceHighlight.setTopology(pick.sourceGeometry, pick.topologyId)
+        if (!root.measurementActive) showHoverTopology(null)
+        return true
+    }
+    function clearSectionPlaneFace() {
+        root.sectionPlaneFace = null
+        sectionPlaneFaceHighlight.clearTopology()
+    }
+
     function showHoverTopology(pick) {
         const same = pick && root.hoverTopology && pick.sourceGeometry === root.hoverTopology.sourceGeometry
                 && pick.topologyId === root.hoverTopology.topologyId && pick.entityKind === root.hoverTopology.entityKind
@@ -1843,12 +1924,12 @@ Item {
         if (mode === 6 || mode === 7) {
             // Shift or Ctrl/Cmd adds parts, and volume and bounds add them up.
             root.controller.acceptViewSelection(hit.objectHit.nodeId, hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z,
-                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, additive === true)
+                                                hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z, !!additive)
             return
         }
         // Surface to surface measures between whole faces, so it takes the face's triangles.
         const pick = measureCandidateAt(hit, mode === 2)
-        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity, additive === true)) return
+        if (!pick || !root.controller.acceptMeasureEntity(pick.nodeId, pick.entity, !!additive)) return
         syncAcceptedTopologies(pick)
         showHoverTopology(null)
         // The hover is the next candidate, at once: no move needed to see it.
@@ -2003,6 +2084,10 @@ Item {
         if (hoveredNodeId !== nodeId) hoveredNodeId = nodeId
         if (root.faceFrameSelectionEnabled)
             showHoverTopology(root.facePickFromHit(hit))
+        else if (root.sectionPlanePicking && hit.objectHit && hit.objectHit.nodeId)
+            showHoverTopology(root.sectionPlaneCandidateAt(hit))
+        else if (root.pickingPivot && hit.objectHit && hit.objectHit.nodeId)
+            showHoverTopology(root.pivotCandidateAt(hit))
         else if (root.measurementActive && hit.objectHit && hit.objectHit.nodeId)
             showHoverTopology(measureCandidateAt(hit, false))
         else if (root.hoverTopology)
@@ -2336,6 +2421,7 @@ Item {
         visible: (!root.presentationOnly || root.faceFrameSelectionEnabled)
                  && ((root.hoverTopology && root.hoverTopology.entityKind === "face")
                  || root.hasAcceptedFaceHighlight
+                 || root.sectionPlaneFaceShown
                  )
         environment: SceneEnvironment {
             backgroundMode: SceneEnvironment.Transparent
@@ -2365,6 +2451,19 @@ Item {
                 horizontalMagnification: navigation.orthographicMagnification
                 verticalMagnification: navigation.orthographicMagnification
             }
+        }
+
+        // The face the section's plane was picked on, lit while the section uses it.
+        MeasurementFaceHighlight {
+            id: sectionPlaneFaceHighlight
+            objectName: "sectionPlaneFaceHighlight"
+            active: root.sectionPlaneFaceShown
+            position: root.placementPosition(root.sectionPlaneFace)
+            rotation: root.placementRotation(root.sectionPlaneFace)
+            fillColor: viewportVisualTheme.sectionBorder
+            boundaryColor: viewportVisualTheme.sectionBorder
+            fillAlpha: 0.22
+            boundaryWidth: 3
         }
 
         MeasurementFaceHighlight {
@@ -2444,7 +2543,7 @@ Item {
     Rectangle {
         id: pivotPickHint
         objectName: "pivotPickHint"
-        visible: root.pickingPivot && !root.captureUiHidden
+        visible: (root.pickingPivot || root.sectionPlanePicking) && !root.captureUiHidden
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.topMargin: 16
@@ -2457,7 +2556,8 @@ Item {
         Label {
             id: pivotPickLabel
             anchors.centerIn: parent
-            text: qsTr("Click a point on a part to move the handle there  ·  Esc to cancel")
+            text: root.sectionPlanePicking ? qsTr("Click a flat face to section along its plane  ·  Esc to cancel")
+                                           : qsTr("Click a point on a part to move the handle there  ·  Esc to cancel")
             color: root.theme ? root.theme.foreground : "transparent"
         }
     }
@@ -2543,7 +2643,7 @@ Item {
         property real rollApplied: 0
         hoverEnabled: true
 
-        cursorShape: root.pickingPivot ? Qt.CrossCursor
+        cursorShape: root.pickingPivot || root.sectionPlanePicking ? Qt.CrossCursor
                    : root.handleDrag || root.handleHover ? Qt.PointingHandCursor : Qt.ArrowCursor
 
         onPressed: function(mouse) {
@@ -2641,13 +2741,20 @@ Item {
                 navigation.clearPendingOrbitPivot()
                 return
             }
+            // Picking the section's plane: a click on a flat face sections along it.
+            if (root.sectionPlanePicking && !dragging && pressButton === Qt.LeftButton) {
+                root.pickSectionPlaneAt(mouse.x, mouse.y)
+                pressButton = Qt.NoButton
+                navigation.clearPendingOrbitPivot()
+                return
+            }
             if (!dragging && pressButton === Qt.LeftButton && root.faceFrameSelectionEnabled) {
                 root.reportFaceFrameAt(mouse.x, mouse.y)
             }
             if (!dragging && pressButton === Qt.LeftButton && root.selectionEnabled) {
-                const additive = (mouse.modifiers & Qt.ShiftModifier)
-                        || (mouse.modifiers & Qt.ControlModifier)
-                        || (mouse.modifiers & Qt.MetaModifier)
+                // A boolean, not the modifier bits: `additive === true` downstream took the
+                // bits for "no", and Shift or Ctrl/Cmd never added a pick to a total.
+                const additive = (mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.MetaModifier)) !== 0
                 root.pickAt(mouse.x, mouse.y, additive)
                 root.rememberFaceAt(mouse.x, mouse.y)
             }
@@ -2713,7 +2820,8 @@ Item {
         objectName: "measurementOverlay"
         anchors.fill: parent
         z: 4
-        enabled: false
+        // Only a pinned tag takes the pointer (to be dragged); everywhere else it passes to
+        // the view underneath, which has no handler of its own on this layer.
         theme: root.theme
         visualTheme: viewportVisualTheme
         view: view
@@ -2721,13 +2829,17 @@ Item {
         measurement: root.controller ? root.controller.measurement : null
         // Pinned results stay when the tool closes; the one in progress shows while measuring.
         visible: !root.presentationOnly && root.controller !== null
-                 && (root.measurementActive || root.controller.measurement.pickedPoints.length > 0
+                 && (root.measurementActive || root.toolPicking || root.controller.measurement.pickedPoints.length > 0
                      || root.controller.measurement.pinnedResults.length > 0)
         showCurrent: root.measurementActive || (root.controller !== null && root.controller.measurement.pickedPoints.length > 0)
         // The hover is for aiming; a capture shows the result only, and only if asked to.
-        hover: root.measurementActive ? root.hoverTopology : null
+        hover: root.measurementActive || root.toolPicking ? root.hoverTopology : null
         pointer: root.hoverPointer
-        showHover: root.measurementActive && !root.captureUiHidden && input.containsMouse && input.pressedButtons === Qt.NoButton
+        showHover: (root.measurementActive || root.toolPicking) && !root.captureUiHidden && input.containsMouse
+                   && input.pressedButtons === Qt.NoButton
+        // A face's plane, previewed as its normal: about a sixteenth of the view's height long.
+        normalPreviewLength: root.hoverTopology && root.hoverTopology.info && root.hoverTopology.info.previewAt !== undefined
+                             ? root.worldPerPixelAt(root.hoverTopology.info.previewAt) * 56 : 0
         showResult: !root.captureUiHidden || (root.controller !== null && root.controller.capture.includeMeasurements)
     }
 
@@ -2841,6 +2953,12 @@ Item {
             property real axisY: 0
             property real worldPerPixel: 1
             property bool dragging: false
+            // The line the cut moves along, fixed at the press (the anchor moves with the cut),
+            // and where along it the pointer was then.
+            property vector3d lineOrigin: Qt.vector3d(0, 0, 0)
+            property vector3d lineDirection: Qt.vector3d(0, 0, 1)
+            property real startAlong: 0
+            property bool alongRay: false
 
             function cancelDrag() {
                 if (dragging) root.controller.section.cancelInteraction()
@@ -2856,18 +2974,35 @@ Item {
                 axisY = (root.sectionArrowTipScreen.y - root.sectionAnchorScreen.y) / root.sectionProjectedLength
                 worldPerPixel = root.sectionArrowLength / root.sectionProjectedLength
                 startPosition = root.controller.section.position
+                const anchor = root.sectionAnchor
+                const normal = root.effectiveSectionNormal
+                lineOrigin = Qt.vector3d(anchor.x, anchor.y, anchor.z)
+                lineDirection = Qt.vector3d(normal.x, normal.y, normal.z)
+                const along = root.sectionAlongAt(point.x, point.y, lineOrigin, lineDirection)
+                alongRay = along !== null
+                startAlong = alongRay ? along : 0
                 root.controller.section.beginInteraction()
                 dragging = true
             }
             onPositionChanged: function(mouse) {
                 if (!dragging) return
                 const point = mapToItem(root, mouse.x, mouse.y)
-                const pixelOffset = (point.x - startScreenX) * axisX + (point.y - startScreenY) * axisY
                 const multiplier = (mouse.modifiers & Qt.ShiftModifier) ? 0.1 : 1.0
-                const direction = root.removedSectionNormal.x * root.effectiveSectionNormal.x
-                        + root.removedSectionNormal.y * root.effectiveSectionNormal.y
-                        + root.removedSectionNormal.z * root.effectiveSectionNormal.z
-                root.controller.section.previewPosition(startPosition + pixelOffset * worldPerPixel * direction * multiplier)
+                // Where the pointer's ray passes closest to the cut's line, so the cut (and the
+                // arrow, drawn from it) stays under the pointer at any speed and in perspective.
+                // Seen almost end on, the line gives no such point: then by the pixels moved.
+                const along = alongRay ? root.sectionAlongAt(point.x, point.y, lineOrigin, lineDirection) : null
+                let travel
+                if (along !== null) {
+                    travel = (along - startAlong) * multiplier
+                } else {
+                    const pixelOffset = (point.x - startScreenX) * axisX + (point.y - startScreenY) * axisY
+                    const direction = root.removedSectionNormal.x * root.effectiveSectionNormal.x
+                            + root.removedSectionNormal.y * root.effectiveSectionNormal.y
+                            + root.removedSectionNormal.z * root.effectiveSectionNormal.z
+                    travel = pixelOffset * worldPerPixel * direction * multiplier
+                }
+                root.controller.section.previewPosition(root.clampSectionPosition(startPosition + travel))
             }
             onCanceled: cancelDrag()
             onReleased: {
@@ -3104,6 +3239,11 @@ Item {
         onActivated: root.cancelPivotPick()
     }
     Shortcut {
+        sequence: "Esc"
+        enabled: root.visible && root.sectionPlanePicking && !root.pickingPivot
+        onActivated: root.controller.section.cancelPlanePick()
+    }
+    Shortcut {
         sequences: [StandardKey.Undo]
         enabled: root.visible && root.explodeToolActive && root.explode !== null && root.explode.canUndo
                  && !root.isTextEditFocused()
@@ -3121,13 +3261,13 @@ Item {
     Shortcut {
         sequence: "Esc"
         enabled: root.visible && !root.presentationOnly && root.measurementHasPicks && !sectionArrowInput.dragging
-                 && root.handleDrag === null && !root.pickingPivot
+                 && root.handleDrag === null && !root.pickingPivot && !root.sectionPlanePicking
         onActivated: root.controller.measurement.clearPicks()
     }
     Shortcut {
         sequence: "Esc"
         enabled: root.visible && (!root.presentationOnly && !sectionArrowInput.dragging && root.handleDrag === null
-                                  && !root.pickingPivot && !root.measurementHasPicks)
+                                  && !root.pickingPivot && !root.sectionPlanePicking && !root.measurementHasPicks)
         onActivated: {
             if (root.controller && root.controller.canRestoreVisibility) root.controller.restoreVisibility()
             else root.toolRequested("close")
@@ -3178,7 +3318,17 @@ Item {
     onLazyMaterializationChanged: if (!lazyMaterialization) materializePending()
     Connections {
         target: root.controller ? root.controller.section : null
-        function onChanged() { root.applySection() }
+        function onChanged() {
+            // The lit face goes when the section stops using its plane (an axis, another plane).
+            if (root.sectionPlaneFace && (!root.controller.section.usingSelectedPlane
+                    || root.controller.section.planeLabel !== root.sectionPlaneFace.label))
+                root.clearSectionPlaneFace()
+            root.applySection()
+        }
+        function onPickingPlaneChanged() {
+            if (!root.controller.section.pickingPlane && !root.measurementActive && !root.pickingPivot)
+                root.showHoverTopology(null)
+        }
     }
     Connections {
         target: root.controller ? root.controller.measurement : null

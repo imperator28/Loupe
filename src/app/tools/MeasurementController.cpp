@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QPointF>
 
 #include <algorithm>
 #include <cmath>
@@ -327,7 +328,13 @@ void MeasurementController::pinResult()
             edges.append(QVariant(line));
         }
     }
+    // In turn, so pins made one after another read apart; amber, the measurement colour, first.
+    static const QStringList colors{QStringLiteral("amber"), QStringLiteral("blue"), QStringLiteral("teal"),
+                                    QStringLiteral("rose"), QStringLiteral("violet"), QStringLiteral("slate")};
+    const auto color = colors.at(pinCounter_ % colors.size());
     pinned_.append(QVariantMap{{QStringLiteral("id"), QStringLiteral("pin-%1").arg(++pinCounter_)},
+                               {QStringLiteral("color"), color},
+                               {QStringLiteral("offset"), QPointF{}},
                                {QStringLiteral("title"), resultTitle()},
                                {QStringLiteral("text"), QStringLiteral("%1 %2").arg(resultText(), resultUnit()).trimmed()},
                                {QStringLiteral("annotation"), result_.annotation},
@@ -343,6 +350,32 @@ void MeasurementController::unpin(const QString& id)
     for (qsizetype index = 0; index < pinned_.size(); ++index) {
         if (pinned_.at(index).toMap().value(QStringLiteral("id")).toString() != id) continue;
         pinned_.removeAt(index);
+        emit pinnedChanged();
+        return;
+    }
+}
+
+void MeasurementController::setPinColor(const QString& id, const QString& colorKey)
+{
+    for (auto& value : pinned_) {
+        auto pin = value.toMap();
+        if (pin.value(QStringLiteral("id")).toString() != id) continue;
+        if (pin.value(QStringLiteral("color")).toString() == colorKey || colorKey.isEmpty()) return;
+        pin.insert(QStringLiteral("color"), colorKey);
+        value = pin;
+        emit pinnedChanged();
+        return;
+    }
+}
+
+void MeasurementController::setPinOffset(const QString& id, const double x, const double y)
+{
+    if (!std::isfinite(x) || !std::isfinite(y)) return;
+    for (auto& value : pinned_) {
+        auto pin = value.toMap();
+        if (pin.value(QStringLiteral("id")).toString() != id) continue;
+        pin.insert(QStringLiteral("offset"), QPointF{x, y});
+        value = pin;
         emit pinnedChanged();
         return;
     }
@@ -388,6 +421,7 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
         case MeasureEntity::Kind::SurfacePoint: return QStringLiteral("surfacePoint");
         case MeasureEntity::Kind::EdgePoint: return QStringLiteral("edgePoint");
         case MeasureEntity::Kind::Vertex: return QStringLiteral("vertex");
+        case MeasureEntity::Kind::Midpoint: return QStringLiteral("midpoint");
         case MeasureEntity::Kind::CircleCentre: return QStringLiteral("centre");
         case MeasureEntity::Kind::Edge: return QStringLiteral("edge");
         case MeasureEntity::Kind::Face: return QStringLiteral("face");
@@ -399,7 +433,8 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
     // a 3D line is one pixel wide on most graphics back ends, too thin to tell it apart.
     QVariantList polyline;
     if (entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::CircleCentre
-        || entity.kind == MeasureEntity::Kind::EdgePoint || entity.kind == MeasureEntity::Kind::Vertex) {
+        || entity.kind == MeasureEntity::Kind::EdgePoint || entity.kind == MeasureEntity::Kind::Vertex
+        || entity.kind == MeasureEntity::Kind::Midpoint) {
         polyline.reserve(entity.polyline.size());
         for (const auto& point : entity.polyline) polyline.append(QVariant::fromValue(point));
     }
@@ -410,7 +445,18 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
             {QStringLiteral("title"), entity.kindName()},
             {QStringLiteral("detail"), detailText},
             {QStringLiteral("eligible"), ok},
-            {QStringLiteral("reason"), reason}};
+            {QStringLiteral("reason"), reason},
+            // Its shape, for tools that use a pick for something other than a measurement
+            // (the section's plane, the exploded view's pivot).
+            {QStringLiteral("normal"), QVariant::fromValue(entity.normal)},
+            {QStringLiteral("planar"), entity.planar},
+            {QStringLiteral("planeNormal"), QVariant::fromValue(entity.planeNormal)},
+            {QStringLiteral("planePoint"), QVariant::fromValue(entity.planePoint)},
+            {QStringLiteral("linear"), entity.linear},
+            {QStringLiteral("direction"), QVariant::fromValue(entity.direction)},
+            {QStringLiteral("circular"), entity.circular},
+            {QStringLiteral("centre"), QVariant::fromValue(entity.centre)},
+            {QStringLiteral("axis"), QVariant::fromValue(entity.axis)}};
 }
 
 QVariant MeasurementController::surfacePointEntity(const QVector3D& point, const QVector3D& normal)

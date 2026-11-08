@@ -99,4 +99,27 @@ QtObject {
     function screenAngle(x, y, centre) {
         return Math.atan2(y - centre.y, x - centre.x) * 180 / Math.PI
     }
+
+    // How far along the line `origin + t * direction` (direction of unit length) lies its
+    // point nearest the ray from `near` through `far`: the t a pointer over that ray means
+    // on the line, in any projection. Null when the line runs within about 3 degrees of the
+    // ray, where every t is about as near as any other.
+    function alongLineNearestRay(near, far, origin, direction) {
+        let rx = far.x - near.x
+        let ry = far.y - near.y
+        let rz = far.z - near.z
+        const rayLength = Math.sqrt(rx * rx + ry * ry + rz * rz)
+        if (!(rayLength > 0)) return null
+        rx /= rayLength; ry /= rayLength; rz /= rayLength
+        const b = direction.x * rx + direction.y * ry + direction.z * rz
+        const denominator = 1 - b * b
+        if (denominator < 0.0025) return null
+        const wx = origin.x - near.x
+        const wy = origin.y - near.y
+        const wz = origin.z - near.z
+        const d = direction.x * wx + direction.y * wy + direction.z * wz
+        const e = rx * wx + ry * wy + rz * wz
+        const t = (b * e - d) / denominator
+        return isFinite(t) ? t : null
+    }
 }

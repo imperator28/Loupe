@@ -1,5 +1,71 @@
 # Changelog
 
+## v0.1.6-beta.4
+
+A testing build that opens the launch file sooner, exports assemblies with repeated parts,
+restyles the view toolbar, sections along a face you pick, snaps the exploded view's pivot,
+fixes in-app updates of a copy in `C:\Program Files` on Windows,
+and lets pinned measurements be dragged and coloured. Published as a pre-release;
+everything in v0.1.6-beta.3 is included.
+
+### New
+
+- **Opens the file you launched with sooner**: its import starts as Loupe starts, not once
+  the window is up, and the window's first frame already shows the model in the remembered
+  theme, without a dark-to-light flash. Export and Drawing are built when first opened (or
+  in the background a few seconds in), and on Windows the graphics driver starts while the
+  window is built.
+- **Section along a face you pick**: Section > Pick face plane asks for a face in the view.
+  The face under the pointer is lit, with an arrow showing which way its plane faces; a
+  curved face says it has no plane to cut along. The face picked stays lit while the section
+  uses it, and the panel names it ("Plane of: Flat face on Bracket-2"). Esc cancels.
+- **The pivot snaps** (exploded view > Pick a point): to corners, edge midpoints, hole and
+  arc centres, and points on edges, with the same marker as measuring shows before the
+  click. A hole's centre turns the handle to the hole's axis, and the panel says what the
+  pivot is on. Point-to-point measuring snaps to edge midpoints too.
+- **The view toolbar is restyled**: a compact floating bar with outline icons over short
+  labels, every tool the same width; the lit tool sits on an accent wash. Tools, order and
+  shortcuts are unchanged.
+- **Pinned measurements, laid out your way**: drag a pinned tag anywhere in the view; its
+  leader keeps pointing at what was measured as the view turns, and double-clicking puts it
+  back. Each pin takes a colour, in turn, and its swatch in the panel picks another (amber,
+  blue, teal, rose, violet, slate).
+- **Measurement tags are cards**: the theme's surface and text with an outline in the
+  result's colour, instead of white on brown, so they read in both themes.
+- **Bounds reads as a box**: its faces are shaded faintly under the dashed edges, with its X,
+  Y and Z sizes on three of them.
+
+### Fixed
+
+- **Exporting an assembly with repeated parts**: Select all in Export refused the whole
+  batch when a part or sub-assembly was placed twice, or two parts shared a name. Every
+  copy of a part is now one file, written once; different parts that share a name are
+  numbered "-2", "-3" in tree order, and a name you typed is never changed. The bucket
+  shows one row per file, with "×N" for copies.
+- **The section arrow ran off the cut** when dragged quickly: the cut moved by a pixel scale
+  taken at the press, which drifts in perspective, and nothing kept it on the model. The cut
+  now goes where the pointer is along the section axis, held a little past the model's ends.
+- **Clicking a part moved a face-plane section** to that part's plane. The plane in use now
+  changes only when another is picked.
+- **The view cube held up the first frame** on Windows: its labels asked for a font
+  Windows does not have, and the search for a stand-in blocked drawing for up to a second.
+- **The bounds box drew only its sizes** on Windows in beta.3, without the box: its dashed
+  edges never appeared. Measurement lines are now drawn the way the app's icons are, which
+  every graphics back end draws.
+- **Adding to a measurement with Shift or Ctrl/⌘** did nothing in beta.3: edge length and
+  area did not add up, and volume and bounds did not take more parts. The click passed the
+  modifier keys on as a number where a yes or no was expected.
+- **Updating a copy in Program Files, again** (Windows): the update still left the old version
+  in place. Before asking for administrator permission, the update first tried the copy as
+  you, and Windows refused each of the package's ~2500 files only after two retries, five
+  times over: hours, in a hidden window, before the prompt. It now checks once whether it can
+  write to Loupe's folder and, when it cannot, asks for permission straight away. The update
+  panel says beforehand that Windows will ask.
+
+Coming from beta.2 or beta.3 installed in Program Files: those versions still run the old
+update, so install this beta once by hand (unzip it over the Loupe folder as an
+administrator). Updates after this one work in place.
+
 ## v0.1.6-beta.3
 
 A testing build of the reworked Measure tool, filled section caps, and saved exploded
