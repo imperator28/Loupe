@@ -99,4 +99,19 @@ TestCase {
         compare(math.screenAngle(10, 0, { x: 0, y: 0 }), 0)
         compare(math.screenAngle(0, 10, { x: 0, y: 0 }), 90)
     }
+
+    // A section's cut follows the pointer along its axis: the axis point nearest the ray.
+    function test_alongLineNearestRay() {
+        // A ray straight down through (5, *, 0) meets the X axis at t = 5.
+        const t = math.alongLineNearestRay(Qt.vector3d(5, 10, 0), Qt.vector3d(5, -10, 0),
+                                           Qt.vector3d(0, 0, 0), Qt.vector3d(1, 0, 0))
+        fuzzyCompare(t, 5, 1e-9)
+        // A skew ray, slanted and offset in depth: still the nearest point, x = 3 on the axis.
+        const skew = math.alongLineNearestRay(Qt.vector3d(3, 4, 7), Qt.vector3d(3, -4, 9),
+                                              Qt.vector3d(-2, 0, 0), Qt.vector3d(1, 0, 0))
+        fuzzyCompare(skew, 5, 1e-9)
+        // Along the ray itself: no answer, rather than a wild one.
+        compare(math.alongLineNearestRay(Qt.vector3d(0, 0, 10), Qt.vector3d(0, 0, -10),
+                                         Qt.vector3d(0, 0, 0), Qt.vector3d(0, 0, 1)), null)
+    }
 }

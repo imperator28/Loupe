@@ -2191,6 +2191,16 @@ bool ApplicationController::acceptMeasureEntity(const QString& nodeId, const QVa
     return measurementController_.acceptEntity(pick, additive);
 }
 
+bool ApplicationController::sectionAlongFace(const QString& nodeId, const QVariant& entity)
+{
+    if (nodeId.isEmpty() || !entity.canConvert<tools::MeasureEntity>()) return false;
+    const auto face = entity.value<tools::MeasureEntity>();
+    if (face.kind != tools::MeasureEntity::Kind::Face || !face.planar || face.planeNormal.isNull()) return false;
+    sectionController_.usePlane(face.planeNormal, face.planePoint,
+                                tr("Flat face on %1").arg(displayNameByNode_.value(nodeId, tr("Component"))));
+    return true;
+}
+
 bool ApplicationController::acceptTopologyPick(const QString& nodeId, const QString& entityKind,
                                                const quint32 topologyId, const double x, const double y,
                                                const double z, const double normalX, const double normalY,

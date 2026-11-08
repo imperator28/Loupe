@@ -18,6 +18,7 @@ struct MeasureEntity final {
         SurfacePoint, // a point on a face, where the pointer is
         EdgePoint,    // the nearest point on an edge
         Vertex,       // an edge's end
+        Midpoint,     // the middle of an edge, by length
         CircleCentre, // the centre of a circular edge
         Edge,         // a whole edge
         Face,         // a whole face
@@ -55,7 +56,8 @@ struct MeasureEntity final {
     [[nodiscard]] bool isValid() const noexcept { return kind != Kind::None; }
     [[nodiscard]] bool isPointLike() const noexcept
     {
-        return kind == Kind::SurfacePoint || kind == Kind::EdgePoint || kind == Kind::Vertex || kind == Kind::CircleCentre;
+        return kind == Kind::SurfacePoint || kind == Kind::EdgePoint || kind == Kind::Vertex || kind == Kind::Midpoint
+            || kind == Kind::CircleCentre;
     }
     [[nodiscard]] QString kindName() const;
 };

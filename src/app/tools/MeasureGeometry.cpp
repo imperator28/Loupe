@@ -16,6 +16,7 @@ QString MeasureEntity::kindName() const
     case Kind::SurfacePoint: return QCoreApplication::translate("Measure", "Point on face");
     case Kind::EdgePoint: return QCoreApplication::translate("Measure", "Point on edge");
     case Kind::Vertex: return QCoreApplication::translate("Measure", "Vertex");
+    case Kind::Midpoint: return QCoreApplication::translate("Measure", "Midpoint");
     case Kind::CircleCentre: return QCoreApplication::translate("Measure", "Circle centre");
     case Kind::Edge:
         if (circular) return QCoreApplication::translate("Measure", "Circular edge");

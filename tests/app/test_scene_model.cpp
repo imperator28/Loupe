@@ -503,6 +503,11 @@ void SceneModelTest::measurementEntitiesCarryShapeAndSnapToVerticesAndCentres()
     const auto onEdge = edges.snapPointAt(1.3, 0.02, 0, 0.1, 0.1, identity).value<MeasureEntity>();
     QCOMPARE(onEdge.kind, MeasureEntity::Kind::EdgePoint);
     QVERIFY((onEdge.point - QVector3D(1.3F, 0, 0)).length() < 1e-5F);
+    // Near its middle, by length: the midpoint, exactly.
+    const auto middle = edges.snapPointAt(2.06, 0.02, 0, 0.1, 0.1, identity).value<MeasureEntity>();
+    QCOMPARE(middle.kind, MeasureEntity::Kind::Midpoint);
+    QVERIFY((middle.point - QVector3D(2, 0, 0)).length() < 1e-5F);
+    QVERIFY(middle.isPointLike());
     const auto centre = edges.snapPointAt(10, 1.02, 0, 0.1, 0.01, identity).value<MeasureEntity>();
     QCOMPARE(centre.kind, MeasureEntity::Kind::CircleCentre);
     QVERIFY((centre.point - QVector3D(10, 0, 0)).length() < 1e-4F);

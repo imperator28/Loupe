@@ -15,6 +15,7 @@ void SectionController::setEnabled(const bool enabled)
 {
     if (enabled_ == enabled) return;
     enabled_ = enabled;
+    if (!enabled_) cancelPlanePick();
     emit changed();
 }
 
@@ -24,6 +25,7 @@ void SectionController::setAxis(const SectionAxis axis)
     axis_ = axis;
     usingSelectedPlane_ = false;
     position_ = 0.0;
+    cancelPlanePick();
     emit changed();
 }
 
@@ -103,15 +105,49 @@ void SectionController::setSliceBorderWidth(const double width)
 void SectionController::setCandidatePlane(const QVector3D& normal, const QVector3D& point)
 {
     if (normal.isNull()) return;
-    planeNormal_ = normal.normalized();
-    planeOffset_ = QVector3D::dotProduct(planeNormal_, point);
+    // Only a candidate: the plane a section is using changes when a plane is chosen, never
+    // because another part was clicked.
+    candidateNormal_ = normal.normalized();
+    candidateOffset_ = QVector3D::dotProduct(candidateNormal_, point);
     hasSelectedPlane_ = true;
     emit changed();
 }
 
+void SectionController::usePlane(const QVector3D& normal, const QVector3D& point, const QString& label)
+{
+    if (normal.isNull()) return;
+    planeNormal_ = normal.normalized();
+    planeOffset_ = QVector3D::dotProduct(planeNormal_, point);
+    usingSelectedPlane_ = true;
+    planeLabel_ = label;
+    position_ = 0.0;
+    enabled_ = true;
+    cancelPlanePick();
+    emit changed();
+}
+
+void SectionController::beginPlanePick()
+{
+    if (pickingPlane_) return;
+    pickingPlane_ = true;
+    emit pickingPlaneChanged();
+}
+
+void SectionController::cancelPlanePick()
+{
+    if (!pickingPlane_) return;
+    pickingPlane_ = false;
+    emit pickingPlaneChanged();
+}
+
 void SectionController::useSelectedPlane()
 {
-    if (!hasSelectedPlane_ || usingSelectedPlane_) return;
+    if (!hasSelectedPlane_) return;
+    if (usingSelectedPlane_ && planeNormal_ == candidateNormal_ && qFuzzyCompare(planeOffset_ + 1.0, candidateOffset_ + 1.0))
+        return;
+    planeNormal_ = candidateNormal_;
+    planeOffset_ = candidateOffset_;
+    planeLabel_ = tr("The last face clicked");
     usingSelectedPlane_ = true;
     position_ = 0.0;
     emit changed();

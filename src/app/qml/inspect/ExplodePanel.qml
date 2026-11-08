@@ -24,6 +24,18 @@ Rectangle {
     readonly property string selectedNodeId: selectedNodeIds.length === 1 ? selectedNodeIds[0] : ""
     readonly property string scopeId: taskController ? taskController.autoExplodeScope(selectedNodeIds) : ""
     readonly property int revision: taskController ? taskController.revision : 0
+
+    // Where a picked pivot snapped to, as the pick's hover named it.
+    function pivotDescription(snap) {
+        switch (snap) {
+        case "vertex": return qsTr("At a corner")
+        case "midpoint": return qsTr("At the middle of an edge")
+        case "centre": return qsTr("At a hole's or arc's centre, on its axis")
+        case "edgePoint": return qsTr("At a point on an edge")
+        case "surfacePoint": return qsTr("At a point on a face")
+        default: return qsTr("At the point you picked")
+        }
+    }
     readonly property real scopeFactor: taskController && revision >= 0 ? taskController.autoFactor(scopeId) : 0
     readonly property bool hasLayout: taskController !== null && taskController.exploded
     // The view shows the layout (rather than easing to, or resting on, the assembly).
@@ -424,8 +436,9 @@ Rectangle {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     color: root.subduedForeground
-                    text: root.viewport && root.viewport.pickingPivot ? qsTr("Click a point on a part…")
-                        : root.viewport && root.viewport.handlePivot ? qsTr("At the point you picked")
+                    objectName: "explodePivotDescription"
+                    text: root.viewport && root.viewport.pickingPivot ? qsTr("Click a point on a part: it snaps to corners, midpoints and hole centres…")
+                        : root.viewport && root.viewport.handlePivot ? root.pivotDescription(root.viewport.handlePivot.snap)
                         : qsTr("At the centre of the selection")
                 }
             }
@@ -456,7 +469,7 @@ Rectangle {
             ThemedSwitch {
                 theme: root.theme
                 objectName: "explodeAlignToFaceSwitch"
-                text: qsTr("Line the handle up with the picked face")
+                text: qsTr("Line the handle up with the picked face or hole")
                 enabled: root.viewport !== null && root.viewport.handlePivot !== null
                 checked: root.viewport !== null && root.viewport.handleAlignToFace
                 onToggled: if (root.viewport) root.viewport.handleAlignToFace = checked

@@ -421,6 +421,7 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
         case MeasureEntity::Kind::SurfacePoint: return QStringLiteral("surfacePoint");
         case MeasureEntity::Kind::EdgePoint: return QStringLiteral("edgePoint");
         case MeasureEntity::Kind::Vertex: return QStringLiteral("vertex");
+        case MeasureEntity::Kind::Midpoint: return QStringLiteral("midpoint");
         case MeasureEntity::Kind::CircleCentre: return QStringLiteral("centre");
         case MeasureEntity::Kind::Edge: return QStringLiteral("edge");
         case MeasureEntity::Kind::Face: return QStringLiteral("face");
@@ -432,7 +433,8 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
     // a 3D line is one pixel wide on most graphics back ends, too thin to tell it apart.
     QVariantList polyline;
     if (entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::CircleCentre
-        || entity.kind == MeasureEntity::Kind::EdgePoint || entity.kind == MeasureEntity::Kind::Vertex) {
+        || entity.kind == MeasureEntity::Kind::EdgePoint || entity.kind == MeasureEntity::Kind::Vertex
+        || entity.kind == MeasureEntity::Kind::Midpoint) {
         polyline.reserve(entity.polyline.size());
         for (const auto& point : entity.polyline) polyline.append(QVariant::fromValue(point));
     }
@@ -443,7 +445,18 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
             {QStringLiteral("title"), entity.kindName()},
             {QStringLiteral("detail"), detailText},
             {QStringLiteral("eligible"), ok},
-            {QStringLiteral("reason"), reason}};
+            {QStringLiteral("reason"), reason},
+            // Its shape, for tools that use a pick for something other than a measurement
+            // (the section's plane, the exploded view's pivot).
+            {QStringLiteral("normal"), QVariant::fromValue(entity.normal)},
+            {QStringLiteral("planar"), entity.planar},
+            {QStringLiteral("planeNormal"), QVariant::fromValue(entity.planeNormal)},
+            {QStringLiteral("planePoint"), QVariant::fromValue(entity.planePoint)},
+            {QStringLiteral("linear"), entity.linear},
+            {QStringLiteral("direction"), QVariant::fromValue(entity.direction)},
+            {QStringLiteral("circular"), entity.circular},
+            {QStringLiteral("centre"), QVariant::fromValue(entity.centre)},
+            {QStringLiteral("axis"), QVariant::fromValue(entity.axis)}};
 }
 
 QVariant MeasurementController::surfacePointEntity(const QVector3D& point, const QVector3D& normal)

@@ -325,6 +325,9 @@ public:
     // A measurement pick the viewport built from the part's geometry (a MeasureEntity).
     // `additive` (Shift or Ctrl/Cmd) adds it to a total, where the mode adds up.
     Q_INVOKABLE bool acceptMeasureEntity(const QString& nodeId, const QVariant& entity, bool additive = false);
+    // Sections along a picked face's plane (Section > Pick face plane). False for anything
+    // but a flat face: a curved one has no plane to cut along.
+    Q_INVOKABLE bool sectionAlongFace(const QString& nodeId, const QVariant& entity);
     Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
                                         double x, double y, double z, double normalX, double normalY, double normalZ,
                                         double measureMm, double radiusMm);

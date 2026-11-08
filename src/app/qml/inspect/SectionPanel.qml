@@ -86,23 +86,44 @@ Rectangle {
                     theme: root.theme
                     text: modelData
                     checkable: true
-                    checked: root.taskController && root.taskController.axisName === modelData
+                    checked: root.taskController !== null && !root.taskController.usingSelectedPlane
+                             && root.taskController.axisName === modelData
                     Layout.fillWidth: true
                     onClicked: root.taskController.axisName = modelData
                 }
             }
         }
+        // A face's plane: the button asks for a face in the view, which previews its plane
+        // under the pointer; the face picked is named here, and stays lit in the view.
         ThemedButton {
+            id: pickPlaneButton
+            objectName: "sectionPickFacePlane"
             theme: root.theme
             Layout.fillWidth: true
-            text: qsTr("Use selected face plane")
-            enabled: root.taskController && root.taskController.hasSelectedPlane
-            onClicked: root.taskController.useSelectedPlane()
+            readonly property bool picking: root.taskController !== null && root.taskController.pickingPlane
+            text: picking ? qsTr("Click a flat face in the view…") : qsTr("Pick face plane")
+            selectedAppearance: picking || (root.taskController !== null && root.taskController.usingSelectedPlane)
+            onClicked: {
+                if (!root.taskController) return
+                if (picking) root.taskController.cancelPlanePick()
+                else root.taskController.beginPlanePick()
+            }
             ThemedToolTip {
                 theme: root.theme
-                text: parent.enabled ? qsTr("Use the normal from the latest canvas face pick") : qsTr("Pick a face in the canvas first")
-                visible: parent.hovered
+                text: pickPlaneButton.picking ? qsTr("Esc cancels")
+                                              : qsTr("Section along the plane of a flat face you click in the view")
+                visible: pickPlaneButton.hovered
             }
+        }
+        Label {
+            objectName: "sectionPlaneSource"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            text: root.taskController && root.taskController.planeLabel.length > 0
+                  ? qsTr("Plane of: %1").arg(root.taskController.planeLabel) : ""
+            elide: Text.ElideRight
+            color: root.subduedForeground
+            font.pixelSize: root.theme ? root.theme.fontCaption : 11
         }
         ThemedButton {
             theme: root.theme

@@ -29,6 +29,9 @@ Item {
     property bool showResult: true
     // The measurement in progress, apart from the pinned ones.
     property bool showCurrent: true
+    // Scene length of the normal drawn from a hovered face whose plane a tool would use
+    // (hover.info.previewAt, previewNormal); 0 draws none.
+    property real normalPreviewLength: 0
 
     readonly property color hoverColor: theme ? theme.accent : "transparent"
     readonly property color haloColor: visualTheme ? visualTheme.markerBorder : "transparent"
@@ -125,13 +128,75 @@ Item {
         }
     }
 
+    // A face whose plane a click would use: its normal, from where the pointer is, so it is
+    // clear which way the plane faces before the click.
+    readonly property var normalPreview: {
+        const info = root.showHover && root.hover && root.hover.info ? root.hover.info : null
+        if (!info || info.previewAt === undefined || info.previewNormal === undefined || root.normalPreviewLength <= 0)
+            return null
+        const at = info.previewAt
+        const n = info.previewNormal
+        const length = root.normalPreviewLength
+        const from = root.project(at)
+        const to = root.project(Qt.vector3d(at.x + n.x * length, at.y + n.y * length, at.z + n.z * length))
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const pixels = Math.sqrt(dx * dx + dy * dy)
+        return { from: from, to: to, pixels: pixels, ux: pixels > 0 ? dx / pixels : 0, uy: pixels > 0 ? dy / pixels : 0 }
+    }
+    readonly property string normalPreviewPath: {
+        const arrow = normalPreview
+        if (!arrow || arrow.pixels < 6) return ""
+        const head = Math.min(9, arrow.pixels * 0.4)
+        const baseX = arrow.to.x - arrow.ux * head
+        const baseY = arrow.to.y - arrow.uy * head
+        const wingX = -arrow.uy * head * 0.5
+        const wingY = arrow.ux * head * 0.5
+        const f = function(value) { return value.toFixed(1) }
+        return "M " + f(arrow.from.x) + " " + f(arrow.from.y) + " L " + f(arrow.to.x) + " " + f(arrow.to.y)
+             + " M " + f(baseX + wingX) + " " + f(baseY + wingY) + " L " + f(arrow.to.x) + " " + f(arrow.to.y)
+             + " L " + f(baseX - wingX) + " " + f(baseY - wingY)
+    }
+    Shape {
+        objectName: "measurementNormalPreview"
+        anchors.fill: parent
+        visible: root.normalPreviewPath.length > 0
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: Qt.rgba(root.haloColor.r, root.haloColor.g, root.haloColor.b, 0.5)
+            strokeWidth: 5
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            joinStyle: ShapePath.RoundJoin
+            PathSvg { path: root.normalPreviewPath }
+        }
+        ShapePath {
+            strokeColor: root.hoverColor
+            strokeWidth: 2.5
+            fillColor: "transparent"
+            capStyle: ShapePath.RoundCap
+            joinStyle: ShapePath.RoundJoin
+            PathSvg { path: root.normalPreviewPath }
+        }
+    }
+    // The point it is drawn from: a ring, as a point on a face is marked.
+    Rectangle {
+        visible: root.normalPreviewPath.length > 0
+        x: root.normalPreview ? Math.round(root.normalPreview.from.x) - 4 : 0
+        y: root.normalPreview ? Math.round(root.normalPreview.from.y) - 4 : 0
+        width: 8; height: 8; radius: 4
+        color: root.haloColor
+        border.color: root.hoverColor
+        border.width: 2
+    }
+
     // ---- The hover: where a click would land, and what it would take ----
     readonly property var hoverInfo: hover && hover.info ? hover.info : null
     readonly property string hoverKind: hoverInfo && hoverInfo.kind ? hoverInfo.kind : ""
     readonly property bool hoverEligible: hoverInfo !== null && hoverInfo.eligible === true
     readonly property point snapScreen: hoverInfo && hoverInfo.point !== undefined ? project(hoverInfo.point) : Qt.point(-10000, -10000)
     readonly property bool hoverIsPoint: hoverKind === "vertex" || hoverKind === "centre" || hoverKind === "edgePoint"
-                                         || hoverKind === "surfacePoint"
+                                         || hoverKind === "midpoint" || hoverKind === "surfacePoint"
 
     Item {
         id: snapMarker
@@ -156,6 +221,25 @@ Item {
             Rectangle { x: -7; y: -7; width: 14; height: 14; radius: 7; color: "transparent"; border.color: root.hoverColor; border.width: 2 }
             Rectangle { x: -10; y: -1; width: 20; height: 2; color: root.hoverColor }
             Rectangle { x: -1; y: -10; width: 2; height: 20; color: root.hoverColor }
+        }
+        // An edge's midpoint: a triangle, as CAD tools mark one.
+        Shape {
+            visible: root.hoverKind === "midpoint"
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: root.haloColor
+                strokeWidth: 4
+                fillColor: "transparent"
+                joinStyle: ShapePath.RoundJoin
+                PathSvg { path: "M 0 -7 L 6.5 5 L -6.5 5 Z" }
+            }
+            ShapePath {
+                strokeColor: root.hoverColor
+                strokeWidth: 2
+                fillColor: "transparent"
+                joinStyle: ShapePath.RoundJoin
+                PathSvg { path: "M 0 -7 L 6.5 5 L -6.5 5 Z" }
+            }
         }
         // A point on an edge: a diamond.
         Rectangle {

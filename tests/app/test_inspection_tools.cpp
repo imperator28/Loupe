@@ -38,6 +38,7 @@ private slots:
     void sectionSupportsFlipPositionCapAndSliceOnly();
     void sectionCanUseASelectedFacePlane();
     void sectionOffsetsASelectedFacePlaneAndResetsWhenAxisChanges();
+    void sectionAlongAPickedFaceKeepsItsPlaneWhateverIsClickedNext();
     void sectionInteractionCanCommitOrCancelPreviewPosition();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
@@ -219,6 +220,33 @@ void InspectionToolsTest::sectionOffsetsASelectedFacePlaneAndResetsWhenAxisChang
     QCOMPARE(section.position(), 0.0);
     QCOMPARE(section.effectiveNormal(), QVector3D(1.0F, 0.0F, 0.0F));
     QCOMPARE(section.effectiveOffset(), 0.0);
+}
+
+void InspectionToolsTest::sectionAlongAPickedFaceKeepsItsPlaneWhateverIsClickedNext()
+{
+    loupe::app::tools::SectionController section;
+    QSignalSpy picking(&section, &loupe::app::tools::SectionController::pickingPlaneChanged);
+    section.beginPlanePick();
+    QVERIFY(section.pickingPlane());
+    section.usePlane({0.0F, 0.0F, 2.0F}, {0.0F, 0.0F, 6.0F}, QStringLiteral("Flat face on Bracket"));
+    QVERIFY(!section.pickingPlane());
+    QCOMPARE(picking.count(), 2);
+    QVERIFY(section.enabled());
+    QVERIFY(section.usingSelectedPlane());
+    QCOMPARE(section.planeLabel(), QStringLiteral("Flat face on Bracket"));
+    QCOMPARE(section.effectiveNormal(), QVector3D(0.0F, 0.0F, 1.0F));
+    QCOMPARE(section.effectiveOffset(), 6.0);
+
+    // Clicking another part offers its plane, but the section stays on the one picked.
+    section.setCandidatePlane({1.0F, 0.0F, 0.0F}, {3.0F, 0.0F, 0.0F});
+    QCOMPARE(section.effectiveNormal(), QVector3D(0.0F, 0.0F, 1.0F));
+    QCOMPARE(section.effectiveOffset(), 6.0);
+
+    // An axis ends it, and a pick in progress.
+    section.beginPlanePick();
+    section.setAxis(loupe::app::tools::SectionAxis::Y);
+    QVERIFY(!section.pickingPlane());
+    QVERIFY(section.planeLabel().isEmpty());
 }
 
 void InspectionToolsTest::sectionInteractionCanCommitOrCancelPreviewPosition()
