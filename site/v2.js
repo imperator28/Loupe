@@ -385,7 +385,9 @@ function apply(now = performance.now()) {
   const dt = Math.min(0.05, Math.max(0, (now - lastNow) / 1000)); lastNow = now;
 
   // --- model pose ---
-  if (!orbit.dragging) spinAngle += dt * 0.3;
+  // The hero spin. Kept within one turn (invisible while it spins) and frozen once the hand-off to the
+  // story starts, so blending it out unwinds at most half a turn instead of every turn since load.
+  if (!orbit.dragging && S.spin > 0.999) { spinAngle += dt * 0.3; spinAngle = Math.atan2(Math.sin(spinAngle), Math.cos(spinAngle)); }
   stepOrbit(dt);
   const idle = S.spin * spinAngle + (1 - S.spin) * Math.sin(t * 0.45) * 0.14 * (1 - S.top);
   pivot.rotation.y = S.rot + idle + orbit.yaw;
@@ -1080,6 +1082,8 @@ const navWs = $$('.nav a[data-ws]');
 // and scroll-snap-stop keeps a flick from skipping scenes. Scroll only picks WHICH scene is on;
 // the scene then plays on its own clock, eased, instead of being scrubbed by the scroll position.
 let sceneIdx = 0, sceneTween = null, jumping = false;
+// Deep link to a scene: ?scene=5 opens on the sixth snap point (also used for layout checks).
+let deepScene = +new URLSearchParams(location.search).get('scene') || 0;
 const PAGE_H = () => innerHeight; // one scene = one screen of scroll
 const sceneAtScroll = () => clamp(Math.round((scrollY - storyST.start) / PAGE_H()), 0, REST_TIMES().length - 1);
 function playScene(i) {
@@ -1256,7 +1260,14 @@ function buildTimeline() {
     onRefresh: self => {
       storyST = self;
       layoutSnaps();
+      document.documentElement.classList.add('snap'); // only now: see html.snap in v2.css
       measure(); apply();
+      if (deepScene > 0) { // ?scene=N, once there are snap points to land on
+        const d = clamp(deepScene, 0, REST_TIMES().length - 1);
+        deepScene = 0;
+        setTimeout(() => { sceneIdx = d; tl.time(REST_TIMES()[d]); window.scrollTo({ top: self.start + d * PAGE_H(), behavior: 'instant' }); }, 0);
+        return;
+      }
       // a reload part-way down, or a resize: land on the scene at this scroll position, unplayed
       const i = sceneAtScroll();
       if (i !== sceneIdx) { sceneIdx = i; sceneTween?.kill(); tl.time(REST_TIMES()[i]); }
@@ -1380,7 +1391,84 @@ function downloads() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Wayfinding: a section indicator on the right edge and a back-to-top button. Both stay out of
+// sight until scrolling asks for them: the indicator shows while the page moves (and on hover),
+// the button after a light scroll up past the first screen.
+// ---------------------------------------------------------------------------------------------
+function wayfinding() {
+  const SECTIONS = ['Home', 'Workspaces', 'Open fast', 'Present', 'Explode', 'Section', 'Measure', 'Mass', 'Export', 'Trim', 'Drawing',
+    'Benchmarks', 'Any CAD', 'Private', 'Download'];
+  const STORY_N = 11; // the first 11 live in the pinned story; the rest are ordinary sections
+  const STOP_SECTION = [0, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10]; // story snap point -> section
+  const LOWER = ['#measured', '#story', '#private', '#download'].map(s => $(s));
+  const pad = n => String(n).padStart(2, '0');
+
+  const nav = document.createElement('nav');
+  nav.className = 'secnav';
+  nav.setAttribute('aria-label', 'Sections');
+  nav.innerHTML = `<p class="secnav-label" aria-hidden="true"><span><b></b> / ${pad(SECTIONS.length)}</span><em></em></p>`
+    + `<ol>${SECTIONS.map((n, i) => `<li><button type="button" aria-label="${n}" data-i="${i}"><i></i></button></li>`).join('')}</ol>`;
+  const top = document.createElement('button');
+  top.type = 'button';
+  top.className = 'totop';
+  top.setAttribute('aria-label', 'Back to top');
+  top.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>';
+  document.body.append(nav, top);
+  const ticks = $$('button', nav), label = $('.secnav-label b', nav), name = $('.secnav-label em', nav);
+
+  const current = () => {
+    if (storyST && scrollY < storyST.end + innerHeight * 0.5) return STOP_SECTION[sceneAtScroll()] ?? STORY_N - 1;
+    let s = storyST ? STORY_N - 1 : 0; // without the story (reduced motion), count from Home
+    LOWER.forEach((el, k) => { if (el && el.getBoundingClientRect().top <= innerHeight * 0.4) s = STORY_N + k; });
+    return s;
+  };
+  let shown = -1;
+  const mark = () => {
+    const s = current();
+    if (s === shown) return;
+    shown = s;
+    ticks.forEach((t, i) => t.toggleAttribute('aria-current', i === s));
+    label.textContent = pad(s + 1);
+    name.textContent = SECTIONS[s];
+  };
+
+  const goSection = i => {
+    if (i < STORY_N) {
+      if (!storyST) return;
+      const stop = STOP_SECTION.indexOf(i);
+      jumpToScene(stop);
+      window.scrollTo({ top: storyST.start + stop * PAGE_H(), behavior: 'instant' });
+    } else {
+      LOWER[i - STORY_N]?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
+    }
+  };
+  ticks.forEach(t => t.addEventListener('click', () => goSection(+t.dataset.i)));
+  top.addEventListener('click', () => { goSection(0); hideTop(); top.blur(); });
+
+  let lastY = scrollY, upBy = 0, navT = 0, topT = 0;
+  const hideTop = () => { top.classList.remove('show'); upBy = 0; };
+  addEventListener('scroll', () => {
+    const y = scrollY, dy = y - lastY;
+    lastY = y;
+    mark();
+    const away = y > innerHeight * 0.6;
+    nav.classList.toggle('show', away);
+    clearTimeout(navT);
+    navT = setTimeout(() => nav.classList.remove('show'), 1600);
+    if (dy < 0) upBy -= dy; else if (dy > 0) upBy = 0;
+    if (!away || dy > 24) { hideTop(); return; }
+    if (upBy > 24) {
+      top.classList.add('show');
+      clearTimeout(topT);
+      topT = setTimeout(hideTop, 3200);
+    }
+  }, { passive: true });
+  mark();
+}
+
+// ---------------------------------------------------------------------------------------------
 downloads();
+wayfinding();
 if (motion) {
   gsap.registerPlugin(ScrollTrigger);
   measure();
@@ -1389,15 +1477,7 @@ if (motion) {
   rotator();
   addEventListener('resize', () => ScrollTrigger.refresh());
   document.fonts?.ready.then(() => ScrollTrigger.refresh());
-  // Deep link to a scene: ?scene=5 opens on the sixth snap point (also used for layout checks).
-  const deep = +new URLSearchParams(location.search).get('scene');
-  if (deep > 0) {
-    history.scrollRestoration = 'manual';
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      sceneIdx = deep; storyTL.time(REST_TIMES()[clamp(deep, 0, REST_TIMES().length - 1)]);
-      window.scrollTo({ top: storyST.start + deep * PAGE_H(), behavior: 'instant' });
-    }));
-  }
+  if (deepScene > 0) history.scrollRestoration = 'manual';
 } else {
   S.spin = 0;
   measure();
