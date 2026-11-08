@@ -1,0 +1,1407 @@
+// Loupe landing v2 (prototype).
+// One pinned "theatre": the hero laptop zooms until its screen becomes the stage, then scroll
+// drives a single state object. A timeline tweens numbers in that object; apply() turns the
+// numbers into the 3D model, the app chrome and the page-scale callouts, so scrubbing backwards
+// always lands in a consistent state.
+import * as THREE from 'three';
+
+const gsap = window.gsap;
+const ScrollTrigger = window.ScrollTrigger;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const motion = !!(gsap && ScrollTrigger) && !reduceMotion;
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (v, a, b) => clamp((v - a) / (b - a)); // 0..1 progress of v through [a, b]
+
+const theater = $('#theater');
+const rig = $('#rig');
+const app = $('#app');
+const screenEl = $('#screen');
+const viewportEl = $('#viewport');
+const overlay = $('#overlay');
+
+// ---------------------------------------------------------------------------------------------
+// The model: a small linear stage built in code, in millimetres, Y up. Stand-in for a real
+// assembly exported from Loupe; every number shown on the page is computed from this geometry.
+// ---------------------------------------------------------------------------------------------
+// The app's built-in material library: name, density (g/cm³), display colour.
+const LIBRARY = [
+  ['Aluminum 6061', 2.70, '#B8C2CC'], ['Aluminum casting', 2.68, '#9EABB7'], ['Carbon steel', 7.85, '#6F7E8B'],
+  ['Stainless steel 304', 8.00, '#C7D0D8'], ['Zinc alloy', 6.60, '#8A929A'], ['Copper', 8.96, '#C9825D'],
+  ['ABS', 1.04, '#D1A45B'], ['Polypropylene (PP)', 0.90, '#B8B8AD'], ['HDPE', 0.95, '#D9E3E4'],
+  ['Polycarbonate (PC)', 1.20, '#8596A6'], ['Polyamide (PA / nylon)', 1.14, '#D3C6A9'], ['PMMA (acrylic)', 1.18, '#BFD8E6'],
+  ['PCBA (FR-4)', 1.85, '#3A7A58'], ['Rubber (HNBR)', 1.20, '#36393E'], ['Silicone rubber', 1.10, '#D6D8DC'],
+];
+const MAT_COLOR = Object.fromEntries(LIBRARY.map(([n, , c]) => [n, c]));
+const DENSITY = Object.fromEntries(LIBRARY.map(([n, d]) => [n, d]));
+// Auto part colours, as the app computes them (PartPalette.cpp), first 12 of each family.
+const PALETTES = [
+  ['Cool shades', ['#71ADD0', '#8572BB', '#11957C', '#74E2C6', '#CEC0FD', '#2D8AB8', '#A996E2', '#4ABBA1', '#79D9FE', '#6F9D96', '#94C2BB', '#7190D6']],
+  ['Warm shades', ['#CEA175', '#BF696A', '#8A8C34', '#D5D881', '#FEBFBD', '#B37736', '#B58C8C', '#BFC19C', '#E88E8E', '#AFB15B', '#FAA684', '#B5943F']],
+  ['Muted', ['#7FB6AB', '#BD917F', '#9FB1D8', '#9AAC83', '#D8AABF', '#80B7C3', '#B69A76', '#B8ADD7', '#87B39A', '#BD8C89', '#90B4D4', '#A6A67A']],
+  ['High contrast', ['#26D3BB', '#C75C2C', '#95B6FE', '#679012', '#FE8DC5', '#198FA3', '#EFA831', '#8B69CD', '#4AD496', '#CA5555', '#74BFFD', '#898501']],
+];
+
+// Loupe's custom colour dialog: Apple's system colours and the classic Crayons palette
+// (the same values as src/app/qml/inspect/ThemedColorDialog.qml).
+const SYSTEM_COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#00C7BE', '#30B0C7', '#32ADE6', '#007AFF', '#5856D6', '#AF52DE', '#FF2D55', '#A2845E', '#8E8E93'];
+const CRAYONS = [
+  '#990000', '#7f462c', '#808000', '#4e9a06', '#339900', '#4a5d23', '#0f5c4b', '#0066cc', '#660066', '#dda0dd',
+  '#ff2600', '#ff7f00', '#fffe00', '#40ff00', '#66ffb2', '#00ffcc', '#56b4e3', '#660099', '#cc0099', '#ff6699',
+  '#ff8c69', '#ffcc66', '#ffff66', '#e6ffcc', '#66ff66', '#66ffcc', '#b5f4e0', '#c3a0de', '#8000ff', '#cc99ff',
+  '#000000', '#333333', '#666666', '#808080', '#999999', '#b3b3b3', '#cccccc', '#dddddd', '#eeeeee', '#ffffff',
+];
+
+const parts = [];      // every occurrence
+const defs = {};       // definition name -> { name, count, material, volume, occurrences }
+
+const clipLocal = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e4);
+const clipWorld = new THREE.Plane();
+const CAP = new THREE.Color('#5a62e8');
+
+const model = new THREE.Group();   // offset so the assembly is centred
+const pivot = new THREE.Group();   // rotates
+pivot.add(model);
+model.position.x = -26;
+
+function addPart(def, geom, color, pos, explode, opts = {}) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color, metalness: 0, roughness: 0.6, emissive: '#000000', // as the app: rough, no metal, near-zero specular
+    clippingPlanes: [clipWorld], transparent: true,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  const cap = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: CAP, side: THREE.BackSide, clippingPlanes: [clipWorld], transparent: true }));
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geom, 28),
+    new THREE.LineBasicMaterial({ color: '#EEF2FF', transparent: true, opacity: 1, clippingPlanes: [clipWorld] }),
+  );
+  group.add(cap, mesh, edges);
+  group.position.copy(pos);
+  model.add(group);
+  const p = {
+    def, group, mesh, cap, edges,
+    home: pos.clone(), dir: explode.clone(),
+    base: new THREE.Color(color), warm: new THREE.Color(opts.warm ?? color),
+    order: opts.order ?? parts.length,
+    halfX: (geom.computeBoundingBox(), (geom.boundingBox.max.x - geom.boundingBox.min.x) / 2),
+  };
+  parts.push(p);
+  defs[def] ??= { name: def, count: 0, material: opts.material ?? null, volume: opts.volume ?? 0, parts: [] };
+  defs[def].count++;
+  defs[def].parts.push(p);
+  return p;
+}
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const cylX = (r, len, seg = 32) => new THREE.CylinderGeometry(r, r, len, seg).rotateZ(Math.PI / 2);
+const cylY = (r, h, seg = 24) => new THREE.CylinderGeometry(r, r, h, seg);
+
+// Top plate: a rounded 70 x 70 x 5 plate with a centre bore and four M5 clearance holes.
+const PLATE = { w: 70, r: 6, t: 5, bore: 9, hole: 2.75, pitch: 25 };
+function plateShape() {
+  const { w, r } = PLATE, h = w / 2;
+  const s = new THREE.Shape();
+  s.moveTo(-h + r, -h); s.lineTo(h - r, -h); s.absarc(h - r, -h + r, r, -Math.PI / 2, 0);
+  s.lineTo(h, h - r); s.absarc(h - r, h - r, r, 0, Math.PI / 2);
+  s.lineTo(-h + r, h); s.absarc(-h + r, h - r, r, Math.PI / 2, Math.PI);
+  s.lineTo(-h, -h + r); s.absarc(-h + r, -h + r, r, Math.PI, Math.PI * 1.5);
+  const hole = (x, y, rr) => { const p = new THREE.Path(); p.absarc(x, y, rr, 0, Math.PI * 2, true); s.holes.push(p); };
+  hole(0, 0, PLATE.bore);
+  for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) hole(x * PLATE.pitch, y * PLATE.pitch, PLATE.hole);
+  return s;
+}
+const plateArea = (() => {
+  const s = plateShape();
+  const outer = Math.abs(THREE.ShapeUtils.area(s.getPoints(64)));
+  const holes = s.holes.reduce((a, h) => a + Math.abs(THREE.ShapeUtils.area(h.getPoints(64))), 0);
+  return outer - holes;
+})();
+
+function buildModel() {
+  const vol = { box: (a, b, c) => a * b * c, cyl: (r, l) => Math.PI * r * r * l };
+  addPart('Base Plate', new THREE.BoxGeometry(220, 8, 70), '#3d424d', V(0, 4, 0), V(0, -46, 0),
+    { warm: '#CEA175', material: 'Aluminum 6061', volume: vol.box(220, 8, 70), order: 0 });
+  for (const s of [-1, 1]) addPart('End Block', new THREE.BoxGeometry(20, 50, 60), '#c3c7cf', V(100 * s, 33, 0), V(62 * s, 0, 0),
+    { warm: '#BF696A', material: 'Aluminum casting', volume: vol.box(20, 50, 60), order: 1 });
+  for (const s of [-1, 1]) addPart('Guide Rod', cylX(4, 184), '#d9dde4', V(0, 44, 20 * s), V(0, 8, 48 * s),
+    { metal: 0.5, rough: 0.3, warm: '#8A8C34', material: 'Stainless steel 304', volume: vol.cyl(4, 184), order: 2 });
+  addPart('Lead Screw', cylX(3.5, 232, 24), '#b9bec8', V(16, 30, 0), V(0, -24, 0),
+    { metal: 0.5, rough: 0.35, warm: '#D5D881', material: 'Carbon steel', volume: vol.cyl(3.5, 232), order: 3 });
+  addPart('Slider', new THREE.BoxGeometry(50, 24, 56), '#4048c8', V(0, 40, 0), V(0, 18, 0),
+    { warm: '#B58C8C', material: 'Polyamide (PA / nylon)', volume: vol.box(50, 24, 56), order: 5 });
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) addPart('Bushing', cylX(6.5, 10, 24), '#c99a5f', V(30 * sx, 44, 20 * sz), V(34 * sx, 18, 0),
+    { metal: 0.45, rough: 0.35, warm: '#BFC19C', material: 'Copper', volume: vol.cyl(6.5, 10), order: 6 });
+  const plateGeom = new THREE.ExtrudeGeometry(plateShape(), { depth: PLATE.t, bevelEnabled: false, curveSegments: 24 }).rotateX(-Math.PI / 2);
+  addPart('Top Plate', plateGeom, '#c4c8d0', V(0, 52, 0), V(0, 58, 0),
+    { warm: '#E88E8E', material: 'Aluminum 6061', volume: plateArea * PLATE.t, order: 7 });
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) addPart('M5 Screw', cylY(4, 3.5, 20), '#1b1c21', V(x * 25, 58.75, z * 25), V(0, 96, 0),
+    { warm: '#AFB15B', order: 8 });
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) addPart('M6 Screw', cylY(5, 2.5, 20), '#1b1c21', V(x * 70, 9.25, z * 27), V(0, -78, 0),
+    { warm: '#FEBFBD', order: 4 });
+  addPart('Motor', new THREE.BoxGeometry(42, 42, 42), '#24262c', V(133, 37, 0), V(128, 0, 0), { warm: '#B37736', order: 9 });
+  addPart('Motor', new THREE.BoxGeometry(8, 40, 40), '#8d929c', V(158, 37, 0), V(128, 0, 0), { warm: '#B37736', order: 9 });
+  defs.Motor.count = 1;
+}
+buildModel();
+
+const plate = defs['Top Plate'].parts[0];
+const trimmed = [...defs.Motor.parts, ...defs['M6 Screw'].parts];
+
+
+// ---------------------------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------------------------
+let VW = viewportEl.clientWidth || 598, VH = viewportEl.clientHeight || 589;
+let renderer = null;
+const scene = new THREE.Scene();
+scene.add(pivot);
+scene.add(new THREE.AmbientLight('#ffffff', 1.25));
+const fill = new THREE.DirectionalLight('#ffffff', 0.35); fill.position.set(-300, 300, -300); scene.add(fill);
+
+const FRUSTUM = 250;
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -2000, 4000);
+function setFrustum() {
+  const a = VW / VH;
+  camera.left = -FRUSTUM * a / 2; camera.right = FRUSTUM * a / 2;
+  camera.top = FRUSTUM / 2; camera.bottom = -FRUSTUM / 2;
+  camera.updateProjectionMatrix();
+}
+setFrustum();
+const key = new THREE.DirectionalLight('#ffffff', 1.9); // rides on the camera, head-on, as in the app
+key.position.set(0, 0, 1); camera.add(key); key.target.position.set(0, 0, -1); camera.add(key.target); scene.add(camera);
+const ISO = new THREE.Vector3(1, 0.82, 1.3).normalize();
+const TOP = new THREE.Vector3(0.0001, 1, 0.0002).normalize();
+
+try {
+  renderer = new THREE.WebGLRenderer({ canvas: $('#gl'), antialias: true, alpha: true });
+  renderer.localClippingEnabled = true;
+  renderer.setClearColor(0x000000, 0);
+  renderer.setSize(VW, VH, false);
+} catch (e) {
+  renderer = null; // No WebGL: the app chrome still renders; the viewport stays empty.
+}
+
+// ---------------------------------------------------------------------------------------------
+// App chrome contents
+// ---------------------------------------------------------------------------------------------
+const TREE = [
+  ['Linear Stage', 0, null, 'grp'], ['Base Plate', 1, 1], ['End Block', 1, 2], ['Guide Rod', 1, 2], ['Lead Screw', 1, 1],
+  ['M6 Screw', 1, 4], ['Motor', 1, 1], ['Carriage', 1, null, 'grp'], ['Slider', 2, 1], ['Bushing', 2, 4], ['Top Plate', 2, 1], ['M5 Screw', 2, 4],
+];
+// Inspect: one row per occurrence, labelled "Name  4x" as in the app. Groups get a chevron.
+$('#tree-inspect').innerHTML = TREE.flatMap(([n, d, c, k]) => k
+  ? [`<li class="grp" data-def="${n}" style="padding-left:${4 + d * 12}px">${n}</li>`]
+  : Array.from({ length: c }, (_, o) => `<li data-def="${n}" data-occ="${o}" style="padding-left:${18 + d * 12}px">${n}&nbsp;&nbsp;${c}x</li>`)).join('');
+// Export ("Components", with checkboxes) and Drawing ("Parts") pickers: no quantities.
+const pickerRows = check => TREE.map(([n, d, c, k]) => `<li class="${k ? 'grp' : ''}" data-def="${n}" style="padding-left:${4 + d * 12 + (k ? 0 : 14)}px">${check && !k ? '<i class="cb"></i>' : ''}${n}${!check && n === 'Top Plate' ? '<em class="qchip" id="q-chip">1</em>' : ''}</li>`).join('');
+$('#tree-drawing').innerHTML = pickerRows(false);
+const EXPORT_ORDER = ['Top Plate', 'Slider', 'End Block', 'Base Plate', 'Guide Rod', 'Lead Screw', 'Bushing', 'Motor'];
+$('#tree-export').innerHTML = pickerRows(true);
+$('#bucket').innerHTML = EXPORT_ORDER.map(n => `<li data-def="${n}"><b>${n}</b><span class="fn">${n}<i>.step</i></span><small>Ready</small></li>`).join('');
+const LANE_COLORS = ['#8B93F8', '#4ABBA1', '#E8A35C', '#79D9FE', '#E88E8E', '#CEC0FD', '#D5D881', '#71ADD0'];
+$('#pop-files').innerHTML = EXPORT_ORDER.map((n, i) => `<div class="fchip" style="--lane:${LANE_COLORS[i]}"><svg><use href="#i-file"/></svg><span>${n}.step</span><small>written</small></div>`).join('');
+
+const MASS_STEPS = ['Base Plate', 'End Block', 'Guide Rod', 'Lead Screw', 'Slider', 'Bushing', 'Top Plate'];
+const massStep = () => S.mass <= 0 ? -1 : Math.min(MASS_STEPS.length, Math.floor(seg(S.mass, 0.06, 0.8) * (MASS_STEPS.length + 1)));
+const assignedK = def => { const i = MASS_STEPS.indexOf(def); return i < 0 || S.mass <= 0 ? 0 : clamp(seg(S.mass, 0.06, 0.8) * (MASS_STEPS.length + 1) - i); };
+const gramsOf = d => d.volume / 1000 * DENSITY[d.material];
+const areaOf = geom => {
+  const g = geom.index ? geom.toNonIndexed() : geom, p = g.attributes.position, A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3();
+  let sum = 0;
+  for (let i = 0; i < p.count; i += 3) { A.fromBufferAttribute(p, i); B.fromBufferAttribute(p, i + 1); C.fromBufferAttribute(p, i + 2); sum += B.sub(A).cross(C.sub(A)).length() / 2; }
+  return sum;
+};
+Object.values(defs).forEach(d => { d.area = areaOf(d.parts[0].mesh.geometry); });
+const fmtArea = v => `${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} mm²`;
+const MASS_TOTAL = MASS_STEPS.reduce((a, n) => a + gramsOf(defs[n]) * defs[n].count, 0);
+const VOL_TOTAL = MASS_STEPS.reduce((a, n) => a + defs[n].volume * defs[n].count, 0);
+const fmtMass = g => g < 1000 ? `${g.toFixed(2)} g` : `${(g / 1000).toFixed(2)} kg`;
+const fmtVol = v => `${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} mm³`;
+$('#mf-list').innerHTML = LIBRARY.map(([n, d, c]) => `<li><i style="background:${c}"></i><span>${n}</span><em>${d.toFixed(2)} g/cm³</em></li>`).join('');
+$('#pick').innerHTML = `<div class="pal"><span>System colours</span><div class="pick-sys">${SYSTEM_COLORS.map(c => `<i style="background:${c}"></i>`).join('')}</div></div>`
+  + `<div class="pal"><span>Crayons</span>${[0, 1, 2, 3].map(r => `<div class="pick-cr${r % 2 ? ' alt' : ''}">${CRAYONS.slice(r * 10, r * 10 + 10).map(c => `<i style="background:${c}"></i>`).join('')}</div>`).join('')}</div>`;
+$('#pal').innerHTML = PALETTES.map(([n, cs]) => `<div class="pal"><span>${n}</span><div>${cs.map(c => `<i style="background:${c}"></i>`).join('')}</div></div>`).join('');
+// Pop cards with two scenarios (open race, export race): the arrows flip between them, and the
+// new scenario's bars grow in once it is showing.
+$$('.mini').forEach(m => {
+  const slides = $$('.ms', m), dots = $$('.mini-dots i', m);
+  let i = 0;
+  const show = k => {
+    i = (k + slides.length) % slides.length;
+    slides.forEach((s, j) => { s.classList.toggle('on', j === i); s.classList.toggle('grow', false); });
+    void slides[i].offsetWidth; // restart the grow animation
+    slides[i].classList.add('grow');
+    dots.forEach((d, j) => d.classList.toggle('on', j === i));
+  };
+  $('.mini-prev', m).addEventListener('click', () => show(i - 1));
+  $('.mini-next', m).addEventListener('click', () => show(i + 1));
+});
+
+// Measured section: one scenario card at a time. Tabs, arrows, swipe and the arrow keys all move
+// the same scroll-snap track; the scroll position is the only state, so they can't disagree.
+// A card's bars grow the first time it is shown while the section is on screen.
+(() => {
+  const sc = $('#bc');
+  if (!sc) return;
+  const track = $('#bc-track', sc), slides = [...track.children], tabs = $$('[role=tab]', sc);
+  const prev = $('.bc-prev', sc), next = $('.bc-next', sc);
+  let cur = -1, seen = false;
+  const step = () => slides[1].offsetLeft - slides[0].offsetLeft;
+  const go = i => {
+    i = clamp(i, 0, slides.length - 1);
+    track.scrollTo({ left: i * step(), behavior: reduceMotion ? 'auto' : 'smooth' });
+  };
+  const set = i => {
+    if (i === cur) return;
+    cur = i;
+    tabs.forEach((t, k) => { t.setAttribute('aria-selected', k === i); t.tabIndex = k === i ? 0 : -1; });
+    slides.forEach((s, k) => s.setAttribute('aria-hidden', k !== i));
+    prev.disabled = i === 0;
+    next.disabled = i === slides.length - 1;
+    if (seen) slides[i].classList.add('in');
+  };
+  track.addEventListener('scroll', () => set(clamp(Math.round(track.scrollLeft / step()), 0, slides.length - 1)), { passive: true });
+  tabs.forEach((t, k) => t.addEventListener('click', () => go(k)));
+  prev.addEventListener('click', () => go(cur - 1));
+  next.addEventListener('click', () => go(cur + 1));
+  sc.addEventListener('keydown', e => {
+    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const i = clamp(cur + d, 0, slides.length - 1);
+    go(i);
+    if (tabs.includes(document.activeElement)) tabs[i].focus({ preventScroll: true });
+  });
+  set(0);
+  const io = new IntersectionObserver(es => {
+    if (!es.some(en => en.isIntersecting)) return;
+    seen = true;
+    slides[cur].classList.add('in');
+    io.disconnect();
+  }, { threshold: 0.4 });
+  io.observe(track);
+})();
+
+// 2D slice at X = 0 through the carriage, in the YZ plane, drawn from the same dimensions.
+// The cut at X = 0, from the same dimensions as the parts. The viewer's 2D slice and the figure
+// beside it are both drawn from this list: [part, rect z0 z1 y0 y1 | circle z y r].
+const SECTION = [
+  ['Base Plate', 'r', -35, 35, 0, 8], ['Slider', 'r', -28, 28, 28, 52],
+  ['Guide Rod', 'c', -20, 44, 4], ['Guide Rod', 'c', 20, 44, 4], ['Lead Screw', 'c', 0, 30, 3.5],
+  ['Top Plate', 'r', -35, -9, 52, 57], ['Top Plate', 'r', 9, 35, 52, 57],
+];
+(function drawSlice() {
+  const Y = y => 60 - y, col = d => '#' + defs[d].parts[0].warm.getHexString();
+  $('#slice-svg').innerHTML = SECTION.map(([d, k, a, b, c, e]) => k === 'r'
+    ? `<rect x="${a}" y="${Y(e)}" width="${b - a}" height="${e - c}" fill="${col(d)}" stroke="#EEF2FF"/>`
+    : `<circle cx="${a}" cy="${Y(b)}" r="${c}" fill="${col(d)}" stroke="#EEF2FF"/>`).join('');
+})();
+const sliceGroup = new THREE.Group();
+sliceGroup.rotation.y = Math.PI / 2; // shape (u, v) -> (-z, y): seen from +x, as "2D slice only" looks at it
+SECTION.forEach(([d, k, a, b, c, e], i) => {
+  const shape = new THREE.Shape();
+  if (k === 'r') { shape.moveTo(-a, c); shape.lineTo(-b, c); shape.lineTo(-b, e); shape.lineTo(-a, e); shape.closePath(); }
+  else shape.absarc(-a, b, c, 0, Math.PI * 2, false);
+  const fill = new THREE.Mesh(new THREE.ShapeGeometry(shape, 32), new THREE.MeshBasicMaterial({ color: defs[d].parts[0].warm, transparent: true, side: THREE.DoubleSide, depthTest: false }));
+  const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(shape.getPoints(48)), new THREE.LineBasicMaterial({ color: '#EEF2FF', transparent: true, depthTest: false }));
+  fill.renderOrder = 10 + i; line.renderOrder = 30 + i;
+  sliceGroup.add(fill, line);
+});
+sliceGroup.visible = false;
+model.add(sliceGroup);
+
+// Plate outline for the Drawing workspace: the 2D preview and the big pop share one path.
+const plateOutline = (() => {
+  const { w, r, bore, hole, pitch } = PLATE, h = w / 2;
+  const outer = `M${-h + r} ${-h}H${h - r}A${r} ${r} 0 0 1 ${h} ${-h + r}V${h - r}A${r} ${r} 0 0 1 ${h - r} ${h}H${-h + r}A${r} ${r} 0 0 1 ${-h} ${h - r}V${-h + r}A${r} ${r} 0 0 1 ${-h + r} ${-h}Z`;
+  const circle = (x, y, rr) => `M${x - rr} ${y}a${rr} ${rr} 0 1 0 ${rr * 2} 0a${rr} ${rr} 0 1 0 ${-rr * 2} 0Z`;
+  const holes = [circle(0, 0, bore), ...[[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([x, y]) => circle(x * pitch, y * pitch, hole))];
+  return [outer, ...holes];
+})();
+$('#pv2d').innerHTML = plateOutline.map(d => `<path d="${d}" pathLength="1"/>`).join('');
+$('#outline-svg').innerHTML = `
+  <defs><radialGradient id="hot"><stop offset="0" stop-color="#fff6e0"/><stop offset="0.25" stop-color="#ffb347" stop-opacity="0.9"/><stop offset="1" stop-color="#ff5a1f" stop-opacity="0"/></radialGradient></defs>
+  <rect class="sheet" x="-46" y="-46" width="92" height="92" rx="1.2"/>
+  <path class="pocket" d="${plateOutline.join(' ')}" fill-rule="evenodd"/>
+  <g class="contours">${plateOutline.map(d => `<path d="${d}" pathLength="1"/>`).join('')}</g>
+  <g class="kerf">${plateOutline.map(d => `<path d="${d}"/>`).join('')}</g>
+  <path class="part" id="cut-part" d="${plateOutline.join(' ')}" fill-rule="evenodd"/>
+  <g class="head" id="cut-head"><circle r="4.5" fill="url(#hot)"/><circle r="0.8" class="core"/></g>`;
+
+// ---------------------------------------------------------------------------------------------
+// State, and how it is drawn
+// ---------------------------------------------------------------------------------------------
+const S = {
+  k: 0, heroOut: 0, spin: 1, rot: 0.35,
+  open: 0, race: 0,
+  warm: 0, ghost: 0, capture: 0, layers: 0, compose: 0,
+  exWin: 0, explode: 0,
+  sec: 0, secPos: 160, slice: 0,
+  measure: 0, mass: 0,
+  ws: 0, split: 0, files: 0, trim: 0, onefile: 0, menu: 0, trimx: 0,
+  top: 0, iso: 0, outline: 0, cut: 0, lift: 0, bench: 0, benchOut: 0,
+  tools: '',
+};
+
+const tmpC = new THREE.Color(), tmpV = new THREE.Vector3(), tmpW = new THREE.Vector3();
+const ACCENT = new THREE.Color('#8B93F8');
+const AMBER = new THREE.Color('#FFD166'), AMBER_EMIT = new THREE.Color('#3A2C00');
+const EDGE = new THREE.Color('#EEF2FF'), EDGE_SEL = new THREE.Color('#FFF0A6');
+let soloDef = null, prevSec = 0, prevEx = 0, curSplitDef = null;
+const CONTEXT_GREY = new THREE.Color('#aab1c2');
+const CARRIAGE = new Set(['Slider', 'Bushing', 'Top Plate', 'M5 Screw']);
+let renderMode = null; // null | 'context' (everything ghosted) | 'focus' (carriage only)
+let t0 = performance.now(), lastNow = t0, spinAngle = 0;
+
+// Drag to orbit. The offset sits on top of the scripted pose; scrolling eases it back to zero.
+const orbit = { yaw: 0, pitch: 0, vYaw: 0, vPitch: 0, dragging: false, homing: false, touched: false, x: 0, y: 0, lt: 0 };
+const PITCH_MIN = -0.55, PITCH_MAX = 0.95; // camera elevation offset, radians
+const UPV = new THREE.Vector3(0, 1, 0), tmpR = new THREE.Vector3();
+function stepOrbit(dt) {
+  if (orbit.dragging) return;
+  if (orbit.homing) {
+    const k = 1 - Math.pow(0.0015, dt); // about 90% of the way back in a third of a second
+    orbit.yaw -= orbit.yaw * k; orbit.pitch -= orbit.pitch * k;
+    orbit.vYaw = orbit.vPitch = 0;
+    if (Math.abs(orbit.yaw) < 1e-3 && Math.abs(orbit.pitch) < 1e-3) { orbit.yaw = orbit.pitch = 0; orbit.homing = false; }
+    return;
+  }
+  const decay = Math.pow(0.03, dt); // inertia after a flick
+  orbit.yaw += orbit.vYaw * dt; orbit.vYaw *= decay;
+  orbit.pitch = Math.min(PITCH_MAX, Math.max(PITCH_MIN, orbit.pitch + orbit.vPitch * dt)); orbit.vPitch *= decay;
+}
+function homeOrbit() {
+  if (orbit.dragging || (!orbit.yaw && !orbit.pitch && !orbit.vYaw)) return;
+  orbit.yaw = Math.atan2(Math.sin(orbit.yaw), Math.cos(orbit.yaw)); // unwind whole turns first
+  orbit.homing = true;
+}
+
+function apply(now = performance.now()) {
+  const t = (now - t0) / 1000;
+  const dt = Math.min(0.05, Math.max(0, (now - lastNow) / 1000)); lastNow = now;
+
+  // --- model pose ---
+  if (!orbit.dragging) spinAngle += dt * 0.3;
+  stepOrbit(dt);
+  const idle = S.spin * spinAngle + (1 - S.spin) * Math.sin(t * 0.45) * 0.14 * (1 - S.top);
+  pivot.rotation.y = S.rot + idle + orbit.yaw;
+
+  const isoK = Math.max(S.iso, clamp((S.ws - 1.5) * 2)); // the Drawing workspace shows only the chosen part
+  const visibleCount = S.open <= 0 ? parts.length : Math.floor(parts.length * seg(S.open, 0.08, 0.92));
+  const byOrder = [...parts].sort((a, b) => a.order - b.order);
+  const shown = new Set(byOrder.slice(0, visibleCount));
+  const splitIdx = Math.floor(S.split * (EXPORT_ORDER.length + 0.999)) - 1; // part being ticked
+  const splitDef = splitIdx >= 0 && splitIdx < EXPORT_ORDER.length && S.split < 1 ? EXPORT_ORDER[splitIdx] : null;
+  const ms = massStep(), sliceK = S.slice * S.sec;
+  curSplitDef = splitDef;
+  // the app hides edges while the section plane is dragged or parts are moving
+  const moving = Math.abs(S.secPos - prevSec) > 1e-3 && S.sec > 0.01 || Math.abs(S.explode - prevEx) > 1e-4;
+  prevSec = S.secPos; prevEx = S.explode;
+
+  parts.forEach((p, i) => {
+    // explode, trim drop
+    const isTrim = trimmed.includes(p);
+    const drop = isTrim ? S.trim : 0;
+    p.group.position.copy(p.home).addScaledVector(p.dir, S.explode);
+
+    // colour: base -> warm (present) -> material (mass)
+    tmpC.copy(p.base).lerp(p.warm, S.warm);
+    const d = defs[p.def];
+    if (d.material) tmpC.lerp(new THREE.Color(MAT_COLOR[d.material]), assignedK(p.def));
+    // selection is amber in the app; in Export the component being previewed is highlighted the same way
+    const sel = renderMode ? 0 : (ms >= 0 && (ms >= MASS_STEPS.length || p === defs[MASS_STEPS[ms]].parts[0])) || p.def === splitDef ? 1 : 0;
+    if (renderMode === 'context') tmpC.lerp(CONTEXT_GREY, 0.6);
+    const capC = tmpC.clone();
+    tmpC.lerp(AMBER, sel);
+    p.mesh.material.color.copy(tmpC);
+    p.mesh.material.emissive.copy(AMBER_EMIT).multiplyScalar(sel);
+    p.edges.material.color.copy(EDGE).lerp(EDGE_SEL, sel);
+    p.cap.material.color.copy(capC).multiplyScalar(1.08); // caps: the part's own colour, flat
+
+    // opacity: ghosted housings (present), isolate plate (drawing), trimmed parts
+    let a = 1;
+    if (p.def === 'End Block' || p.def === 'Motor') a = Math.min(a, 1 - S.ghost * 0.55); // transparent = 45%
+    if (p !== plate) a = Math.min(a, 1 - isoK);
+    a = Math.min(a, 1 - drop);
+    const appear = shown.has(p) ? 1 : 0;
+    a *= appear;
+    if (renderMode === 'context') a = Math.min(a, 0.3);
+    if (renderMode === 'focus') a = CARRIAGE.has(p.def) ? appear : 0;
+    if (renderMode === 'solo') a = p.def === soloDef ? 1 : 0;
+    if (renderMode === 'kept') a = isTrim ? 0 : 1;
+    p.group.visible = a > 0.01;
+    const solid = a * (1 - sliceK); // "2D slice only" hides every solid and edge
+    p.mesh.material.opacity = solid;
+    p.mesh.material.depthWrite = solid > 0.98;
+    p.cap.material.opacity = a * (1 - sliceK); // in 2D slice the exact section below takes over
+    p.cap.visible = S.sec > 0.01;
+    p.edges.material.opacity = moving ? 0 : solid;
+  });
+
+  // section plane follows the model as it turns
+  clipLocal.constant = S.sec > 0.01 ? S.secPos : 1e4;
+  pivot.updateMatrixWorld(true);
+  clipWorld.copy(clipLocal).applyMatrix4(model.matrixWorld);
+
+  // camera: iso -> top view of the plate for the Drawing workspace
+  tmpV.copy(ISO).lerp(TOP, S.top).normalize();
+  if (sliceK > 0) tmpV.lerp(V(1, 0.0001, 0).applyAxisAngle(UPV, pivot.rotation.y), sliceK).normalize();
+  if (orbit.pitch) { // drag up or down: raise or lower the camera, like a CAD orbit
+    tmpR.crossVectors(UPV, tmpV);
+    if (tmpR.lengthSq() > 1e-6) tmpV.applyAxisAngle(tmpR.normalize(), -orbit.pitch);
+  }
+  tmpW.set(0, 32, 0);
+  if (S.sec > 0) tmpW.lerp(new THREE.Vector3(-58, 34, 0).applyMatrix4(model.matrixWorld), S.sec); // frame the kept half
+  if (S.top > 0 || isoK > 0) {
+    const plateWorld = plate.group.getWorldPosition(new THREE.Vector3()).add(V(0, 2.5, 0));
+    tmpW.lerp(plateWorld, Math.max(S.top, isoK));
+  }
+  if (sliceK > 0) tmpW.lerp(V(S.secPos, 30, 0).applyMatrix4(model.matrixWorld), sliceK);
+  sliceGroup.visible = sliceK > 0.01;
+  sliceGroup.position.x = S.secPos + 0.1;
+  sliceGroup.children.forEach(m => { m.material.opacity = sliceK; });
+  const zoomNow = lerp(1, 2, isoK) * lerp(1, 1.275, S.top) * lerp(1, 0.78, S.explode) * lerp(1, 2.4, sliceK);
+  const winK = Math.max(S.capture, S.exWin, S.sec, seg(S.measure, 0, 0.2)) * clamp(1 - S.ws * 2);
+  if (winK > 0.001) { // a floating tool window covers the right of the view: keep the model in the clear part
+    const twW = (S.exWin > 0.5 || S.measure > 0.01 ? 340 : 320) + 12;
+    tmpR.copy(tmpV).negate().cross(UPV).normalize();
+    tmpW.addScaledVector(tmpR, (twW / 2) * FRUSTUM / (VH * zoomNow) * winK);
+  }
+  camera.position.copy(tmpW).addScaledVector(tmpV, 800);
+  camera.up.set(0, 1 - S.top, -S.top).normalize();
+  camera.lookAt(tmpW);
+  camera.zoom = zoomNow; // explode: the app doesn't refit; the scene shows Fit pressed
+  camera.updateProjectionMatrix();
+
+  if (renderer && renderActive) { renderer.render(scene, camera); viewCube?.draw(tmpV); }
+
+  drawOverlay();
+  syncChrome();
+}
+
+// Measurement dimensions, projected from model points into the viewport each frame.
+const MEAS = {
+  rad: { c: V(0, 57, 0), p: V(9, 57, 0), text: 'R 9.000 · Ø 18.000 mm', pinned: 'Radius  R 9.000 · Ø 18.000 mm' },
+  dist: { a: V(-62, 44, -20), b: V(-62, 44, 20), text: '40.000 mm' },
+};
+function project(v) {
+  tmpV.copy(v).applyMatrix4(model.matrixWorld).project(camera);
+  return [(tmpV.x + 1) / 2 * VW, (1 - tmpV.y) / 2 * VH];
+}
+const AMB = '#FFD166', HALO = '#FFF4CF';
+const tagSvg = (x, y, text, op = 1) => { const w = text.length * 6.5 + 16; return `<g opacity="${op}"><rect x="${x - w / 2}" y="${y - 10}" width="${w}" height="20" rx="6" fill="${AMB}" stroke="${HALO}"/><text x="${x}" y="${y + 4.2}" text-anchor="middle">${text}</text></g>`; };
+const lineSvg = (x1, y1, x2, y2) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${HALO}" stroke-opacity="0.55" stroke-width="3.5"/><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${AMB}" stroke-width="1.5"/>`;
+const pickSvg = (x, y, n, pinned) => pinned ? `<circle cx="${x}" cy="${y}" r="4" fill="${AMB}" stroke="${HALO}"/>`
+  : `<circle cx="${x}" cy="${y}" r="10" fill="${AMB}" stroke="${HALO}" stroke-width="2"/><text x="${x}" y="${y + 4}" text-anchor="middle" class="pk">${n}</text>`;
+function drawOverlay() {
+  let out = '';
+  overlay.setAttribute('viewBox', `0 0 ${VW} ${VH}`);
+  // section handle: a ball on the plane and an arrow pointing at the removed side
+  const hk = seg(S.sec, 0.3, 0.6) * (1 - S.slice);
+  if (hk > 0.01) {
+    const [cx, cy] = project(V(S.secPos, 34, 0)), [tx, ty] = project(V(S.secPos + 30, 34, 0));
+    const L = Math.hypot(tx - cx, ty - cy) || 1, ux = (tx - cx) / L, uy = (ty - cy) / L, ex = cx + ux * 70, ey = cy + uy * 70;
+    out += `<g opacity="${hk}"><line x1="${cx}" y1="${cy}" x2="${ex}" y2="${ey}" stroke="#A78BFA" stroke-width="3"/>`
+      + `<path d="M${ex + ux * 16} ${ey + uy * 16}L${ex - uy * 7} ${ey + ux * 7}L${ex + uy * 7} ${ey - ux * 7}Z" fill="#A78BFA"/>`
+      + `<circle cx="${cx}" cy="${cy}" r="7" fill="#F5F3FF"/></g>`;
+  }
+  if (S.measure > 0.01) {
+    // radius: a leader from the circle's centre to the picked point, with a cross at the centre
+    const rk = seg(S.measure, 0.12, 0.4), pinned = S.measure >= 0.5;
+    if (rk > 0) {
+      const [cx, cy] = project(MEAS.rad.c), [px, py] = project(MEAS.rad.p);
+      out += lineSvg(cx, cy, lerp(cx, px, rk), lerp(cy, py, rk)) + `<path d="M${cx - 5} ${cy}h10M${cx} ${cy - 5}v10" stroke="${AMB}" stroke-width="1.5"/>` + pickSvg(px, py, 1, pinned);
+      if (rk > 0.95) out += tagSvg((cx + px) / 2, (cy + py) / 2, pinned ? MEAS.rad.pinned : MEAS.rad.text, seg(rk, 0.95, 1));
+    }
+    // distance: a line with square end ticks and the value centred on it
+    const dk = seg(S.measure, 0.55, 0.85);
+    if (dk > 0) {
+      const [ax, ay] = project(MEAS.dist.a), [bx, by] = project(MEAS.dist.b);
+      const L = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / L * 6, ny = (bx - ax) / L * 6;
+      const ex = lerp(ax, bx, dk), ey = lerp(ay, by, dk);
+      out += lineSvg(ax, ay, ex, ey) + `<path d="M${ax - nx} ${ay - ny}L${ax + nx} ${ay + ny}" stroke="${AMB}" stroke-width="1.5"/>` + pickSvg(ax, ay, 1, false);
+      if (dk > 0.98) out += `<path d="M${bx - nx} ${by - ny}L${bx + nx} ${by + ny}" stroke="${AMB}" stroke-width="1.5"/>` + pickSvg(bx, by, 2, false) + tagSvg((ax + bx) / 2, (ay + by) / 2, MEAS.dist.text);
+    }
+  }
+  overlay.innerHTML = out;
+}
+
+// Chrome: workspace tabs, toolbar, tool windows, panels and page-scale callouts.
+const toolEls = Object.fromEntries($$('#toolbar [data-tool]').map(e => [e.dataset.tool, e]));
+const tabEls = $$('#ws-seg [data-tab]');
+const railCards = $$('#rail .card');
+const wsRows = $$('.ws-list li');
+const treeExport = $$('#tree-export li');
+const treeInspect = $$('#tree-inspect li');
+const bucketRows = $$('#bucket li');
+const fileChips = $$('#pop-files .fchip');
+const pvPaths = $$('#pv2d path');
+const vis = (el, v) => { el.style.opacity = v; el.style.visibility = v > 0.001 ? 'visible' : 'hidden'; };
+let last = {};
+
+function syncChrome() {
+  // workspace strip
+  const ws = S.ws;
+  $('#slide-l').style.transform = $('#slide-r').style.transform = `translateX(${-ws * 33.3333}%)`;
+  const wsIdx = Math.round(ws);
+  if (last.ws !== wsIdx) {
+    tabEls.forEach((e, i) => e.classList.toggle('on', i === wsIdx));
+    railCards.forEach((e, i) => e.classList.toggle('on', i === wsIdx));
+    navWs.forEach((e, i) => e.classList.toggle('on', i === wsIdx));
+    wsRows.forEach((e, i) => e.classList.toggle('on', i === wsIdx));
+    app.dataset.ws = ['inspect', 'export', 'drawing'][wsIdx];
+    $('#vp-label').textContent = ['', 'Master assembly', 'Click a flat face, or a cube face'][wsIdx];
+    last.ws = wsIdx;
+  }
+  const a = Math.floor(ws), f = ws - a;
+  const tw = tabRects[a], tb = tabRects[Math.min(a + 1, 2)];
+  if (tw) { const ind = $('#seg-ind'); ind.style.transform = `translateX(${lerp(tw.x, tb.x, f)}px)`; ind.style.width = `${lerp(tw.w, tb.w, f)}px`; }
+  if (railCards.length) $('#rail-track').style.transform = `translateX(${railShift(ws)}px)`;
+  vis($('#vp-label'), clamp(ws * 2));
+  vis($('#toolbar'), 1 - clamp(ws * 2));
+
+  // loading
+  const opening = S.open > 0 && S.open < 1;
+  // loading, as in the app: centred until the first parts are drawn, then a card at the top
+  const pct = Math.round(seg(S.open, 0, 0.95) * 100), firstParts = seg(S.open, 0.08, 0.92) > 0;
+  vis($('#vp-load'), opening ? 1 : 0);
+  $('#vp-load').classList.toggle('docked', firstParts);
+  $('#vl-fill').style.width = `${pct}%`;
+  $('#vl-meta').textContent = `${pct}%  •  0 s  •  ${pct > 80 ? 'almost done' : 'estimating remaining time'}`;
+  $('#vl-btn').textContent = firstParts ? 'Cancel refinement' : 'Cancel import';
+  if (ws > 0.5 && ws < 1.5) $('#vp-label').textContent = curSplitDef ? `Master assembly · ${curSplitDef} highlighted` : 'Master assembly';
+  vis($('#dd-proj'), 1 - clamp(ws * 2)); // the projection menu is Inspect-only
+  $('#pc-mode').textContent = S.warm > 0.5 ? 'Auto · warm shades' : 'File colours';
+  vis($('#pc-recolour'), S.warm > 0.5 ? 1 : 0);
+  $$('#props-doc [data-count]').forEach(e => {
+    const target = +e.dataset.count;
+    const k = S.open <= 0 ? 1 : seg(S.open, 0.1, 0.4 + target / 1400);
+    e.textContent = k <= 0 ? '—' : `${Math.round(target * k)} ms`;
+  });
+
+  // toolbar highlights
+  const on = new Set();
+  if (S.ghost > 0.3) on.add('transparent');
+  if (S.capture > 0.3) on.add('capture');
+  if (S.explode > 0.3 && S.exWin > 0.5) on.add('fit'); // explode doesn't refit in the app; Fit does
+  if (S.exWin > 0.3) on.add('explode');
+  if (S.sec > 0.3) on.add('section');
+  if (S.measure > 0.05) on.add('measure');
+  if (S.trim > 0.05 && S.trim < 1) on.add('hide');
+  for (const [k, e] of Object.entries(toolEls)) e.classList.toggle('on', on.has(k));
+
+  // tool windows
+  vis($('#tw-capture'), S.capture);
+  vis($('#tw-explode'), S.exWin);
+  vis($('#tw-section'), S.sec);
+  vis($('#tw-measure'), seg(S.measure, 0, 0.2));
+  $('#ex-fill').style.width = `${S.explode / 3 * 100}%`; // the slider runs 0-3; the first spread is 1
+  $('#sec-pos').textContent = Math.round(S.secPos);
+  $('#sw-slice').classList.toggle('on', S.slice > 0.5);
+  $('#tw-section').classList.toggle('slice-on', S.slice > 0.5);
+  const mStep = S.measure < 0.5 ? '1' : '2';
+  if ($('#tw-measure').dataset.step !== mStep) {
+    $('#tw-measure').dataset.step = mStep;
+    $$('#tw-measure .mm-grid span').forEach(e => e.classList.toggle('on', e.dataset.m === (mStep === '1' ? 'rad' : 'pts')));
+  }
+
+  // right panel: document props <-> materials and mass
+  vis($('#props-doc'), 1 - clamp(S.mass * 4));
+  vis($('#props-mass'), clamp(S.mass * 4));
+  drawMass();
+
+  // export: ticks and bucket
+  const ticked = Math.floor(S.split * (EXPORT_ORDER.length + 0.999));
+  const tickedSet = new Set(EXPORT_ORDER.slice(0, ticked));
+  treeExport.forEach(e => {
+    e.classList.toggle('on', tickedSet.has(e.dataset.def));
+    e.classList.toggle('gone', S.trim > 0.4 && (e.dataset.def === 'Motor' || e.dataset.def === 'M6 Screw'));
+  });
+  const ms = massStep();
+  treeInspect.forEach(e => e.classList.toggle('hid', S.trim > 0.5 && (e.dataset.def === 'Motor' || e.dataset.def === 'M6 Screw')));
+  treeInspect.forEach(e => e.classList.toggle('sel', ms >= 0 && (ms >= MASS_STEPS.length ? !e.classList.contains('grp') : e.dataset.def === MASS_STEPS[ms] && e.dataset.occ === '0')));
+  $$('#tree-drawing li').forEach(e => e.classList.toggle('sel', e.dataset.def === 'Top Plate' && S.ws > 1.5));
+  bucketRows.forEach((e, i) => { e.style.display = i < ticked ? 'grid' : 'none'; });
+  $('#comp-n').textContent = `${ticked} file${ticked === 1 ? '' : 's'}`;
+  treeExport.forEach(e => e.classList.toggle('sel', e.dataset.def === curSplitDef));
+  if (S.ws > 0.5 && !solosTaken) takeSolos();
+  const spDef = curSplitDef || (ticked ? EXPORT_ORDER[Math.min(ticked, EXPORT_ORDER.length) - 1] : null);
+  if (last.sp !== spDef) {
+    last.sp = spDef;
+    $('#sp-name').textContent = spDef ? `· ${spDef}` : '';
+    $('#sp-img').src = spDef && soloShots[spDef] ? soloShots[spDef] : '';
+    $('#sp').classList.toggle('has', !!(spDef && soloShots[spDef]));
+  }
+  const queued = S.outline > 0.5 ? 1 : 0;
+  $('#q-n').textContent = `${queued} queued`;
+  vis($('#q-chip'), queued); vis($('#q-badge'), queued);
+  $('#bucket-n').textContent = `${ticked} file${ticked === 1 ? '' : 's'}`;
+  $('#export-btn').textContent = ticked === 1 ? 'Export 1 file' : `Export ${ticked} files`;
+
+  // drawing preview
+  const draw = seg(S.ws, 1.5, 2); // the preview is there as soon as the workspace is
+  pvPaths.forEach(p => { p.style.opacity = draw; });
+  drawCut();
+
+  // pops
+  vis($('#pop-race'), S.race); $('#pop-race').style.setProperty('--race', seg(S.race, 0.2, 1));
+  drawLayers();
+  vis($('#pop-slice'), S.slice); $('#pop-slice').style.transform = `translateY(${(1 - S.slice) * 24}px)`;
+  drawSplit();
+  drawTrim();
+  vis($('#pop-outline'), seg(S.outline, 0, 0.1));
+
+  drawHero();
+}
+
+// Hero copy fades with the scroll. Also called from the timeline's onUpdate, so it follows the
+// scroll even when the render loop is not running (tab in the background, or a slow frame).
+function drawHero() {
+  if (!motion) return;
+  const ho = $('#hero-copy');
+  ho.style.opacity = 1 - S.heroOut; ho.style.visibility = S.heroOut > 0.99 ? 'hidden' : 'visible';
+  ho.style.transform = `translate(-50%, ${-S.heroOut * 70}px)`;
+}
+
+// Mass: the right panel walks through the parts as each gets a material, then reads the whole
+// assembly. Beside it, the built-in material library rolls past and the auto palettes fill in.
+const mfRows = $$('#mf-list li'), palSw = $$('#pal i'), pickSw = $$('#pick i');
+let mfUser = 0;
+const mfBase = () => lerp(1, 7, seg(S.mass, 0.04, 0.9));
+(function bindMaterialWheel() {
+  const win = $('.mf-win'), maxC = LIBRARY.length - 1;
+  const nudge = d => { // returns false at either end, so the page can keep scrolling
+    const before = mfUser;
+    mfUser = Math.min(maxC - mfBase(), Math.max(-mfBase(), mfUser + d));
+    return mfUser !== before;
+  };
+  win.addEventListener('wheel', e => { if (S.mass > 0.1 && nudge(e.deltaY / 60)) e.preventDefault(); }, { passive: false });
+  let dragY = null, moved = 0;
+  win.addEventListener('pointerdown', e => { dragY = e.clientY; moved = 0; win.setPointerCapture(e.pointerId); });
+  win.addEventListener('pointermove', e => { if (dragY === null) return; moved += Math.abs(e.clientY - dragY); nudge((dragY - e.clientY) / 26); dragY = e.clientY; });
+  const stop = () => { dragY = null; };
+  win.addEventListener('pointerup', stop); win.addEventListener('pointercancel', stop);
+  mfRows.forEach((li, i) => li.addEventListener('click', () => { if (moved < 4) mfUser = i - mfBase(); }));
+})();
+function drawMass() {
+  const ms = massStep();
+  const title = $('#props-title');
+  if (ms < 0) { title.textContent = 'Document properties'; }
+  else if (ms < MASS_STEPS.length) {
+    const d = defs[MASS_STEPS[ms]];
+    title.textContent = 'Component properties';
+    $('#sel-area').textContent = `Surface area  ${fmtArea(d.area)}`;
+    $('#sel-vol').textContent = `Volume  ${fmtVol(d.volume)}`;
+    $('#sel-mat').textContent = d.material;
+    $('#sel-sw').style.background = MAT_COLOR[d.material];
+    $('#sel-app').style.background = MAT_COLOR[d.material];
+    $('#mass-total').textContent = `Estimated mass  ${fmtMass(gramsOf(d))}`;
+  } else {
+    title.innerHTML = `Selection properties <small>${MASS_STEPS.reduce((a, n) => a + defs[n].count, 0)} bodies</small>`;
+    $('#sel-area').textContent = `Surface area  ${fmtArea(MASS_STEPS.reduce((a, n) => a + defs[n].area * defs[n].count, 0))}`;
+    $('#sel-vol').textContent = `Volume  ${fmtVol(VOL_TOTAL)}`;
+    $('#mass-total').textContent = `Estimated mass  ${fmtMass(MASS_TOTAL)}`;
+  }
+  vis($('#pop-mass'), seg(S.mass, 0.03, 0.18));
+  if (S.mass <= 0) { mfUser = 0; return; }
+  const c = Math.min(LIBRARY.length - 1, Math.max(0, mfBase() + mfUser)); // rests mid-list
+  mfRows.forEach((e, i) => {
+    const d = i - c, a = Math.abs(d);
+    e.style.transform = `translateY(${d * 26}px) rotateX(${-d * 12}deg) scale(${1 - Math.min(a, 4) * 0.035})`;
+    e.style.opacity = Math.max(0, 1 - a / 3.4);
+    e.classList.toggle('on', a < 0.5);
+  });
+  // the auto palettes fill in first, then the custom picker's swatches
+  palSw.forEach((e, j) => { const k = seg(S.mass, 0.16 + j * 0.008, 0.28 + j * 0.008); e.style.transform = `scale(${k})`; e.style.opacity = k; });
+  pickSw.forEach((e, j) => { const k = seg(S.mass, 0.5 + j * 0.0065, 0.62 + j * 0.0065); e.style.transform = `scale(${k})`; e.style.opacity = k; });
+}
+
+// Split: each ticked part leaves the master assembly on its own track. The tracks run parallel,
+// bend together like lines on a metro map, and end at the file each part becomes.
+const splitSvg = $('#split-lines');
+// Export benchmark (measured, whole job): the three lanes start together and each stops at its own
+// time, on one shared clock, so the bar lengths are the real times. Time and clicks show as it lands.
+const benchLanes = $$('#pop-bench .ms:first-child .lane').map(e => ({ e, bar: e.querySelector('.track i'), s: +e.dataset.s }));
+const BENCH_MAX = Math.max(...benchLanes.map(l => l.s));
+let chipStep = 32, laneRank = null;
+function drawSplit() {
+  const on = S.files > 0;
+  vis($('#pop-files'), on ? 1 : 0);
+  vis(splitSvg, on ? 1 : 0);
+  vis($('#pop-bench'), seg(S.bench, 0, 0.12) * (1 - S.benchOut));
+  if (S.bench > 0 && S.benchOut < 1) {
+    const t = seg(S.bench, 0.08, 1) * BENCH_MAX;
+    benchLanes.forEach(l => {
+      l.bar.style.setProperty('--f', (Math.min(t, l.s) / BENCH_MAX).toFixed(4));
+      l.e.style.setProperty('--done', t >= l.s ? 1 : 0);
+    });
+  }
+  if (!on) { laneRank = null; return; }
+  if (narrow()) { // phones: the app sits above the text, so the files simply fill in below
+    splitSvg.innerHTML = '';
+    const colW = $('#pop-files').offsetWidth / 2;
+    fileChips.forEach((e, i) => {
+      const k = seg(S.files, i / fileChips.length * 0.6, i / fileChips.length * 0.6 + 0.4);
+      e.style.transform = `translate(${(i % 2) * colW}px, ${Math.floor(i / 2) * chipStep + (1 - k) * 10}px)`;
+      e.style.opacity = k; e.classList.toggle('done', k >= 1);
+    });
+    return;
+  }
+  const pr = $('#pops').getBoundingClientRect(), vr = viewportEl.getBoundingClientRect();
+  const ar = app.getBoundingClientRect(), fr = $('#pop-files').getBoundingClientRect();
+  const sx = vr.width / VW, sy = vr.height / VH;
+  const P = fileChips.map((e, i) => {
+    const [px, py] = project(defs[EXPORT_ORDER[i]].parts[0].group.position);
+    return { x: vr.left - pr.left + px * sx, y: vr.top - pr.top + py * sy };
+  });
+  if (!laneRank) { // lanes keep the parts' top-to-bottom order, so no two tracks cross
+    laneRank = [];
+    P.map((p, i) => i).sort((a, b) => P[a].y - P[b].y).forEach((i, r) => { laneRank[i] = r; });
+  }
+  const fx = fr.left - pr.left, fy = fr.top - pr.top, chipH = chipStep - 6;
+  const xEnd = fx + fileChips[0].offsetWidth, xA = ar.left - pr.left - 4, xB = xEnd + Math.max(26, (xA - xEnd) * 0.22);
+  const mid = (xA + xB) / 2;
+  let out = '';
+  fileChips.forEach((e, i) => {
+    const r = laneRank[i], p = P[i], ly = fy + r * chipStep + chipH / 2;
+    const k = seg(S.files, r / fileChips.length * 0.45, r / fileChips.length * 0.45 + 0.5);
+    const arrive = seg(k, 0.82, 1);
+    e.style.transform = `translate(${(1 - arrive) * 14}px, ${r * chipStep}px)`;
+    e.style.opacity = arrive;
+    e.classList.toggle('done', k >= 1);
+    if (k <= 0) return;
+    const d = `M${p.x.toFixed(1)} ${p.y.toFixed(1)}H${xA.toFixed(1)}C${mid.toFixed(1)} ${p.y.toFixed(1)} ${mid.toFixed(1)} ${ly.toFixed(1)} ${xB.toFixed(1)} ${ly.toFixed(1)}H${xEnd.toFixed(1)}`;
+    const c = LANE_COLORS[i];
+    out += `<path d="${d}" pathLength="1" stroke="${c}" stroke-dasharray="1" stroke-dashoffset="${(1 - k).toFixed(4)}"/>`
+         + `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" stroke="${c}"/>`;
+  });
+  splitSvg.innerHTML = out;
+}
+
+// Drawing: the contour is cut the way a shop would run it, holes first and the outer profile
+// last, then the part lifts out of the sheet.
+const contourEls = $$('#outline-svg .contours path'), kerfEls = $$('#outline-svg .kerf path');
+const CUT_ORDER = [1, 2, 3, 4, 5, 0];
+let cutLens = null;
+function drawCut() {
+  const d = seg(S.outline, 0, 1);
+  contourEls.forEach(p => { p.style.strokeDasharray = '1'; p.style.strokeDashoffset = `${1 - d}`; });
+  if (!cutLens) cutLens = kerfEls.map(p => p.getTotalLength());
+  const total = CUT_ORDER.reduce((a, i) => a + cutLens[i], 0);
+  let dist = S.cut * total, head = null;
+  for (const i of CUT_ORDER) {
+    const L = cutLens[i], k = clamp(dist / L);
+    dist -= L;
+    kerfEls[i].style.strokeDasharray = `${L}`;
+    kerfEls[i].style.strokeDashoffset = `${L * (1 - k)}`;
+    if (k > 0 && k < 1 && !head) head = kerfEls[i].getPointAtLength(k * L);
+  }
+  const hd = $('#cut-head');
+  if (head) { hd.setAttribute('transform', `translate(${head.x} ${head.y})`); hd.style.opacity = 1; } else hd.style.opacity = 0;
+  $('#outline-svg .kerf').style.opacity = 1 - S.lift * 0.75;
+  $('#outline-svg .pocket').style.opacity = S.lift;
+  const part = $('#cut-part');
+  part.style.opacity = S.lift;
+  part.setAttribute('transform', `translate(${-2.5 * S.lift} ${-3.5 * S.lift})`);
+}
+
+// Export: the Standalone preview shows one component on its own, framed to fit. Rendered once each.
+const soloShots = {};
+let solosTaken = false;
+function takeSolos() {
+  if (!renderer) return;
+  solosTaken = true;
+  const now = performance.now(), cam = camera.clone(), box = new THREE.Box3(), c = new THREE.Vector3(), sz = new THREE.Vector3();
+  renderMode = 'solo';
+  for (const n of EXPORT_ORDER) {
+    soloDef = n;
+    apply(now);
+    box.makeEmpty(); defs[n].parts.forEach(p => box.expandByObject(p.mesh));
+    box.getCenter(c); box.getSize(sz);
+    cam.position.copy(c).addScaledVector(tmpV, 800); cam.up.copy(camera.up); cam.lookAt(c);
+    cam.zoom = FRUSTUM / (Math.max(sz.x, sz.y, sz.z) * 1.6); cam.updateProjectionMatrix();
+    renderer.render(scene, cam);
+    soloShots[n] = renderer.domElement.toDataURL('image/png');
+  }
+  renderMode = null; soloDef = null;
+  apply(now);
+}
+
+// View cube: its own small renderer that turns with the camera: labelled faces and an axis triad.
+const viewCube = (() => {
+  const el = $('#cube');
+  if (!el) return null;
+  let r;
+  try { r = new THREE.WebGLRenderer({ canvas: el, antialias: true, alpha: true }); } catch (e) { return null; }
+  r.setPixelRatio(1); r.setSize(200, 200, false);
+  const sc = new THREE.Scene(), g = new THREE.Group(); sc.add(g);
+  const tex = (draw) => { const cv = document.createElement('canvas'); cv.width = cv.height = 128; draw(cv.getContext('2d')); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t; };
+  const face = label => new THREE.MeshBasicMaterial({ map: tex(x => {
+    x.fillStyle = '#232838'; x.fillRect(0, 0, 128, 128);
+    x.strokeStyle = '#6C7690'; x.lineWidth = 8; x.strokeRect(4, 4, 120, 120);
+    x.fillStyle = '#F2F4F9'; x.font = '600 27px -apple-system, "Segoe UI", system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(label, 64, 66);
+  }) });
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), ['Right', 'Left', 'Top', 'Bottom', 'Front', 'Back'].map(face)));
+  const o = new THREE.Vector3(-0.5, -0.5, -0.5);
+  [[V(1, 0, 0), '#F97066', 'X'], [V(0, 1, 0), '#47CD89', 'Y'], [V(0, 0, 1), '#8B93F8', 'Z']].forEach(([d, col, L]) => {
+    g.add(new THREE.ArrowHelper(d, o, 1.55, col, 0.2, 0.11));
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex(x => { x.fillStyle = col; x.font = '700 80px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(L, 64, 68); }), depthTest: false }));
+    sp.position.copy(o).addScaledVector(d, 1.78); sp.scale.setScalar(0.32); g.add(sp);
+  });
+  const cam = new THREE.OrthographicCamera(-1.35, 1.35, 1.35, -1.35, 0.1, 20);
+  return {
+    draw(dir) {
+      g.rotation.y = pivot.rotation.y;
+      cam.position.copy(dir).multiplyScalar(6); cam.up.copy(camera.up); cam.lookAt(0, 0, 0);
+      r.render(sc, cam);
+    },
+  };
+})();
+
+// Trim: hide parts in Inspect, then File > Export Assembly Without Hidden Parts. The app shows its
+// notice; beside it, the file it writes is laid out: the same tree, with the hidden parts left out.
+const OF_ROWS = [['Linear Stage', 0, 'grp'], ['Base Plate', 1], ['End Block  2x', 1], ['Guide Rod  2x', 1], ['Lead Screw', 1],
+  ['M6 Screw  4x', 1, 'out'], ['Motor', 1, 'out'], ['Carriage', 1, 'grp'], ['Slider', 2], ['Bushing  4x', 2], ['Top Plate', 2], ['M5 Screw  4x', 2]];
+$('#of-tree').innerHTML = OF_ROWS.map(([n, d, k]) => `<li class="${k || ''}" style="padding-left:${d * 12}px">${n}</li>`).join('');
+const ofRows = $$('#of-tree li');
+let keptShot = null, keptTaken = false;
+function takeKept() {
+  if (!renderer || keptTaken) return;
+  keptTaken = true; // set first: the renders below run this code path again
+  const now = performance.now();
+  renderMode = 'kept'; apply(now);
+  renderer.render(scene, camera);
+  keptShot = renderer.domElement.toDataURL('image/png');
+  renderMode = null; apply(now);
+  const img = new Image(); img.alt = ''; img.src = keptShot;
+  $('#of-thumb').replaceChildren(img);
+}
+function drawTrim() {
+  vis($('#mac-menu'), S.menu);
+  $('#mac-menu').style.transform = `translateY(${(1 - S.menu) * -6}px)`;
+  const x = S.trimx, run = clamp(x / 0.8), done = x >= 0.8;
+  vis($('#xnotice'), x > 0 ? 1 : 0);
+  $('#xn-title').textContent = done ? 'Assembly exported' : 'Exporting the assembly';
+  $('#xn-detail').textContent = done ? 'Saved to /Users/you/CAD/linear-stage without hidden parts.step, with 5 hidden parts left out.'
+    : `${run < 0.55 ? 'Translating to STEP' : 'Writing the file'} · ${Math.round(run * 100)}%`;
+  $('#xn-fill').style.width = `${run * 100}%`;
+  $('#xn-bar').style.display = done ? 'none' : 'block';
+  $('#xnotice').classList.toggle('done', done);
+  vis($('#pop-onefile'), S.onefile);
+  $('#pop-onefile').style.transform = `translateY(${(1 - S.onefile) * 16}px)`;
+  if (S.onefile > 0.01 && !keptTaken) takeKept();
+  ofRows.forEach((e, i) => e.classList.toggle('on', x > (i + 0.5) / ofRows.length * 0.8));
+  $('#pop-onefile').classList.toggle('done', done);
+}
+
+// Present: two captures of the same view, taken in one go so the pose matches, then shown as an
+// exploded stack over a deck slide that flattens into the finished slide.
+let layersTaken = false;
+function takeLayers() {
+  if (!renderer) return;
+  layersTaken = true;
+  const now = performance.now(), shots = {};
+  for (const mode of ['context', 'focus']) {
+    renderMode = mode;
+    apply(now);
+    renderer.render(scene, camera);
+    shots[mode] = renderer.domElement.toDataURL('image/png');
+  }
+  renderMode = null;
+  apply(now);
+  const [px, py] = project(V(0, 52, 0)); // top of the carriage
+  const fx = px / VW * 100, fy = py / VH * 100;
+  for (const mode of ['context', 'focus']) {
+    const img = new Image();
+    img.alt = '';
+    img.src = shots[mode];
+    $(`#ly-${mode}`).replaceChildren(img);
+  }
+  const lx = Math.min(fx + 18, 68), ly = Math.max(8, fy - 22); // label up and to the right, clear of the slide's text
+  const line = $('#co-line');
+  line.setAttribute('x1', fx); line.setAttribute('y1', fy); line.setAttribute('x2', lx); line.setAttribute('y2', ly);
+  $('#co-dot').style.cssText = `left:${fx}%;top:${fy}%`;
+  $('#co-label').style.cssText = `left:${lx}%;top:${ly}%`;
+  $('#lstack').style.setProperty('--img-ar', (VW / VH).toFixed(4));
+}
+
+const lyEls = $$('#lstack .ly');
+function drawLayers() {
+  const t = S.layers, c = S.compose, x = 1 - c;
+  vis($('#pop-layers'), clamp(t * 4));
+  if (t <= 0.001) return;
+  if (!layersTaken) takeLayers();
+  const st = $('#lstack');
+  st.style.setProperty('--x', x.toFixed(3));
+  st.style.transform = `rotateX(${52 * x}deg) rotateZ(${-32 * x}deg) scale(${lerp(0.78, 1, c)})`;
+  lyEls.forEach((e, i) => {
+    const k = seg(t, i * 0.16, i * 0.16 + 0.5);
+    e.style.opacity = k;
+    e.style.transform = `translateZ(${i * 44 * x + (1 - k) * 140}px)`;
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Layout: hero laptop -> screen fills the window -> app beside the copy
+// ---------------------------------------------------------------------------------------------
+let R0, R1, R2, rigBox, tabRects = [], railStep = 0, appScale = 0.5, effScale = 0.5;
+const narrow = () => innerWidth < 900;
+
+const POP_SCENE = { 'pop-race': 'speed', 'pop-layers': 'present', 'pop-slice': 'section', 'pop-mass': 'mass', 'pop-onefile': 'trim', 'pop-outline': 'drawing' };
+const COPY_MAX = 520; // widest the scene copy and its cards get, in px (before the big-display scale)
+function measure() {
+  rig.style.transform = 'none';
+  const vw = innerWidth, vh = innerHeight, nav = 52;
+  const hero = $('#hero-copy');
+  const rigTop = hero.offsetTop + hero.offsetHeight + Math.max(24, vh * 0.035);
+  if (motion) {
+    rig.style.setProperty('--rig-top', `${rigTop}px`);
+    // the laptop (lid + base) is 0.5941 of its width tall: size it so all of it shows on load
+    rig.style.setProperty('--lw', `${Math.max(300, Math.min(1120, vw * 0.84, (vh - rigTop - 18) / 0.5941))}px`);
+  }
+  app.classList.toggle('compact', narrow());
+  VW = viewportEl.clientWidth; VH = viewportEl.clientHeight; setFrustum();
+  if (renderer) { renderer.setSize(VW, VH, false); renderer.render(scene, camera); }
+
+  const sr = screenEl.getBoundingClientRect(), rr = rig.getBoundingClientRect(), tr = theater.getBoundingClientRect();
+  rigBox = { x: rr.left - tr.left, y: rr.top - tr.top };
+  R0 = { x: sr.left - tr.left, y: sr.top - tr.top, w: sr.width };
+  appScale = sr.width / (narrow() ? 980 : 1728); // the app's own size: 1728 x 1117, a 16-inch MacBook Pro at its default scale
+  app.style.setProperty('--as', appScale);
+  if (renderer && !motion) { renderer.setPixelRatio(Math.min(3, Math.max(1, devicePixelRatio * appScale))); renderer.setSize(VW, VH, false); }
+  effScale = 0.001; // force a buffer resize on the next placeRig()
+
+  // R1: the screen fills the window
+  const SA = 1.547; // screen aspect, 1728 / 1117
+  const w1 = Math.min(vw * 0.94, (vh - nav - 28) * SA);
+  R1 = { x: (vw - w1) / 2, y: nav + (vh - nav - w1 / SA) / 2, w: w1 };
+
+  // R2: the stage position
+  let cx, cy, cw, pz = 1;
+  if (!narrow()) {
+    const railH = 64 + 18;
+    const w2 = Math.min(vw * 0.56, (vh - nav - railH - 56) * SA, 1500);
+    // Copy column beside the stage, capped at a readable width; on a big display the pair is
+    // centred as one block instead of pinned to the two edges with a gulf between them.
+    const margin = Math.max(24, vw * 0.035), gap = clamp(vw * 0.04, 32, 96);
+    // On a big display the stage grows with the window, so the copy and its cards grow too
+    // (up to 1.4x), or they read like a phone layout beside it.
+    pz = clamp(Math.min(vw / 1600, vh / 900), 1, 1.4);
+    cw = Math.min(COPY_MAX * pz, vw - 2 * margin - gap - w2);
+    cx = Math.max(margin, (vw - (cw + gap + w2)) / 2);
+    const x2 = cx + cw + gap;
+    const y2 = nav + (vh - nav - (w2 / SA + railH)) / 2;
+    R2 = { x: x2, y: y2, w: w2 };
+    cy = y2 + 8;
+  } else {
+    const w2 = vw - 24;
+    R2 = { x: 12, y: nav + 12, w: w2 };
+    cx = 20; cw = vw - 40; cy = R2.y + w2 / SA + 22;
+  }
+  const s = theater.style;
+  s.setProperty('--pz', pz.toFixed(3));
+  s.setProperty('--ax', `${R2.x}px`); s.setProperty('--ay', `${R2.y}px`);
+  s.setProperty('--aw', `${R2.w}px`); s.setProperty('--ah', `${R2.w / SA}px`);
+  s.setProperty('--cx', `${cx}px`); s.setProperty('--cy', `${cy}px`); s.setProperty('--cw', `${cw}px`);
+  const ch = Math.max(...$$('.sc').map(e => e.offsetHeight)) + (narrow() ? 14 : 32);
+  s.setProperty('--ch', `${ch}px`);
+
+  // Each scene's display sits just under that scene's own text and is sized to what is left.
+  const limit = innerHeight - (narrow() ? 12 : 22);
+  const below = scene => cy + ($(`.sc[data-scene="${scene}"]`)?.offsetHeight || 0) + (narrow() ? 12 : 26);
+  for (const [id, scene] of Object.entries(POP_SCENE)) {
+    const el = $('#' + id), top = below(scene);
+    el.style.top = `${top}px`;
+    el.style.setProperty('--avail', `${Math.max(110, limit - top)}px`);
+    if (id === 'pop-mass') el.classList.toggle('tight', limit - top < 370);
+  }
+  const ft = below('split'), benchH = $('#pop-bench').offsetHeight || 140;
+  chipStep = narrow() ? 30 : Math.max(22, Math.min(34, Math.floor((limit - ft - benchH - 12) / 8)));
+  $('#pop-files').style.top = `${ft}px`;
+  $('#pop-files').style.setProperty('--chip-h', `${chipStep - 6}px`);
+  const rowsN = narrow() ? 4 : 8;
+  $('#pop-files').style.height = `${chipStep * rowsN}px`;
+  $('#pop-bench').style.top = `${ft + chipStep * rowsN + 12}px`;
+  laneRank = null;
+
+  // tab indicator and rail geometry (logical px inside the app)
+  tabRects = tabEls.map(e => ({ x: e.offsetLeft - 2, w: e.offsetWidth }));
+  const card = railCards[0];
+  railStep = card ? card.offsetWidth + 12 : 0;
+  placeRig();
+}
+function railShift(ws) {
+  const w = R2 ? R2.w : 0;
+  return w / 2 - ws * railStep - (railStep - 12) / 2; // centre the active card
+}
+
+function rectAt(k) {
+  if (k <= 1) { const e = k; return { x: lerp(R0.x, R1.x, e), y: lerp(R0.y, R1.y, e), w: lerp(R0.w, R1.w, e) }; }
+  const e = k - 1; return { x: lerp(R1.x, R2.x, e), y: lerp(R1.y, R2.y, e), w: lerp(R1.w, R2.w, e) };
+}
+function placeRig() {
+  if (!motion || !R0) return;
+  const r = rectAt(S.k);
+  const s = r.w / R0.w;
+  const tx = r.x - rigBox.x - s * (R0.x - rigBox.x);
+  const ty = r.y - rigBox.y - s * (R0.y - rigBox.y);
+  rig.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+  rig.style.setProperty('--frame', (1 - seg(S.k, 0.45, 1.05)).toFixed(3));
+  vis($('#rail'), seg(S.k, 1.6, 2));
+  document.querySelector('.nav').classList.toggle('in-story', S.k > 1.6 && !!storyST?.isActive);
+  $('#vp-hint').style.setProperty('--k', (1 - seg(S.k, 0, 0.25)).toFixed(3));
+  // keep the WebGL buffer sharp at whatever size the screen is shown
+  const eff = appScale * s;
+  if (renderer && Math.abs(eff - effScale) / effScale > 0.08) {
+    effScale = eff;
+    renderer.setPixelRatio(Math.min(3, Math.max(1, devicePixelRatio * eff)));
+    renderer.setSize(VW, VH, false);
+    renderer.render(scene, camera); // a resize clears the canvas; redraw now, not next frame
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The scroll story
+// ---------------------------------------------------------------------------------------------
+const SCENES = ['workspaces', 'speed', 'present', 'explode', 'section', 'measure', 'mass', 'split', 'trim', 'drawing'];
+// trim, drawing and end sit 0.3 later than the original cut so the split scene can rest after its
+// export race finishes (split + 1.8) and still before its copy starts to fade (trim - 0.3).
+const T = { workspaces: 1.75, speed: 4.15, present: 5.5, explode: 7.4, section: 8.7, measure: 10, mass: 11.3, split: 12.9, trim: 15.2, drawing: 17.3, end: 19.8 };
+
+let storyST = null, storyTL = null;
+const navWs = $$('.nav a[data-ws]');
+
+// Scene stepping. The story is a stack of one-screen snap points (native CSS scroll snap, like a
+// paged site): the browser does the snapping, so wheel, trackpad, touch and keys all feel native,
+// and scroll-snap-stop keeps a flick from skipping scenes. Scroll only picks WHICH scene is on;
+// the scene then plays on its own clock, eased, instead of being scrubbed by the scroll position.
+let sceneIdx = 0, sceneTween = null, jumping = false;
+const PAGE_H = () => innerHeight; // one scene = one screen of scroll
+const sceneAtScroll = () => clamp(Math.round((scrollY - storyST.start) / PAGE_H()), 0, REST_TIMES().length - 1);
+function playScene(i) {
+  const R = REST_TIMES();
+  i = clamp(i, 0, R.length - 1);
+  if (i === sceneIdx) return;
+  sceneIdx = i;
+  sceneTween?.kill();
+  const from = storyTL.time(), to = R[i];
+  const secs = span => clamp(span * SCENE_PACE, 0.8, 3.2);
+  // Playing forward, stop on any hold point on the way so a step can be read before the next one.
+  const holds = to > from ? SCENE_HOLDS().filter(h => h.at > from + 0.01 && h.at < to - 0.01) : [];
+  const seq = gsap.timeline();
+  let t = from;
+  holds.forEach(h => {
+    seq.to(storyTL, { time: h.at, duration: secs(h.at - t), ease: 'sine.inOut' });
+    seq.to({}, { duration: h.secs });
+    t = h.at;
+  });
+  seq.to(storyTL, { time: to, duration: secs(Math.abs(to - t)), ease: 'sine.inOut' });
+  sceneTween = seq;
+}
+// Seconds of playback per unit of story time: unhurried, so each step can be followed.
+const SCENE_PACE = 1.25;
+// Moments worth a pause on the way into a scene (story time, and how long to hold, in seconds).
+const SCENE_HOLDS = () => [
+  { at: T.present + 0.88, secs: 1.4 }, // the captures fanned out as layers, before they stack onto the slide
+];
+// Land on a scene without playing the ones in between: fade out, set it, fade back in.
+function jumpToScene(i) {
+  const R = REST_TIMES();
+  i = clamp(i, 0, R.length - 1);
+  sceneIdx = i;
+  sceneTween?.kill();
+  if (jumping) { storyTL.time(R[i]); return; }
+  jumping = true;
+  theater.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-in', fill: 'forwards' }).finished.then(() => {
+    storyTL.time(R[sceneIdx]); // the latest target, if the scroll moved on during the fade
+    theater.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out', fill: 'forwards' }).finished.then(() => { jumping = false; });
+  });
+}
+function syncScene() {
+  if (!storyST) return;
+  const i = sceneAtScroll();
+  if (i === sceneIdx) return;
+  // One step is a scene change: play it. More than one (the scrollbar, Home/End, a link) jumps.
+  if (Math.abs(i - sceneIdx) > 1) jumpToScene(i); else playScene(i);
+}
+// One snap point per scene, laid over the pinned stretch of the page.
+function layoutSnaps() {
+  const box = $('#snaps'), n = REST_TIMES().length;
+  if (box.children.length !== n) box.innerHTML = '<i></i>'.repeat(n);
+  [...box.children].forEach((e, k) => { e.style.top = `${storyST.start + k * PAGE_H()}px`; e.style.height = `${PAGE_H()}px`; });
+}
+// A link into the story (rail cards, workspace tabs, nav): scroll to the first scene at or after t.
+function scrollToTime(t) {
+  if (!storyST) return;
+  const R = REST_TIMES();
+  let i = R.findIndex(r => r >= t);
+  if (i < 0) i = R.length - 1;
+  jumpToScene(i);
+  window.scrollTo({ top: storyST.start + i * PAGE_H(), behavior: 'instant' });
+}
+const WS_JUMP = { inspect: () => T.speed, export: () => T.split, drawing: () => T.drawing };
+function bindWorkspaceJumps() {
+  [...railCards, ...tabEls, ...navWs].forEach(e => {
+    const ws = e.dataset.ws || e.dataset.tab;
+    e.addEventListener('click', ev => { ev.preventDefault(); scrollToTime(WS_JUMP[ws]()); });
+  });
+}
+// Where each scene is fully shown and holding (timeline seconds). Hero, the three steps of the
+// workspace tour, then every scene once its animation has finished.
+const REST_TIMES = () => [
+  0,
+  T.workspaces + 0.25, T.workspaces + 1.0, T.workspaces + 1.55,
+  T.speed + 0.95, T.present + 1.45, T.explode + 0.87, T.section + 1.0, T.measure + 0.9,
+  T.mass + 0.9, T.split + 1.85, T.trim + 1.6, T.drawing + 2.6, T.end + 0.6, // split: once the export race (ends +1.8) has finished
+];
+function buildTimeline() {
+  theater.classList.add('motion');
+  document.documentElement.classList.add('motion');
+  const tl = storyTL = gsap.timeline({ defaults: { ease: 'none' }, paused: true });
+  const to = (vars, at, dur = 0.3, ease = 'power2.inOut') => tl.to(S, { ...vars, duration: dur, ease }, at);
+
+  // hero -> screen -> stage
+  to({ heroOut: 1 }, 0, 0.45, 'power1.in');
+  to({ k: 1 }, 0, 1.0, 'power1.inOut');
+  to({ k: 2, spin: 0 }, 1.0, 0.65, 'power2.inOut');
+
+  // copy blocks
+  const blocks = $$('.sc');
+  SCENES.forEach((name, i) => {
+    const el = blocks[i];
+    const tIn = T[name] - 0.1;
+    const next = T[SCENES[i + 1]] ?? T.end + 1;
+    tl.fromTo(el, { autoAlpha: 0, y: 28 }, { autoAlpha: 1, y: 0, duration: 0.25, ease: 'power2.out' }, tIn);
+    if (i < SCENES.length - 1) tl.to(el, { autoAlpha: 0, y: -22, duration: 0.18, ease: 'power1.in' }, next - 0.3);
+  });
+
+  // workspaces: a quick tour of the three tabs, then back to Inspect for the details
+  to({ ws: 1 }, T.workspaces + 0.55, 0.3, 'power3.inOut');
+  to({ ws: 2 }, T.workspaces + 1.15, 0.3, 'power3.inOut');
+  to({ ws: 0 }, T.speed - 0.45, 0.35, 'power3.inOut');
+
+  // speed: reopen the file
+  tl.set(S, { open: 0.001 }, T.speed);
+  to({ open: 1 }, T.speed + 0.05, 0.9, 'power1.out');
+  to({ race: 1 }, T.speed + 0.25, 0.8, 'power2.out');
+  to({ race: 0 }, T.present - 0.3, 0.2);
+  tl.set(S, { open: 0 }, T.present - 0.05);
+
+  // present
+  to({ warm: 1 }, T.present, 0.35);
+  to({ ghost: 1 }, T.present + 0.25, 0.3);
+  to({ capture: 1 }, T.present + 0.35, 0.15);
+  to({ layers: 1 }, T.present + 0.4, 0.45, 'power2.out');
+  to({ compose: 1 }, T.present + 1.0, 0.32, 'power2.inOut');
+  to({ layers: 0, compose: 0, capture: 0, ghost: 0 }, T.explode - 0.3, 0.2);
+
+  // explode
+  to({ exWin: 1 }, T.explode, 0.15);
+  to({ explode: 1, rot: 0.95 }, T.explode + 0.1, 0.75, 'power2.inOut');
+  to({ explode: 0 }, T.section - 0.4, 0.3);
+  to({ exWin: 0 }, T.section - 0.2, 0.12);
+
+  // section: sweep in from the motor end, stop at the carriage, then lay the slice flat
+  to({ sec: 1 }, T.section, 0.12);
+  to({ secPos: 0, rot: -0.45 }, T.section + 0.05, 0.6, 'power2.out');
+  to({ slice: 1 }, T.section + 0.7, 0.3, 'power3.out');
+  to({ slice: 0, sec: 0 }, T.measure - 0.25, 0.18);
+  tl.set(S, { secPos: 160 }, T.measure - 0.05);
+
+  // measure
+  to({ measure: 1 }, T.measure + 0.05, 0.7, 'none');
+  to({ measure: 0 }, T.mass - 0.2, 0.12);
+
+  // mass
+  to({ mass: 1 }, T.mass + 0.05, 0.75, 'power1.inOut');
+  to({ mass: 0 }, T.split - 0.55, 0.2);
+
+  // -> Export workspace (horizontal)
+  to({ ws: 1 }, T.split - 0.35, 0.35, 'power3.inOut');
+  to({ split: 1 }, T.split + 0.05, 0.6, 'none');
+  to({ explode: 0.6 }, T.split + 0.5, 0.35, 'power2.inOut');
+  to({ files: 1 }, T.split + 0.6, 0.65, 'none');
+  to({ bench: 1 }, T.split + 1.2, 0.6, 'none');
+  to({ files: 0, benchOut: 1, explode: 0 }, T.trim - 0.25, 0.2); // fades the race out finished, rather than running it backwards
+
+  to({ ws: 0 }, T.trim - 0.3, 0.3, 'power3.inOut');        // back to Inspect
+  to({ trim: 1 }, T.trim + 0.05, 0.35, 'power2.inOut');     // hide Motor and the M6 screws
+  to({ menu: 1 }, T.trim + 0.45, 0.12, 'power2.out');       // File > Export Assembly Without 5 Hidden Parts…
+  to({ menu: 0 }, T.trim + 0.72, 0.08);
+  to({ onefile: 1 }, T.trim + 0.75, 0.2, 'power3.out');
+  to({ trimx: 1 }, T.trim + 0.8, 0.85, 'none');
+  to({ onefile: 0, trimx: 0 }, T.drawing - 0.45, 0.15);
+
+  // -> Drawing workspace (horizontal)
+  to({ ws: 2, trim: 0 }, T.drawing - 0.35, 0.35, 'power3.inOut');
+  to({ iso: 1, rot: 0 }, T.drawing, 0.4);
+  to({ outline: 1 }, T.drawing + 0.55, 0.5, 'power1.inOut');
+  to({ cut: 1 }, T.drawing + 1.1, 0.95, 'none');
+  to({ lift: 1 }, T.drawing + 2.1, 0.3, 'power2.out');
+  tl.to({}, { duration: 0.6 }, T.end);
+
+  storyST = ScrollTrigger.create({
+    trigger: theater,
+    start: 'top top',
+    // one screen of scroll per scene: each is a snap point (see layoutSnaps), and the timeline is
+    // played between them rather than scrubbed (see playScene)
+    end: () => `+=${(REST_TIMES().length - 1) * PAGE_H()}`,
+    pin: true,
+    pinSpacer: '#pin-wrap',
+    invalidateOnRefresh: true,
+    onRefresh: self => {
+      storyST = self;
+      layoutSnaps();
+      measure(); apply();
+      // a reload part-way down, or a resize: land on the scene at this scroll position, unplayed
+      const i = sceneAtScroll();
+      if (i !== sceneIdx) { sceneIdx = i; sceneTween?.kill(); tl.time(REST_TIMES()[i]); }
+    },
+  });
+  tl.eventCallback('onUpdate', () => { placeRig(); drawHero(); homeOrbit(); });
+  addEventListener('scroll', syncScene, { passive: true });
+}
+
+// Fallback: no scrubbing. Each scene's state is set when its text comes into view.
+const STILL = {
+  workspaces: {},
+  speed: {}, present: { warm: 1, ghost: 1, capture: 1, layers: 1, compose: 1 }, explode: { exWin: 1, explode: 1, rot: 0.95 },
+  section: { sec: 1, secPos: 0, slice: 1, rot: -0.45 }, measure: { measure: 1 }, mass: { mass: 1 },
+  split: { ws: 1, split: 1 }, trim: { ws: 0, trim: 1, onefile: 1, trimx: 1 }, drawing: { ws: 2, iso: 1, outline: 1, cut: 1, lift: 1, rot: 0 },
+};
+const RESET = { ...S, k: 0, heroOut: 0, spin: 0 };
+function buildStills() {
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) Object.assign(S, RESET, STILL[e.target.dataset.scene] || {});
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  $$('.sc').forEach(el => io.observe(el));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Hero rotating line
+// ---------------------------------------------------------------------------------------------
+function rotator() {
+  const lines = $$('#rot-track .rot-line');
+  if (!motion || lines.length < 2) return;
+  gsap.set(lines, { autoAlpha: 0, yPercent: 100 });
+  gsap.set(lines[0], { autoAlpha: 1, yPercent: 0 });
+  let i = 0;
+  setInterval(() => {
+    if (S.heroOut > 0.5 || document.hidden) return;
+    const a = lines[i], b = lines[(i + 1) % lines.length];
+    gsap.to(a, { autoAlpha: 0, yPercent: -100, duration: 0.45, ease: 'power2.in' });
+    gsap.fromTo(b, { autoAlpha: 0, yPercent: 100 }, { autoAlpha: 1, yPercent: 0, duration: 0.6, ease: 'power3.out', delay: 0.2 });
+    i = (i + 1) % lines.length;
+  }, 2600);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Render loop: only while the theatre is on screen
+// ---------------------------------------------------------------------------------------------
+// Drag the model in the viewport to turn it. Vertical page scroll still works on touch screens.
+(function bindOrbit() {
+  const skip = e => e.button !== 0 || e.target.closest('.tw, .toolbar, .vp-drops');
+  const hint = $('#vp-hint');
+  viewportEl.addEventListener('pointerdown', e => {
+    if (skip(e)) return;
+    Object.assign(orbit, { dragging: true, homing: false, vYaw: 0, vPitch: 0, x: e.clientX, y: e.clientY, lt: performance.now() });
+    if (!orbit.touched) { orbit.touched = true; hint?.classList.add('gone'); }
+    viewportEl.setPointerCapture(e.pointerId);
+    viewportEl.classList.add('grabbing');
+  });
+  viewportEl.addEventListener('pointermove', e => {
+    if (!orbit.dragging) return;
+    const r = viewportEl.getBoundingClientRect(), now = performance.now();
+    const dx = (e.clientX - orbit.x) / r.width, dy = (e.clientY - orbit.y) / r.height;
+    const dts = Math.max(8, now - orbit.lt) / 1000;
+    orbit.x = e.clientX; orbit.y = e.clientY; orbit.lt = now;
+    const dYaw = dx * Math.PI * 1.5, dPitch = dy * 2.2;
+    orbit.yaw += dYaw;
+    orbit.pitch = Math.min(PITCH_MAX, Math.max(PITCH_MIN, orbit.pitch + dPitch));
+    orbit.vYaw = dYaw / dts; orbit.vPitch = dPitch / dts;
+  });
+  const end = e => {
+    if (!orbit.dragging) return;
+    orbit.dragging = false;
+    if (performance.now() - orbit.lt > 80) orbit.vYaw = orbit.vPitch = 0; // held still before letting go: no flick
+    viewportEl.classList.remove('grabbing');
+    if (viewportEl.hasPointerCapture?.(e.pointerId)) viewportEl.releasePointerCapture(e.pointerId);
+  };
+  viewportEl.addEventListener('pointerup', end);
+  viewportEl.addEventListener('pointercancel', end);
+  viewportEl.addEventListener('dblclick', e => { if (!skip(e)) homeOrbit(); });
+})();
+
+// Play a section's animation only once the whole section is on screen (or it fills the screen),
+// after a short pause, so it runs when the reader is looking at it.
+function whenFullyInView(section, run) {
+  let timer = null;
+  const io = new IntersectionObserver(([e]) => {
+    const full = e.intersectionRatio > 0.9 || (e.rootBounds && e.intersectionRect.height >= e.rootBounds.height * 0.85);
+    clearTimeout(timer);
+    if (full) timer = setTimeout(() => { run(); io.disconnect(); }, 350);
+  }, { threshold: [0, 0.25, 0.5, 0.7, 0.8, 0.9, 0.95, 1] });
+  io.observe(section);
+}
+whenFullyInView($('#flow'), () => $('#flow').classList.add('in'));
+whenFullyInView($('#private'), () => $('#lock').classList.add('in'));
+
+let renderActive = true;
+new IntersectionObserver(([e]) => { renderActive = e.isIntersecting; }).observe(theater);
+function loop(now) {
+  if (renderActive && !document.hidden) apply(now);
+  requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Downloads: point each button at its zip in the latest release.
+// ---------------------------------------------------------------------------------------------
+function downloads() {
+  const buttons = $$('[data-downloads] .dl');
+  const ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+  const mine = /win/i.test(ua) ? 'windows-x64' : 'macos-arm64';
+  buttons.forEach(b => { if (b.dataset.asset === mine) b.classList.add('primary'); });
+  fetch('https://api.github.com/repos/imperator28/Loupe/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(rel => {
+      buttons.forEach(b => {
+        const suffix = `-${b.dataset.asset}.zip`;
+        const asset = (rel.assets || []).find(a => a.name.endsWith(suffix));
+        if (asset) b.href = asset.browser_download_url;
+      });
+      if (rel.tag_name) $$('[data-version]').forEach(e => { e.textContent = `Loupe ${rel.tag_name}`; });
+      if (rel.html_url) $$('[data-notes]').forEach(e => { e.href = rel.html_url; });
+    })
+    .catch(() => {});
+}
+
+// ---------------------------------------------------------------------------------------------
+downloads();
+if (motion) {
+  gsap.registerPlugin(ScrollTrigger);
+  measure();
+  buildTimeline();
+  bindWorkspaceJumps();
+  rotator();
+  addEventListener('resize', () => ScrollTrigger.refresh());
+  document.fonts?.ready.then(() => ScrollTrigger.refresh());
+  // Deep link to a scene: ?scene=5 opens on the sixth snap point (also used for layout checks).
+  const deep = +new URLSearchParams(location.search).get('scene');
+  if (deep > 0) {
+    history.scrollRestoration = 'manual';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      sceneIdx = deep; storyTL.time(REST_TIMES()[clamp(deep, 0, REST_TIMES().length - 1)]);
+      window.scrollTo({ top: storyST.start + deep * PAGE_H(), behavior: 'instant' });
+    }));
+  }
+} else {
+  S.spin = 0;
+  measure();
+  buildStills();
+  addEventListener('resize', measure);
+}
+requestAnimationFrame(loop);
