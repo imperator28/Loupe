@@ -204,7 +204,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round
 .base {
   position: relative;
   height: 0; padding-bottom: 3.3%;
-  border-radius: 0.25% 0.25% 2.2% 2.2% / 6% 6% 100% 100%;
+  /* a thin slab: crisp deck edge, small circular radii on the front corners (about 40% of its height),
+     rather than a sweep across the whole height, which read as a bowl */
+  border-radius: calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.013) calc(var(--lw, 1120px) * 0.013);
   background: linear-gradient(180deg, #4a4b51 0%, #2a2b30 18%, #1b1c20 60%, #0f1013 100%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -1px 0 rgb(0 0 0 / 0.6);
   opacity: var(--frame);
@@ -979,17 +981,17 @@ code { font-family: var(--mono); font-size: 0.86em; padding: 1px 6px; border-rad
 .foot a { color: var(--text-2); }
 
 /* ---------- Without the scroll story (no script, or reduced motion) ---------- */
-.theater:not(.motion) {
+html:not(.preload) .theater:not(.motion) {
   height: auto; overflow: visible;
   display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
   column-gap: 5vw; row-gap: 48px;
   padding: calc(var(--nav-h) + 9vh) 5vw 12vh;
 }
-.theater:not(.motion) .hero-copy { position: static; grid-column: 1 / -1; transform: none; width: auto; }
-.theater:not(.motion) .rig { position: sticky; top: calc(var(--nav-h) + 4vh); left: auto; grid-column: 2; grid-row: 2; width: 100%; --lw: 100%; align-self: start; }
-.theater:not(.motion) .stage-copy { position: static; grid-column: 1; grid-row: 2; width: auto; }
-.theater:not(.motion) .sc { position: static; min-height: 70vh; padding-top: 10vh; }
-.theater:not(.motion) .pops, .theater:not(.motion) .rail { display: none; }
+html:not(.preload) .theater:not(.motion) .hero-copy { position: static; grid-column: 1 / -1; transform: none; width: auto; }
+html:not(.preload) .theater:not(.motion) .rig { position: sticky; top: calc(var(--nav-h) + 4vh); left: auto; grid-column: 2; grid-row: 2; width: 100%; --lw: 100%; align-self: start; }
+html:not(.preload) .theater:not(.motion) .stage-copy { position: static; grid-column: 1; grid-row: 2; width: auto; }
+html:not(.preload) .theater:not(.motion) .sc { position: static; min-height: 70vh; padding-top: 10vh; }
+html:not(.preload) .theater:not(.motion) .pops, html:not(.preload) .theater:not(.motion) .rail { display: none; }
 
 /* ---------- Narrow screens ---------- */
 @media (max-width: 899px) {
@@ -1015,9 +1017,9 @@ code { font-family: var(--mono); font-size: 0.86em; padding: 1px 6px; border-rad
   .png { width: calc(var(--aw) * 0.5); left: calc(var(--ax) + var(--aw) * 0.46); top: calc(var(--ay) + var(--ah) * 0.35); }
   .files, .race, .slice, .mass, .onefile, .outline { top: calc(var(--cy) + var(--ch, 180px)); }
   .firstrun { grid-template-columns: 1fr; }
-  .theater:not(.motion) { grid-template-columns: 1fr; }
-  .theater:not(.motion) .rig { grid-column: 1; grid-row: 2; position: sticky; top: calc(var(--nav-h) + 8px); z-index: 8; }
-  .theater:not(.motion) .stage-copy { grid-row: 3; }
+  html:not(.preload) .theater:not(.motion) { grid-template-columns: 1fr; }
+  html:not(.preload) .theater:not(.motion) .rig { grid-column: 1; grid-row: 2; position: sticky; top: calc(var(--nav-h) + 8px); z-index: 8; }
+  html:not(.preload) .theater:not(.motion) .stage-copy { grid-row: 3; }
   .nav nav a:not(.nav-cta):not([data-ws]) { display: none; }
   .nav nav { gap: 14px; font-size: 13px; }
 }
@@ -1114,7 +1116,6 @@ html.snap .foot { scroll-snap-align: end; }
 /* ---------- Wayfinding: section indicator (right edge) and back to top. Out of sight until needed. ---------- */
 .secnav {
   position: fixed; z-index: 45; right: 10px; top: 50%; transform: translateY(-50%);
-  display: flex; align-items: center; gap: 12px;
 }
 .secnav ol { list-style: none; margin: 0; padding: 10px 6px; display: grid; gap: 7px; }
 .secnav button {
@@ -1128,6 +1129,7 @@ html.snap .foot { scroll-snap-align: end; }
 .secnav button:hover i { width: 14px; background: var(--text-2); }
 .secnav button[aria-current] i { width: 20px; background: var(--accent-hi); }
 .secnav-label {
+  position: absolute; right: calc(100% + 6px); top: var(--ly, 0px); /* level with the current or hovered tick */
   margin: 0; display: grid; justify-items: end; gap: 3px; padding: 7px 10px; border-radius: 9px; text-align: right; white-space: nowrap;
   font-family: var(--mono); font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums;
   background: rgb(6 7 11 / 0.72); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
@@ -1136,11 +1138,11 @@ html.snap .foot { scroll-snap-align: end; }
 .secnav-label b { font-weight: 500; color: var(--text-1); }
 .secnav-label em { font-family: var(--body); font-style: normal; font-size: 12px; color: var(--text-2); }
 /* hidden at rest: the ticks fade right down, the label goes; hovering the edge brings it all back */
-.secnav ol, .secnav-label { opacity: 0; transition: opacity 400ms var(--ease-out), transform 400ms var(--ease-out); }
-.secnav-label { transform: translateX(6px); }
+.secnav ol, .secnav-label { opacity: 0; transition: opacity 400ms var(--ease-out), translate 400ms var(--ease-out), top 300ms var(--ease-out); }
+.secnav-label { translate: 6px 0; }
 .secnav ol { opacity: 0.0; }
 .secnav.show ol, .secnav:hover ol, .secnav:focus-within ol { opacity: 1; }
-.secnav.show .secnav-label, .secnav:hover .secnav-label, .secnav:focus-within .secnav-label { opacity: 1; transform: none; }
+.secnav.show .secnav-label, .secnav:hover .secnav-label, .secnav:focus-within .secnav-label { opacity: 1; translate: 0 0; }
 
 .totop {
   position: fixed; z-index: 45; right: 20px; bottom: 20px; width: 40px; height: 40px;
@@ -1156,3 +1158,9 @@ html.snap .foot { scroll-snap-align: end; }
 .totop:hover { background: var(--surface-3); }
 @media (max-width: 899px) { .secnav { display: none; } }
 @media (prefers-reduced-motion: reduce) { .secnav ol, .secnav-label, .totop { transition: none; } }
+
+/* ---------- Preload: until v2.js has built the story, show only the hero (see index.html) ---------- */
+html.preload .stage-copy, html.preload .rail, html.preload .pops { visibility: hidden; }
+html.preload .rig { opacity: 0; }
+html .rig { transition: opacity 500ms var(--ease-out); }
+.secnav.peek .secnav-label b { color: var(--accent-hi); } /* previewing a tick, not the current section */

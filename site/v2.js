@@ -1165,6 +1165,7 @@ const REST_TIMES = () => [
 function buildTimeline() {
   theater.classList.add('motion');
   document.documentElement.classList.add('motion');
+  document.documentElement.classList.remove('preload'); // see the inline script in index.html
   const tl = storyTL = gsap.timeline({ defaults: { ease: 'none' }, paused: true });
   const to = (vars, at, dur = 0.3, ease = 'power2.inOut') => tl.to(S, { ...vars, duration: dur, ease }, at);
 
@@ -1300,14 +1301,23 @@ function rotator() {
   if (!motion || lines.length < 2) return;
   gsap.set(lines, { autoAlpha: 0, yPercent: 100 });
   gsap.set(lines[0], { autoAlpha: 1, yPercent: 0 });
+  // On GSAP's clock (delayedCall), not setInterval: a timer keeps firing while the page's animation
+  // frames are paused (a background tab or a hidden pane), and the queued swaps then pile up into
+  // several half-faded lines on top of each other. Each swap also settles every other line first.
   let i = 0;
-  setInterval(() => {
-    if (S.heroOut > 0.5 || document.hidden) return;
-    const a = lines[i], b = lines[(i + 1) % lines.length];
-    gsap.to(a, { autoAlpha: 0, yPercent: -100, duration: 0.45, ease: 'power2.in' });
-    gsap.fromTo(b, { autoAlpha: 0, yPercent: 100 }, { autoAlpha: 1, yPercent: 0, duration: 0.6, ease: 'power3.out', delay: 0.2 });
-    i = (i + 1) % lines.length;
-  }, 2600);
+  const swap = () => {
+    if (S.heroOut <= 0.5) {
+      const a = lines[i], b = lines[(i + 1) % lines.length];
+      gsap.killTweensOf(lines);
+      lines.forEach(l => { if (l !== a && l !== b) gsap.set(l, { autoAlpha: 0, yPercent: 100 }); });
+      gsap.set(a, { autoAlpha: 1, yPercent: 0 });
+      gsap.to(a, { autoAlpha: 0, yPercent: -100, duration: 0.45, ease: 'power2.in' });
+      gsap.fromTo(b, { autoAlpha: 0, yPercent: 100 }, { autoAlpha: 1, yPercent: 0, duration: 0.6, ease: 'power3.out', delay: 0.2 });
+      i = (i + 1) % lines.length;
+    }
+    gsap.delayedCall(2.6, swap);
+  };
+  gsap.delayedCall(2.6, swap);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1422,15 +1432,27 @@ function wayfinding() {
     LOWER.forEach((el, k) => { if (el && el.getBoundingClientRect().top <= innerHeight * 0.4) s = STORY_N + k; });
     return s;
   };
-  let shown = -1;
+  let shown = -1, peeking = -1;
+  const box = $('.secnav-label', nav);
+  const say = s => {
+    label.textContent = pad(s + 1); name.textContent = SECTIONS[s];
+    const tk = ticks[s]; // keep the label level with the tick it describes
+    box.style.setProperty('--ly', `${tk.offsetTop + tk.offsetHeight / 2 - box.offsetHeight / 2}px`);
+  };
   const mark = () => {
     const s = current();
-    if (s === shown) return;
-    shown = s;
-    ticks.forEach((t, i) => t.toggleAttribute('aria-current', i === s));
-    label.textContent = pad(s + 1);
-    name.textContent = SECTIONS[s];
+    if (s !== shown) { shown = s; ticks.forEach((t, i) => t.toggleAttribute('aria-current', i === s)); }
+    if (peeking < 0) say(s); // every time: fonts and layout can settle after the first placement
   };
+  // Pointing at a tick previews where it goes; moving off shows the current section again.
+  const peek = i => { peeking = i; say(i); nav.classList.toggle('peek', i !== shown); };
+  const unpeek = () => { peeking = -1; say(shown); nav.classList.remove('peek'); };
+  ticks.forEach((t, i) => {
+    t.addEventListener('pointerenter', () => peek(i));
+    t.addEventListener('focus', () => peek(i));
+    t.addEventListener('pointerleave', unpeek);
+    t.addEventListener('blur', unpeek);
+  });
 
   const goSection = i => {
     if (i < STORY_N) {
@@ -1464,6 +1486,7 @@ function wayfinding() {
     }
   }, { passive: true });
   mark();
+  document.fonts?.ready.then(() => { if (peeking < 0) say(shown); }); // the label's size changes once the fonts load
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1479,6 +1502,7 @@ if (motion) {
   document.fonts?.ready.then(() => ScrollTrigger.refresh());
   if (deepScene > 0) history.scrollRestoration = 'manual';
 } else {
+  document.documentElement.classList.remove('preload'); // no story: show the plain layout now
   S.spin = 0;
   measure();
   buildStills();
