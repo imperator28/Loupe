@@ -23,7 +23,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
   const paths = $$('.bp-lines .bp-o path');
   if (paths.length < 5) return;
   const SQ = CSS.supports('corner-shape', 'squircle');
-  const e = SQ ? 0.5 : 1; // superellipse x^4 + y^4 = 1 is (cos t)^(1/2), (sin t)^(1/2); exponent 1 is the circle
+  let e = SQ ? 0.5 : 1; // superellipse x^4 + y^4 = 1 is (cos t)^(1/2), (sin t)^(1/2); exponent 1 is the circle
   const N = 24, f = v => +v.toFixed(2);
   const pt = (cx, cy, rx, ry, deg) => {
     const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
@@ -45,8 +45,12 @@ const lerp = (a, b, t) => a + (b - a) * t;
   const deck = [2, 2], pill = [4.68, 4.68];
   paths[0].setAttribute('d', rrect(74.5, 0, 851, 561.1, R.lid, R.lid, R.lid, R.lid));          // lid
   paths[1].setAttribute('d', rrect(86.5, 12, 827, 534.6, R.screen, R.screen, R.screen, R.screen)); // screen
-  // camera: .cam is 2.7% x 1.75% of the screen (827 x 534.6), 0.6% down, centred
+  // camera: .cam is 2.7% x 1.75% of the screen (827 x 534.6), 0.6% down, centred. A true pill with
+  // semicircular ends: a squircle with radius = half the height reads as a rounded rectangle.
+  const shape = e;
+  e = 1;
   paths[2].setAttribute('d', rrect(500 - 11.165, 12 + 3.21, 22.33, 9.36, pill, pill, pill, pill));
+  e = shape;
   paths[3].setAttribute('d', rrect(0, 561.1, 1000, 33, deck, deck, R.base, R.base));           // base
   // the thumb scoop: open at the deck, 10 across and its full depth down at each corner
   const sx = 427.5, sw = 145, sy = 561.1, sh = 11.88, rx = 10;
@@ -1528,8 +1532,40 @@ function wayfinding() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Ambient glow behind the page: one light eases after a mouse cursor, one drifts on its own (so
+// touch screens and a still cursor get movement too). Transform-only, one rAF, paused with the tab.
+// ---------------------------------------------------------------------------------------------
+function ambientGlow() {
+  const glow = document.createElement('div');
+  glow.className = 'glow';
+  glow.setAttribute('aria-hidden', 'true');
+  glow.innerHTML = '<i class="g-drift"></i><i class="g-cursor"></i>';
+  document.body.prepend(glow);
+  const cur = $('.g-cursor', glow), drift = $('.g-drift', glow);
+  const at = (el, x, y) => { el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`; };
+  if (reduceMotion) { at(drift, innerWidth * 0.5, innerHeight * 0.3); return; } // a still glow, no following
+  let tx = innerWidth / 2, ty = innerHeight / 3, x = tx, y = ty, seen = false;
+  addEventListener('pointermove', e => {
+    if (e.pointerType !== 'mouse') return;
+    tx = e.clientX; ty = e.clientY;
+    if (!seen) { seen = true; x = tx; y = ty; glow.classList.add('has-cursor'); }
+  }, { passive: true });
+  document.addEventListener('mouseout', e => { if (!e.relatedTarget) { seen = false; glow.classList.remove('has-cursor'); } });
+  const t0 = performance.now();
+  const frame = now => {
+    const t = (now - t0) / 1000;
+    x += (tx - x) * 0.07; y += (ty - y) * 0.07; // eases after the cursor rather than sticking to it
+    at(cur, x, y);
+    at(drift, innerWidth * (0.5 + 0.34 * Math.sin(t * 0.09)), innerHeight * (0.42 + 0.3 * Math.sin(t * 0.067 + 1.3)));
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+// ---------------------------------------------------------------------------------------------
 downloads();
 wayfinding();
+ambientGlow();
 if (motion) {
   gsap.registerPlugin(ScrollTrigger);
   measure();

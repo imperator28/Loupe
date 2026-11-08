@@ -1176,10 +1176,39 @@ html .rig { transition: opacity 500ms var(--ease-out); }
     corner-shape: squircle;
     border-radius: calc(1.209% + (1 - var(--frame)) * 0.27%) / calc(1.871% + (1 - var(--frame)) * 0.4%); /* 10 units */
   }
-  .cam, .base .scoop { corner-shape: squircle; }
+  .base .scoop { corner-shape: squircle; } /* not .cam: a pill keeps semicircular ends */
   .base { corner-shape: squircle; border-radius: calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.002) calc(var(--lw, 1120px) * 0.018) calc(var(--lw, 1120px) * 0.018); } /* 2 and 18 units */
 }
 .base .scoop { border-radius: 0 0 calc(var(--lw, 1120px) * 0.01) calc(var(--lw, 1120px) * 0.01) / 0 0 100% 100%; } /* 10 units across, the full depth down */
 /* Until the story is ready (html.preload), hold the load-in animations so the blueprint, which sits
    inside the still-hidden laptop, plays from its start when the laptop appears. */
 html.preload .theater, html.preload .theater * { animation-play-state: paused !important; }
+/* Phones: the open card loses its subtitle and footnote so it fits under the scene copy */
+@media (max-width: 599px) {
+  .race .race-h span, .race .mini-key { display: none; }
+  .race { padding: 12px 14px 10px; }
+  .race .race-h { margin-bottom: 6px; }
+  .race .race-h b { font-size: 13px; }
+  .race .bar { height: 22px; }
+  .race .mini-foot { margin-top: 4px; }
+}
+
+/* ---------- Ambient glow: a soft light that follows the cursor, and a second that drifts ----------
+   Both sit behind every section (z-index -1, fixed), so the page keeps its dark ground and only a
+   faint accent glow moves across it. The root keeps the ground colour; the sections that painted
+   their own solid ground are see-through so the glow shows behind them. Each glow is a pre-blurred
+   circle moved by transform only, so following the cursor costs no repaint. */
+body { background: transparent; }
+.theater { background: radial-gradient(120% 70% at 50% 0%, rgb(16 19 28 / 0.85) 0%, transparent 60%) no-repeat; }
+.measured, .private, .story { background: transparent; }
+.download { background: rgb(11 13 19 / 0.55); }
+.glow { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.glow i {
+  position: absolute; left: 0; top: 0; width: var(--s); height: var(--s);
+  margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2); border-radius: 50%;
+  background: radial-gradient(closest-side, var(--c), transparent);
+  will-change: transform;
+}
+.glow .g-drift { --s: 1200px; --c: rgb(167 139 250 / 0.07); }
+.glow .g-cursor { --s: 760px; --c: rgb(139 147 248 / 0.12); opacity: 0; transition: opacity 700ms var(--ease-out); }
+.glow.has-cursor .g-cursor { opacity: 1; }
