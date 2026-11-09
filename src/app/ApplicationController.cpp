@@ -2212,13 +2212,10 @@ bool ApplicationController::sectionAlongFace(const QString& nodeId, const QVaria
     return true;
 }
 
-bool ApplicationController::sectionAlongAxis(const QString& nodeId, const QVector3D& normal, const QVector3D& point,
-                                             const bool across)
+bool ApplicationController::sectionAlongAxis(const QString& nodeId, const QVector3D& point, const QVector3D& direction)
 {
-    if (nodeId.isEmpty() || normal.isNull() || !std::isfinite(normal.x()) || !std::isfinite(point.x())) return false;
-    const auto part = displayNameByNode_.value(nodeId, tr("Component"));
-    sectionController_.usePlane(normal.normalized(), point,
-                                across ? tr("Across an axis on %1").arg(part) : tr("Through an axis on %1").arg(part));
+    if (nodeId.isEmpty() || direction.isNull() || !std::isfinite(direction.x()) || !std::isfinite(point.x())) return false;
+    sectionController_.useAxis(point, direction, tr("Axis on %1").arg(displayNameByNode_.value(nodeId, tr("Component"))));
     return true;
 }
 

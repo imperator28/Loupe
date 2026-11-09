@@ -311,6 +311,22 @@ QSize CaptureController::resolvedSize() const
     return {qRound(viewportSize_.width() * scale_), qRound(viewportSize_.height() * scale_)};
 }
 
+QString CaptureController::scaleLimitReason(const double scale) const
+{
+    if (viewportSize_.isEmpty() || scale <= maximumScale() + 1e-9) return {};
+    const auto width = static_cast<qint64>(std::llround(viewportSize_.width() * scale));
+    const auto height = static_cast<qint64>(std::llround(viewportSize_.height() * scale));
+    const auto most = QString::number(maximumScale(), 'f', 2);
+    if (std::max(width, height) > kMaximumCaptureDimension) {
+        return tr("%1× would be %2 × %3 px, over the %4 px a side a capture can be. The most at this view's size is %5×; "
+                  "a smaller view allows more.")
+            .arg(scale).arg(width).arg(height).arg(kMaximumCaptureDimension).arg(most);
+    }
+    return tr("%1× would be %2 × %3 px, more pixels than a capture can hold. The most at this view's size is %4×; "
+              "a smaller view allows more.")
+        .arg(scale).arg(width).arg(height).arg(most);
+}
+
 double CaptureController::maximumScale() const noexcept
 {
     if (viewportSize_.isEmpty()) return kMaximumScale;

@@ -1523,13 +1523,14 @@ void QmlSmokeTest::aMovedPartIsDrawnWithItsExplodeLine()
     QVERIFY(!lines->property("visible").toBool());
 
     // A pin in a bore, both round about the same line along z: pulled out, the pin's line runs
-    // along that shared axis, as a centerline.
-    const auto roundPart = [&](const QString& id, const float radius, const float z0, const float z1) {
+    // along that shared axis, as a centerline. (Whole cylinders: a sliver of one, a fillet's,
+    // says nothing about where a part seats.)
+    const auto roundPart = [&](const QString& id, const float radius, const float z0, const float z1, const float sweep = 1.0F) {
         QVector<float> vertices;
         QVector<float> normals;
         QVector<quint32> indices;
         for (int column = 0; column <= 8; ++column) {
-            const auto angle = static_cast<float>(column) / 8.0F * static_cast<float>(std::numbers::pi / 2.0);
+            const auto angle = static_cast<float>(column) / 8.0F * sweep * static_cast<float>(2.0 * std::numbers::pi);
             for (const auto z : {z0, z1}) {
                 vertices << 20.0F + radius * std::cos(angle) << radius * std::sin(angle) << z;
                 normals << std::cos(angle) << std::sin(angle) << 0.0F;
@@ -1559,6 +1560,19 @@ void QmlSmokeTest::aMovedPartIsDrawnWithItsExplodeLine()
         return segments.size() == 1 && segments.front().toMap().value(QStringLiteral("centerline")).toBool();
     };
     QTRY_VERIFY_WITH_TIMEOUT(pinLineIsACenterline(), 3000);
+
+    // Coaxial only as two fillets are (quarter cylinders): no seat, so a plain line from the
+    // part's middle.
+    controller.explodeController().setHierarchy({{QStringLiteral("cap"), QString{}}, {QStringLiteral("edge"), QString{}}});
+    roundPart(QStringLiteral("cap"), 2.0F, 0.0F, 10.0F, 0.25F);
+    roundPart(QStringLiteral("edge"), 2.0F, 2.0F, 8.0F, 0.25F);
+    QVERIFY(QMetaObject::invokeMethod(explode, "translateBy", Q_ARG(QStringList, QStringList{QStringLiteral("cap")}),
+                                      Q_ARG(QVector3D, QVector3D(0, 0, 25))));
+    QTest::qWait(400);
+    QVariantList plain;
+    QVERIFY(QMetaObject::invokeMethod(explode, "explodeLines", Q_RETURN_ARG(QVariantList, plain)));
+    QCOMPARE(plain.size(), 1);
+    QVERIFY(!plain.front().toMap().value(QStringLiteral("segments")).toList().front().toMap().value(QStringLiteral("centerline")).toBool());
 }
 
 void QmlSmokeTest::aRoundFaceOffersItsAxisAndACornerStillWins()

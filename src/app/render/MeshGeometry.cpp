@@ -17,6 +17,7 @@
 
 #include <limits>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 
@@ -417,22 +418,75 @@ QVariant MeshGeometry::faceEntity(const quint32 topologyId, const QMatrix4x4& to
 
 QVariantList MeshGeometry::faceAxes() const
 {
-    QVariantList result;
-    QVector<std::pair<QVector3D, QVector3D>> seen;
+    // Each distinct centerline (coaxial faces counted once), with how far round it its faces
+    // go: a hole split into two half-cylinder faces still goes all the way round.
+    struct Axis {
+        QVector3D origin;
+        QVector3D direction;
+        QVector3D across; // two directions square to the axis, to measure angles round it
+        QVector3D up;
+        float radius{};
+        std::array<bool, 36> sectors{};
+    };
+    QVector<Axis> axes;
     for (const auto& range : sourceTopology_) {
         if (range.kind != protocol::TopologyKind::Face || !range.hasAxis()) continue;
         const QVector3D origin{range.axisOrigin[0], range.axisOrigin[1], range.axisOrigin[2]};
         const QVector3D direction{range.axisDirection[0], range.axisDirection[1], range.axisDirection[2]};
-        const auto same = std::any_of(seen.cbegin(), seen.cend(), [&](const auto& axis) {
-            if (std::abs(QVector3D::dotProduct(axis.second, direction)) < 0.99999998F) return false;
-            const auto offset = origin - axis.first;
-            return (offset - axis.second * QVector3D::dotProduct(offset, axis.second)).length() <= 2e-3F;
+        auto found = std::find_if(axes.begin(), axes.end(), [&](const Axis& axis) {
+            if (std::abs(QVector3D::dotProduct(axis.direction, direction)) < 0.99999998F) return false;
+            const auto offset = origin - axis.origin;
+            return (offset - axis.direction * QVector3D::dotProduct(offset, axis.direction)).length() <= 2e-3F;
         });
-        if (same) continue;
-        seen.append({origin, direction});
-        result.append(QVariantMap{{QStringLiteral("origin"), QVariant::fromValue(origin)},
-                                  {QStringLiteral("direction"), QVariant::fromValue(direction)},
-                                  {QStringLiteral("radiusMm"), static_cast<double>(range.radiusMm)}});
+        if (found == axes.end()) {
+            Axis axis;
+            axis.origin = origin;
+            axis.direction = direction;
+            const auto helper = std::abs(direction.x()) < 0.9F ? QVector3D(1, 0, 0) : QVector3D(0, 1, 0);
+            axis.across = QVector3D::crossProduct(direction, helper).normalized();
+            axis.up = QVector3D::crossProduct(direction, axis.across).normalized();
+            axis.radius = range.radiusMm;
+            axes.append(axis);
+            found = axes.end() - 1;
+        }
+        // Each triangle covers the arc round the axis between its corners (the shorter way
+        // round): a coarsely meshed hole has few corners, but its triangles span it all.
+        const auto angleOf = [&](const qsizetype index) {
+            const auto vertex = static_cast<qsizetype>(sourceIndexData_.at(index)) * 3;
+            const QVector3D point{sourceVertexData_.at(vertex), sourceVertexData_.at(vertex + 1), sourceVertexData_.at(vertex + 2)};
+            const auto offset = point - found->origin;
+            auto angle = std::atan2(QVector3D::dotProduct(offset, found->up), QVector3D::dotProduct(offset, found->across));
+            if (angle < 0.0F) angle += 2.0F * std::numbers::pi_v<float>;
+            return angle;
+        };
+        constexpr auto turn = 2.0F * std::numbers::pi_v<float>;
+        const auto end = static_cast<qsizetype>(range.firstIndex + range.indexCount);
+        for (auto index = static_cast<qsizetype>(range.firstIndex); index + 2 < end; index += 3) {
+            std::array<float, 3> angles{angleOf(index), angleOf(index + 1), angleOf(index + 2)};
+            std::sort(angles.begin(), angles.end());
+            // The arc is everything but the largest gap between neighbouring corners.
+            const std::array<float, 3> gaps{angles[1] - angles[0], angles[2] - angles[1], angles[0] + turn - angles[2]};
+            const auto largest = static_cast<int>(std::max_element(gaps.begin(), gaps.end()) - gaps.begin());
+            const auto start = angles[static_cast<std::size_t>((largest + 1) % 3)];
+            const auto span = turn - gaps[static_cast<std::size_t>(largest)];
+            if (span > std::numbers::pi_v<float>) continue; // degenerate: a cap, not a wall
+            for (float at = 0.0F; at <= span; at += turn / 72.0F) {
+                auto angle = start + at;
+                if (angle >= turn) angle -= turn;
+                const auto sector = std::min(35, static_cast<int>(angle / turn * 36.0F));
+                found->sectors[static_cast<std::size_t>(sector)] = true;
+            }
+            const auto last = std::fmod(start + span, turn);
+            found->sectors[static_cast<std::size_t>(std::min(35, static_cast<int>(last / turn * 36.0F)))] = true;
+        }
+    }
+    QVariantList result;
+    for (const auto& axis : axes) {
+        const auto covered = std::count(axis.sectors.cbegin(), axis.sectors.cend(), true);
+        result.append(QVariantMap{{QStringLiteral("origin"), QVariant::fromValue(axis.origin)},
+                                  {QStringLiteral("direction"), QVariant::fromValue(axis.direction)},
+                                  {QStringLiteral("radiusMm"), static_cast<double>(axis.radius)},
+                                  {QStringLiteral("coverageDegrees"), static_cast<double>(covered * 10)}});
     }
     return result;
 }

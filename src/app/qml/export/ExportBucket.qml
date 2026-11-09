@@ -7,6 +7,8 @@ Inspect.ElevatedPanel {
     id: root
 
     property QtObject draft
+    // A queued row was clicked: the workspace selects that part in the tree and the view.
+    signal rowSelected(string nodeId)
     readonly property color foreground: theme ? theme.foreground : "transparent"
 
     ColumnLayout {
@@ -68,11 +70,14 @@ Inspect.ElevatedPanel {
                 required property var modelData
                 required property int index
                 property bool filenameEdited: false
+                // The part clicked last, here or in the tree: the one the previews keep showing.
+                readonly property bool focused: root.draft !== null && root.draft.focusedNodeId === modelData.nodeId
+                objectName: "exportBucketRow-" + modelData.nodeId
                 width: ListView.view.width
                 height: 84
-                color: root.theme ? root.theme.surfaceSubtle : "transparent"
+                color: root.theme ? (focused ? root.theme.accentTint : root.theme.surfaceSubtle) : "transparent"
                 border.color: modelData.error.length > 0
-                              ? root.theme.error : root.theme.border
+                              ? root.theme.error : focused ? root.theme.accent : root.theme.border
                 radius: root.theme.radius1
 
                 Rectangle {
@@ -86,6 +91,16 @@ Inspect.ElevatedPanel {
                     radius: 1
                     color: root.theme ? root.theme.accent : "transparent"
                     z: 4
+                }
+
+                // Clicking a queued row (not its buttons or name field) selects that part: in the
+                // component tree, the master view, and the standalone preview, which keeps it.
+                TapHandler {
+                    onTapped: {
+                        if (!root.draft) return
+                        root.draft.focusedNodeId = bucketRow.modelData.nodeId
+                        root.rowSelected(bucketRow.modelData.nodeId)
+                    }
                 }
 
                 // Hovering a queued row previews it, the same interaction the component tree

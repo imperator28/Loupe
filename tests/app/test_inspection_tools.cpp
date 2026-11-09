@@ -40,6 +40,7 @@ private slots:
     void sectionCanUseASelectedFacePlane();
     void sectionOffsetsASelectedFacePlaneAndResetsWhenAxisChanges();
     void sectionAlongAPickedFaceKeepsItsPlaneWhateverIsClickedNext();
+    void sectionAboutAnAxisGoesAcrossItOrTurnsThroughIt();
     void sectionInteractionCanCommitOrCancelPreviewPosition();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
@@ -245,11 +246,65 @@ void InspectionToolsTest::sectionAlongAPickedFaceKeepsItsPlaneWhateverIsClickedN
     QCOMPARE(section.effectiveNormal(), QVector3D(0.0F, 0.0F, 1.0F));
     QCOMPARE(section.effectiveOffset(), 6.0);
 
+    // While another face is picked the section is off, so the faces it cut can be clicked;
+    // cancelled, it comes back as it was.
+    section.beginPlanePick();
+    QVERIFY(!section.enabled());
+    section.cancelPlanePick();
+    QVERIFY(section.enabled());
+    QCOMPARE(section.effectiveOffset(), 6.0);
+    // Picked, it is on along the new face.
+    section.beginPlanePick();
+    section.usePlane({1.0F, 0.0F, 0.0F}, {2.0F, 0.0F, 0.0F}, QStringLiteral("Flat face on Cover"));
+    QVERIFY(section.enabled());
+    QCOMPARE(section.effectiveOffset(), 2.0);
+    // Off when the pick began stays off when it is cancelled.
+    section.setEnabled(false);
+    section.beginPlanePick();
+    section.cancelPlanePick();
+    QVERIFY(!section.enabled());
+    section.setEnabled(true);
+
     // An axis ends it, and a pick in progress.
     section.beginPlanePick();
     section.setAxis(loupe::app::tools::SectionAxis::Y);
     QVERIFY(!section.pickingPlane());
     QVERIFY(section.planeLabel().isEmpty());
+    QVERIFY(section.enabled());
+}
+
+void InspectionToolsTest::sectionAboutAnAxisGoesAcrossItOrTurnsThroughIt()
+{
+    loupe::app::tools::SectionController section;
+    // A hole along X through (0, 2, 3), picked at x = 5: across it there, by default.
+    section.beginPlanePick();
+    section.useAxis({5.0F, 2.0F, 3.0F}, {2.0F, 0.0F, 0.0F}, QStringLiteral("Axis on Bracket"));
+    QVERIFY(section.enabled() && section.usingAxis() && !section.pickingPlane());
+    QCOMPARE(section.axisMode(), QStringLiteral("across"));
+    QCOMPARE(section.effectiveNormal(), QVector3D(1.0F, 0.0F, 0.0F));
+    QCOMPARE(section.effectiveOffset(), 5.0);
+    // Through it: at 0 it holds the axis and the vertical, so its normal is level (along -Y or Y).
+    section.setAxisMode(QStringLiteral("through"));
+    auto normal = section.effectiveNormal();
+    QVERIFY(std::abs(normal.z()) < 1e-6F && std::abs(std::abs(normal.y()) - 1.0F) < 1e-6F);
+    // It always holds the axis: the axis point is on it, at any angle.
+    for (const auto degrees : {0.0, 30.0, 90.0, 215.0}) {
+        section.setAxisAngle(degrees);
+        normal = section.effectiveNormal();
+        QVERIFY(std::abs(QVector3D::dotProduct(normal, QVector3D(1, 0, 0))) < 1e-6F);
+        QVERIFY(std::abs(QVector3D::dotProduct(normal, QVector3D(5.0F, 2.0F, 3.0F)) - section.effectiveOffset()) < 1e-4);
+    }
+    // Turned a quarter, the plane is level, its normal vertical.
+    section.setAxisAngle(90.0);
+    QVERIFY(std::abs(std::abs(section.effectiveNormal().z()) - 1.0F) < 1e-6F);
+    section.setAxisAngle(-90.0);
+    QCOMPARE(section.axisAngle(), 270.0);
+    // A vertical axis starts from a plane holding X.
+    const auto vertical = loupe::app::tools::SectionController::throughAxisNormal({0, 0, 1}, 0.0);
+    QVERIFY(std::abs(vertical.z()) < 1e-6F && std::abs(vertical.x()) < 1e-6F);
+    // Any other plane ends it.
+    section.setAxis(loupe::app::tools::SectionAxis::Y);
+    QVERIFY(!section.usingAxis());
 }
 
 void InspectionToolsTest::sectionInteractionCanCommitOrCancelPreviewPosition()
@@ -287,6 +342,16 @@ void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()
 
 void InspectionToolsTest::captureSettingsBoundCustomScaleAndInclusionOptions()
 {
+    {
+        // A preset out of reach says why: 5x of a 3600 x 1200 view is 18000 px wide, over 16384.
+        loupe::app::tools::CaptureController capture;
+        capture.setViewportSize(3600, 1200);
+        QVERIFY(capture.maximumScale() < 5.0);
+        QVERIFY(capture.scaleLimitReason(3.0).isEmpty());
+        const auto reason = capture.scaleLimitReason(5.0);
+        QVERIFY2(reason.contains(QStringLiteral("18000")) && reason.contains(QStringLiteral("16384")), qPrintable(reason));
+    }
+
     loupe::app::tools::CaptureController capture;
     capture.setViewportSize({400, 300});
     capture.setCustomScale(3.17);
@@ -770,6 +835,15 @@ void InspectionToolsTest::axesMeasureAsLinesAndTurnLikeStraightEdges()
     QVERIFY(!controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
     controller.setModeName(QStringLiteral("angle"));
     QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+
+    // Surface to surface: an axis to a flat face parallel to it, square across.
+    controller.setModeName(QStringLiteral("surface-distance"));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+    auto side = flatFace({7, -5, -2}, {7, 5, -2}, {7, 5, 12}, {7, -5, 12}, {});
+    side.point = {7, 0, 3};
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(side), QStringLiteral("Plate")));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Axis to face"));
+    QVERIFY2(std::abs(controller.resultValue() - 7.0) < 1e-4, qPrintable(QString::number(controller.resultValue())));
 }
 
 void InspectionToolsTest::circularEdgesKnowTheirCentreAndRadius()

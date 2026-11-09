@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.1.6-beta.6
+
+A testing build from feedback on beta.5. Published as a pre-release; everything in
+v0.1.6-beta.5 is included.
+
+### Changed
+
+- **Sections about an axis**: picking a hole or shaft sections square to its axis, where
+  it was picked; the position slider moves it along the axis. "Through the axis" in the
+  Section panel turns a plane containing the axis to any angle about it.
+- **Axis to face**: surface to surface measures from an axis to a flat face parallel to it,
+  square across (a hole's centre to a datum face).
+- **Explode lines** run through the middle of each part along the way it moved. Only a real
+  round feature (a hole, pin or boss) the part moved along lines it on an axis; fillets no
+  longer pull lines to edges. Where a part stands in front of a line, the line shows faintly
+  through it instead of disappearing.
+- **The Explode panel's line controls** have room: the style sits on its own row, and the
+  part's line buttons on two.
+- **Export**: clicking a part in the bucket selects it in the component tree and the master
+  view, and the standalone preview keeps it shown and lit.
+
+### Fixed
+
+- **Picking a face with a section on**: a click went to the part the section had cut away,
+  so a flat face could be refused as curved. Clicks now go through what is cut away, and
+  picking a face plane turns the section off while picking (back on if cancelled).
+- **Measurements after resizing the window** stayed where they were until the view was
+  turned; they follow the resize now.
+- **5x capture greyed out with no reason**: a scale out of reach now says why (the capture
+  would be wider or taller than 16,384 px at this view's size) and what the most is.
+
 ## v0.1.6-beta.5
 
 A testing build that picks the centerlines of round features, draws explode lines, adds

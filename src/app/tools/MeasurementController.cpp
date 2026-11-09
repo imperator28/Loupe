@@ -607,8 +607,11 @@ void MeasurementController::recompute()
         const auto& b = picks_.at(1);
         result_.valid = true;
         result_.quantity = Quantity::Length;
-        if (const auto line = measure::lineDistance(a, b); line.valid() && !legacy) {
-            const auto bothAxes = a.kind == MeasureEntity::Kind::Axis && b.kind == MeasureEntity::Kind::Axis;
+        // Axes as lines: in point to point, an axis against a point or another axis; in surface
+        // to surface, two axes (an axis against a face is handled below).
+        const auto bothAxes = a.kind == MeasureEntity::Kind::Axis && b.kind == MeasureEntity::Kind::Axis;
+        if (const auto line = measure::lineDistance(a, b);
+            line.valid() && !legacy && (mode_ == MeasurementMode::PointToPoint || bothAxes)) {
             const auto parallel = bothAxes && QVector3D::crossProduct(a.axis.normalized(), b.axis.normalized()).lengthSquared() < 1e-10F;
             result_.title = !bothAxes ? tr("Distance to axis") : parallel ? tr("Distance between axes") : tr("Closest approach");
             result_.valueMm = line.distance;
@@ -632,6 +635,26 @@ void MeasurementController::recompute()
             break;
         }
         const auto angle = measure::angleBetween(a, b);
+        // An axis and a flat face: square from the axis to the face when they run parallel (a
+        // hole's centre to a datum face), else the closest approach.
+        const auto* axisPick = a.kind == MeasureEntity::Kind::Axis ? &a : b.kind == MeasureEntity::Kind::Axis ? &b : nullptr;
+        const auto* facePick = a.kind == MeasureEntity::Kind::Face && a.planar ? &a : b.kind == MeasureEntity::Kind::Face && b.planar ? &b : nullptr;
+        if (axisPick && facePick) {
+            const auto normal = facePick->planeNormal.normalized();
+            const auto direction = axisPick->axis.normalized();
+            if (std::abs(QVector3D::dotProduct(normal, direction)) < 1e-3F) {
+                const auto offset = QVector3D::dotProduct(axisPick->point - facePick->planePoint, normal);
+                const auto onAxis = axisPick->point;
+                const auto onFace = onAxis - normal * offset;
+                result_.title = tr("Axis to face");
+                result_.valueMm = std::abs(static_cast<double>(offset));
+                result_.method = tr("Square from the axis to a flat face parallel to it");
+                deltas(onAxis, onFace);
+                if (axisPick == &a) distanceAnnotation(onAxis, onFace, formatLength(result_.valueMm));
+                else distanceAnnotation(onFace, onAxis, formatLength(result_.valueMm));
+                break;
+            }
+        }
         if (measure::parallelPlanes(a, b)) {
             const auto gap = measure::planeGap(a, b);
             result_.title = tr("Gap");

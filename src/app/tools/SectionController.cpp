@@ -1,5 +1,7 @@
 #include "app/tools/SectionController.h"
 
+#include <cmath>
+
 #include <QColor>
 
 #include <algorithm>
@@ -13,6 +15,8 @@ SectionController::SectionController(QObject* parent)
 
 void SectionController::setEnabled(const bool enabled)
 {
+    // Turned on or off by hand while picking a face: that is what stays.
+    resumeAfterPick_ = false;
     if (enabled_ == enabled) return;
     enabled_ = enabled;
     if (!enabled_) cancelPlanePick();
@@ -24,6 +28,7 @@ void SectionController::setAxis(const SectionAxis axis)
     if (axis_ == axis && !usingSelectedPlane_) return;
     axis_ = axis;
     usingSelectedPlane_ = false;
+    usingAxis_ = false;
     position_ = 0.0;
     cancelPlanePick();
     emit changed();
@@ -119,10 +124,70 @@ void SectionController::usePlane(const QVector3D& normal, const QVector3D& point
     planeNormal_ = normal.normalized();
     planeOffset_ = QVector3D::dotProduct(planeNormal_, point);
     usingSelectedPlane_ = true;
+    usingAxis_ = false;
     planeLabel_ = label;
     position_ = 0.0;
     enabled_ = true;
+    resumeAfterPick_ = false;
     cancelPlanePick();
+    emit changed();
+}
+
+QVector3D SectionController::throughAxisNormal(const QVector3D& direction, const double degrees)
+{
+    const auto axis = direction.normalized();
+    // At 0 degrees the plane holds the axis and the vertical (Z), so it reads upright; for an
+    // axis that is itself vertical, it holds X instead. Then it turns about the axis.
+    const auto upright = std::abs(axis.z()) < 0.999F ? QVector3D(0, 0, 1) : QVector3D(1, 0, 0);
+    const auto start = QVector3D::crossProduct(axis, upright).normalized();
+    const auto side = QVector3D::crossProduct(axis, start).normalized();
+    const auto radians = degrees * 3.14159265358979323846 / 180.0;
+    return (start * static_cast<float>(std::cos(radians)) + side * static_cast<float>(std::sin(radians))).normalized();
+}
+
+void SectionController::applyAxisPlane()
+{
+    planeNormal_ = axisThrough_ ? throughAxisNormal(axisDirection_, axisAngle_) : axisDirection_;
+    planeOffset_ = QVector3D::dotProduct(planeNormal_, axisPoint_);
+}
+
+void SectionController::useAxis(const QVector3D& point, const QVector3D& direction, const QString& label)
+{
+    if (direction.isNull() || !std::isfinite(point.x()) || !std::isfinite(direction.x())) return;
+    axisPoint_ = point;
+    axisDirection_ = direction.normalized();
+    axisThrough_ = false;
+    axisAngle_ = 0.0;
+    applyAxisPlane();
+    usingSelectedPlane_ = true;
+    usingAxis_ = true;
+    planeLabel_ = label;
+    position_ = 0.0;
+    enabled_ = true;
+    resumeAfterPick_ = false;
+    cancelPlanePick();
+    emit changed();
+}
+
+void SectionController::setAxisMode(const QString& mode)
+{
+    const auto through = mode == QStringLiteral("through");
+    if (!usingAxis() || through == axisThrough_) return;
+    axisThrough_ = through;
+    // Across and through measure their offsets from different planes.
+    position_ = 0.0;
+    applyAxisPlane();
+    emit changed();
+}
+
+void SectionController::setAxisAngle(const double degrees)
+{
+    if (!std::isfinite(degrees)) return;
+    auto wrapped = std::fmod(degrees, 360.0);
+    if (wrapped < 0.0) wrapped += 360.0;
+    if (std::abs(wrapped - axisAngle_) < 1e-9) return;
+    axisAngle_ = wrapped;
+    if (usingAxis() && axisThrough_) applyAxisPlane();
     emit changed();
 }
 
@@ -130,6 +195,13 @@ void SectionController::beginPlanePick()
 {
     if (pickingPlane_) return;
     pickingPlane_ = true;
+    // The section in place would hide the very faces it cut, and a click would land on the
+    // part cut away: it is off while a face is picked, and back if the pick is cancelled.
+    if (enabled_) {
+        enabled_ = false;
+        resumeAfterPick_ = true;
+        emit changed();
+    }
     emit pickingPlaneChanged();
 }
 
@@ -137,6 +209,11 @@ void SectionController::cancelPlanePick()
 {
     if (!pickingPlane_) return;
     pickingPlane_ = false;
+    if (resumeAfterPick_) {
+        resumeAfterPick_ = false;
+        enabled_ = true;
+        emit changed();
+    }
     emit pickingPlaneChanged();
 }
 
@@ -147,6 +224,7 @@ void SectionController::useSelectedPlane()
         return;
     planeNormal_ = candidateNormal_;
     planeOffset_ = candidateOffset_;
+    usingAxis_ = false;
     planeLabel_ = tr("The last face clicked");
     usingSelectedPlane_ = true;
     position_ = 0.0;

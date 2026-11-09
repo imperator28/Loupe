@@ -31,6 +31,9 @@ Item {
             property bool usingSelectedPlane: false
             property string planeLabel: ""
             property bool pickingPlane: false
+            property bool usingAxis: false
+            property string axisMode: "across"
+            property real axisAngle: 0
             function beginPlanePick() { pickingPlane = true }
             function cancelPlanePick() { pickingPlane = false }
         }
@@ -55,7 +58,7 @@ Item {
             verify(!source.visible)
             button.clicked()
             verify(controller.pickingPlane)
-            compare(button.text, "Click a flat face in the view…")
+            compare(button.text, "Click a flat face or a hole in the view…")
             button.clicked()
             verify(!controller.pickingPlane)
 
@@ -65,5 +68,25 @@ Item {
             compare(source.text, "Plane of: Flat face on Bracket-2")
             verify(button.selectedAppearance)
         }
-    }
+    
+        function test_anAxisSectionOffersAcrossOrThroughAtAnAngle() {
+            const controller = createTemporaryObject(controllerComponent, root)
+            const panel = createTemporaryObject(panelComponent, root, { theme: appTheme, taskController: controller })
+            const controls = findChild(panel, "sectionAxisControls")
+            const slider = findChild(panel, "sectionAxisAngleSlider")
+            verify(controls && slider)
+            verify(!controls.visible)
+            controller.usingSelectedPlane = true
+            controller.usingAxis = true
+            controller.planeLabel = "Axis on Bracket"
+            verify(controls.visible)
+            compare(findChild(panel, "sectionPlaneSource").text, "About: Axis on Bracket")
+            // Across: no angle to set.
+            verify(!slider.visible)
+            controller.axisMode = "through"
+            verify(slider.visible)
+            controller.axisAngle = 45
+            compare(slider.value, 45)
+        }
+}
 }

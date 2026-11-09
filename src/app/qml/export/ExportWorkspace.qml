@@ -170,17 +170,23 @@ Item {
                 emptyText: qsTr("Hover a component to preview its standalone file")
                 requireSelection: true
                 displayOnlyNodeId: root.draft ? root.draft.previewNodeId : ""
-                highlightNodeId: ""
+                // The part clicked last (in the bucket or the tree) stays lit while it is shown.
+                highlightNodeId: root.draft && root.draft.previewNodeId === root.draft.focusedNodeId ? root.draft.focusedNodeId : ""
                 loadEnabled: root.previewsActivated
                 onViewportReadyChanged: root.replayGeometryWhenReady()
             }
 
             ExportBucket {
+                objectName: "exportBucket"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 220
                 draft: root.draft
                 theme: root.theme
+                onRowSelected: function(nodeId) {
+                    if (root.controller) root.controller.activeNodeId = nodeId
+                    componentPicker.revealNode(nodeId)
+                }
             }
 
             ExportSettings {

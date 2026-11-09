@@ -232,13 +232,13 @@ Item {
             sectionAnchor.y + removedSectionNormal.y * sectionArrowLength,
             sectionAnchor.z + removedSectionNormal.z * sectionArrowLength)
     readonly property point sectionAnchorScreen: {
-        const navigationRevision = navigation.revision
+        const navigationRevision = root.projectionRevision
         if (navigationRevision < 0 || !view.camera) return Qt.point(-10000, -10000)
         const point = view.mapFrom3DScene(sectionAnchor)
         return Qt.point(point.x, point.y)
     }
     readonly property point sectionArrowTipScreen: {
-        const navigationRevision = navigation.revision
+        const navigationRevision = root.projectionRevision
         if (navigationRevision < 0 || !view.camera) return Qt.point(-10000, -10000)
         const point = view.mapFrom3DScene(sectionArrowTip)
         return Qt.point(point.x, point.y)
@@ -372,7 +372,7 @@ Item {
         pickingPivot = true
     }
     function pickAnchorAt(x, y) {
-        const hit = view.pick(x, y)
+        const hit = root.pickVisible(x, y)
         if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition || !explode) return false
         const snap = pivotCandidateAt(hit)
         const info = snap ? snap.info : null
@@ -406,7 +406,7 @@ Item {
     // the click missed every part.
     function pickPivotAt(x, y) {
         if (pivotPickPurpose === "anchor") return pickAnchorAt(x, y)
-        const hit = view.pick(x, y)
+        const hit = root.pickVisible(x, y)
         if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return false
         const model = hit.objectHit
         const snap = pivotCandidateAt(hit)
@@ -865,6 +865,9 @@ Item {
             const placement = placementByNode[model.nodeId]
             const list = axesByPart[model.nodeId] || []
             for (const axis of axes) {
+                // A hole, pin or boss goes most of the way round its axis; a fillet is a sliver
+                // of cylinder along an edge, whose axis says nothing about where a part seats.
+                if (axis.coverageDegrees !== undefined && axis.coverageDegrees < 270) continue
                 let point = axis.origin
                 let direction = axis.direction
                 if (placement) {
@@ -891,7 +894,9 @@ Item {
             for (const part in group) {
                 for (const a of axesByPart[part] || []) {
                     const score = Math.abs(a.direction.dotProduct(way))
-                    if (score <= bestScore) continue
+                    // Only an axis the part moved along: a screw backed out of its hole, not a
+                    // hole the part slid sideways off.
+                    if (score < 0.94 || score <= bestScore) continue
                     let seated = false
                     for (const other in axesByPart) {
                         if (group[other]) continue
@@ -916,6 +921,20 @@ Item {
         refreshExplodeLines()
     }
     onHandlesShownChanged: if (!handlesShown) handleHover = null
+
+    // A number that changes whenever a scene point's place on screen may have: the camera moved,
+    // or the view was resized. mapFrom3DScene uses the camera's projection as last rendered, so
+    // a resize counts once a frame at the new size has been drawn.
+    property int viewSizeRevision: 0
+    readonly property int projectionRevision: navigation.revision + viewSizeRevision
+    // Once a frame at the new size is drawn, and again in case the resize was still settling.
+    Timer { id: viewSizeSettle; interval: 40; repeat: false; onTriggered: root.viewSizeRevision += 1 }
+    Timer { id: viewSizeSettleAgain; interval: 160; repeat: false; onTriggered: root.viewSizeRevision += 1 }
+    Connections {
+        target: view
+        function onWidthChanged() { viewSizeSettle.restart(); viewSizeSettleAgain.restart() }
+        function onHeightChanged() { viewSizeSettle.restart(); viewSizeSettleAgain.restart() }
+    }
 
     ViewportVisualTheme {
         id: viewportVisualTheme
@@ -1856,7 +1875,7 @@ Item {
     }
 
     function pickAt(x, y, additive) {
-        const hit = view.pick(x, y)
+        const hit = root.pickVisible(x, y)
         if (!hit.objectHit || !hit.objectHit.nodeId) {
             root.controller.selectNode("", false)
             return false
@@ -1999,8 +2018,9 @@ Item {
     function sectionPlaneCandidateAt(hit) {
         const pick = measureCandidateAt(hit, false, 2)
         if (!pick || !pick.info) return null
-        // A round face sections through its axis, facing the viewer; with Alt, across it at
-        // the pointer. (measureCandidateAt gives the axis itself under Alt.)
+        // A round face sections about its axis: square to it, where it is picked -- clearly
+        // placed with no other reference. The Section panel turns it to a plane through the axis
+        // at any angle. (measureCandidateAt gives the axis itself under Alt.)
         if (pick.info.kind === "face" && pick.info.planar !== true) {
             const axis = root.controller.measurement.axisEntity(pick.entity, hit.scenePosition)
             if (axis) {
@@ -2009,15 +2029,13 @@ Item {
             }
         }
         if (pick.info.kind === "axis") {
-            const across = root.pickAlternate
-            const plane = sectionAxisPlane(pick.info, across)
-            pick.info.eligible = plane !== null
-            pick.info.sectionAcross = across
-            pick.info.detail = across ? qsTr("Section across its axis") : qsTr("Section through its axis")
-            pick.info.hint = across ? qsTr("Alt released: through the axis") : qsTr("Alt: across the axis, here")
+            const valid = pick.info.axis !== undefined && pick.info.axis.length() > 0
+            pick.info.eligible = valid
+            pick.info.detail = qsTr("Section across its axis, here")
+            pick.info.hint = qsTr("Then turn it through the axis in the Section panel")
             pick.info.reason = ""
-            pick.info.previewNormal = plane ? plane.normal : undefined
-            pick.info.previewAt = plane ? plane.point : undefined
+            pick.info.previewNormal = valid ? pick.info.axis.normalized() : undefined
+            pick.info.previewAt = valid ? pick.info.point : undefined
             return pick
         }
         if (pick.info.kind !== "face") return null
@@ -2028,23 +2046,6 @@ Item {
         pick.info.previewNormal = flat ? pick.info.planeNormal : undefined
         pick.info.previewAt = flat ? pick.info.point : undefined
         return pick
-    }
-
-    // The plane a section along an axis takes: through it, square to the view across it (so it
-    // is seen edge on to the viewer no more than it must be), or across it at the pick.
-    function sectionAxisPlane(info, across) {
-        const axis = info.axis
-        if (!axis || axis.length() === 0) return null
-        if (across) return { normal: axis.normalized(), point: info.point }
-        const camera = view.camera
-        const forward = camera ? camera.forward : Qt.vector3d(0, 0, -1)
-        let normal = forward.minus(axis.times(forward.dotProduct(axis)))
-        if (normal.length() < 1e-6) {
-            // Looking down the axis: any plane through it will do.
-            normal = Qt.vector3d(1, 0, 0).crossProduct(axis)
-            if (normal.length() < 1e-6) normal = Qt.vector3d(0, 1, 0).crossProduct(axis)
-        }
-        return { normal: normal.normalized(), point: info.centre }
     }
 
     // The point the exploded view's pivot would go to, snapped as point to point measurement
@@ -2071,12 +2072,10 @@ Item {
     // Another tool is picking through the measurement picker, and shows its hover.
     readonly property bool toolPicking: sectionPlanePicking || pickingPivot
     function pickSectionPlaneAt(x, y) {
-        const pick = sectionPlaneCandidateAt(view.pick(x, y))
+        const pick = sectionPlaneCandidateAt(root.pickVisible(x, y))
         if (!pick || !pick.info.eligible) return false
         if (pick.info.kind === "axis") {
-            const plane = sectionAxisPlane(pick.info, pick.info.sectionAcross === true)
-            if (!plane || !root.controller.sectionAlongAxis(pick.nodeId, plane.normal, plane.point, pick.info.sectionAcross === true))
-                return false
+            if (!root.controller.sectionAlongAxis(pick.nodeId, pick.info.point, pick.info.axis)) return false
         } else if (!root.controller.sectionAlongFace(pick.nodeId, pick.entity)) {
             return false
         }
@@ -2194,7 +2193,7 @@ Item {
     // every selected part, as the tree's right-click does. Only an unselected part replaces
     // the selection, and empty space leaves it alone.
     function contextPickAt(x, y) {
-        const hit = view.pick(x, y)
+        const hit = root.pickVisible(x, y)
         root.contextFacePick = null
         if (!hit.objectHit || !hit.objectHit.nodeId) return false
         root.contextFacePick = root.facePickFromHit(hit)
@@ -2204,7 +2203,7 @@ Item {
     }
 
     function rememberFaceAt(x, y) {
-        const pick = root.facePickFromHit(view.pick(x, y))
+        const pick = root.facePickFromHit(root.pickVisible(x, y))
         if (pick) root.lastFacePick = pick
     }
 
@@ -2244,7 +2243,7 @@ Item {
     }
 
     function viewNormalToFaceAt(x, y) {
-        return root.viewNormalToFacePick(root.facePickFromHit(view.pick(x, y)))
+        return root.viewNormalToFacePick(root.facePickFromHit(root.pickVisible(x, y)))
     }
 
     // The shortcut and menu command: the face under the pointer, else the last one clicked.
@@ -2254,7 +2253,7 @@ Item {
     }
 
     function reportFaceFrameAt(x, y) {
-        const pick = root.facePickFromHit(view.pick(x, y))
+        const pick = root.facePickFromHit(root.pickVisible(x, y))
         if (!pick) return
         const frame = pick.sourceGeometry.faceFrameFor(pick.topologyId)
         // An empty map means the face could not be resolved; emitting it would hand the
@@ -2271,7 +2270,7 @@ Item {
     }
 
     function prepareOrbitPivotAt(x, y) {
-        const hit = view.pick(x, y)
+        const hit = root.pickVisible(x, y)
         if (hit.objectHit && hit.scenePosition)
             navigation.setPendingOrbitPivot(hit.scenePosition)
         else
@@ -2280,7 +2279,7 @@ Item {
 
     function updateHover(x, y) {
         root.hoverPointer = Qt.point(x, y)
-        const hit = view.pick(x, y)
+        const hit = root.pickVisible(x, y)
         const nodeId = hit.objectHit && hit.objectHit.nodeId ? hit.objectHit.nodeId : ""
         if (hoveredNodeId !== nodeId) hoveredNodeId = nodeId
         if (root.faceFrameSelectionEnabled)
@@ -2293,6 +2292,24 @@ Item {
             showHoverTopology(measureCandidateAt(hit, false))
         else if (root.hoverTopology)
             showHoverTopology(null)
+    }
+
+    // What is under (x, y) as it is drawn: with a section on, the part it cut away is not drawn,
+    // so a click goes through it to the first surface that is -- a face of the cut, or what
+    // lies behind. view.pick alone would take the invisible face in front.
+    function pickVisible(x, y) {
+        const section = root.controller ? root.controller.section : null
+        if (root.presentationOnly || !section || !section.enabled) return view.pick(x, y)
+        const normal = root.effectiveSectionNormal
+        const offset = section.effectiveOffset
+        const retained = section.flipped ? -1 : 1
+        const hits = view.pickAll(x, y).slice().sort(function(a, b) { return a.distance - b.distance })
+        for (const hit of hits) {
+            if (!hit.objectHit || !hit.scenePosition) continue
+            const along = hit.scenePosition.x * normal.x + hit.scenePosition.y * normal.y + hit.scenePosition.z * normal.z - offset
+            if (retained * along >= -1e-4) return hit
+        }
+        return { objectHit: null, scenePosition: null, sceneNormal: null, distance: -1 }
     }
 
     // The menu a right-click (or a long press) opens: the part's, on a part, else the view's.
@@ -2650,6 +2667,54 @@ Item {
             }
         }
         Node { id: componentXrayRoot }
+    }
+
+    // The explode lines again, faint and through everything: where a part stands in front of a
+    // line it is not lost, only dimmer. On screen only; a capture keeps the lines as seen.
+    View3D {
+        id: explodeLineXrayView
+        objectName: "explodeLineXrayView"
+        anchors.fill: parent
+        renderMode: View3D.Offscreen
+        visible: explodeLineModel.visible && !root.captureUiHidden
+        environment: SceneEnvironment {
+            backgroundMode: SceneEnvironment.Transparent
+            depthTestEnabled: false
+            depthPrePassEnabled: false
+            antialiasingMode: SceneEnvironment.MSAA
+            antialiasingQuality: SceneEnvironment.High
+        }
+        camera: navigation.projectionMode === "orthographic"
+                ? explodeLineXrayOrthographicCamera : explodeLineXrayPerspectiveCamera
+        Node {
+            position: navigation.cameraPosition
+            rotation: navigation.orientation
+            PerspectiveCamera {
+                id: explodeLineXrayPerspectiveCamera
+                clipNear: root.perspectiveClipNear
+                clipFar: root.perspectiveClipFar
+                fieldOfView: navigation.perspectiveFieldOfView
+            }
+            OrthographicCamera {
+                id: explodeLineXrayOrthographicCamera
+                z: root.orthographicBackoff
+                clipNear: root.orthographicClipNear
+                clipFar: root.orthographicClipFar
+                horizontalMagnification: navigation.orthographicMagnification
+                verticalMagnification: navigation.orthographicMagnification
+            }
+        }
+        Model {
+            pickable: false
+            geometry: explodeLineGeometry
+            materials: PrincipledMaterial {
+                lighting: PrincipledMaterial.NoLighting
+                baseColor: root.theme ? root.theme.muted : "gray"
+                opacity: 0.35
+                lineWidth: 1.25
+                cullMode: Material.NoCulling
+            }
+        }
     }
 
     View3D {
@@ -3037,7 +3102,7 @@ Item {
             // would; lifting it off every part takes nothing.
             if (aiming) {
                 aiming = false
-                const lifted = view.pick(mouse.x, mouse.y)
+                const lifted = root.pickVisible(mouse.x, mouse.y)
                 if (!lifted.objectHit || !lifted.objectHit.nodeId) {
                     root.showHoverTopology(null)
                     pressButton = Qt.NoButton
@@ -3086,7 +3151,7 @@ Item {
         // (A mouse double-click keeps doing what it did.)
         onDoubleClicked: function(mouse) {
             if (!root.touchInput || mouse.button !== Qt.LeftButton || root.presentationOnly) return
-            const hit = view.pick(mouse.x, mouse.y)
+            const hit = root.pickVisible(mouse.x, mouse.y)
             if (hit.objectHit && hit.objectHit.nodeId) {
                 root.controller.selectNode(hit.objectHit.nodeId, false)
                 root.fitSelection()
@@ -3168,7 +3233,7 @@ Item {
         theme: root.theme
         visualTheme: viewportVisualTheme
         view: view
-        revision: navigation.revision
+        revision: root.projectionRevision
         measurement: root.controller ? root.controller.measurement : null
         // Pinned results stay when the tool closes; the one in progress shows while measuring.
         visible: !root.presentationOnly && root.controller !== null

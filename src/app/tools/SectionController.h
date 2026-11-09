@@ -29,6 +29,12 @@ class SectionController final : public QObject {
     Q_PROPERTY(QString planeLabel READ planeLabel NOTIFY changed)
     // Waiting for a face to be clicked to section along its plane.
     Q_PROPERTY(bool pickingPlane READ pickingPlane NOTIFY pickingPlaneChanged)
+    // A section about a picked axis (a hole's, a shaft's): "across" it -- square to it, the
+    // default, which needs no other reference -- or "through" it, a plane containing the axis
+    // turned axisAngle degrees about it from a fixed start (level where it can be).
+    Q_PROPERTY(bool usingAxis READ usingAxis NOTIFY changed)
+    Q_PROPERTY(QString axisMode READ axisMode WRITE setAxisMode NOTIFY changed)
+    Q_PROPERTY(double axisAngle READ axisAngle WRITE setAxisAngle NOTIFY changed)
 
 public:
     explicit SectionController(QObject* parent = nullptr);
@@ -48,6 +54,16 @@ public:
     // Section along this plane (a picked flat face's, in scene coordinates), named `label`.
     // Ends a plane pick.
     Q_INVOKABLE void usePlane(const QVector3D& normal, const QVector3D& point, const QString& label);
+    // Section about this axis (scene coordinates): across it at `point`, named `label`. Ends
+    // a plane pick.
+    Q_INVOKABLE void useAxis(const QVector3D& point, const QVector3D& direction, const QString& label);
+    void setAxisMode(const QString& mode);
+    void setAxisAngle(double degrees);
+    [[nodiscard]] bool usingAxis() const noexcept { return usingAxis_ && usingSelectedPlane_; }
+    [[nodiscard]] QString axisMode() const { return axisThrough_ ? QStringLiteral("through") : QStringLiteral("across"); }
+    [[nodiscard]] double axisAngle() const noexcept { return axisAngle_; }
+    // The plane through the axis at `degrees`: its normal (square to the axis).
+    [[nodiscard]] static QVector3D throughAxisNormal(const QVector3D& direction, double degrees);
     Q_INVOKABLE void beginPlanePick();
     Q_INVOKABLE void cancelPlanePick();
     Q_INVOKABLE void beginInteraction();
@@ -102,6 +118,14 @@ private:
     double interactionStartPosition_{};
     QString planeLabel_;
     bool pickingPlane_{false};
+    // The section was on when a face pick began, and comes back if the pick is cancelled.
+    bool resumeAfterPick_{false};
+    bool usingAxis_{false};
+    bool axisThrough_{false};
+    double axisAngle_{};
+    QVector3D axisPoint_;
+    QVector3D axisDirection_{0.0F, 0.0F, 1.0F};
+    void applyAxisPlane();
 };
 
 } // namespace loupe::app::tools

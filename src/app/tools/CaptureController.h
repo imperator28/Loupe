@@ -29,6 +29,8 @@ public:
     Q_INVOKABLE void setViewportSize(int width, int height);
     void setScale(int scale);
     Q_INVOKABLE void setCustomScale(double scale);
+    // Why a scale is out of reach, for the panel to say: "" when it is not.
+    Q_INVOKABLE [[nodiscard]] QString scaleLimitReason(double scale) const;
     void setTransparentBackground(bool transparent);
     void setIncludeMeasurements(bool include);
     void setIncludeSectionCaps(bool include);
