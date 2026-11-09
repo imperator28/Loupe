@@ -2892,7 +2892,27 @@ Item {
             id: touchDetector
             target: null
             acceptedDevices: PointerDevice.TouchScreen
-            onActiveChanged: if (active) root.touchInput = true
+            // The hold starts here as well as on the press: not every platform hands the touch
+            // to this area as a mouse press.
+            onActiveChanged: {
+                if (active) {
+                    root.touchInput = true
+                    if (input.pressButton === Qt.NoButton) {
+                        input.pressX = point.position.x
+                        input.pressY = point.position.y
+                        input.dragging = false
+                        input.aiming = false
+                        input.holdConsumed = false
+                    }
+                    holdTimer.restart()
+                } else if (input.pressButton === Qt.NoButton) {
+                    holdTimer.stop()
+                }
+            }
+            onTranslationChanged: {
+                const slop = pointerInputRouter.tapSlop(true)
+                if (Math.abs(translation.x) > slop || Math.abs(translation.y) > slop) holdTimer.stop()
+            }
         }
 
         cursorShape: root.pickingPivot || root.sectionPlanePicking ? Qt.CrossCursor
@@ -2932,17 +2952,20 @@ Item {
                 }
                 root.pickAlternate = (mouse.modifiers & Qt.AltModifier) !== 0
                 // Only a mouse or pen hovers: a finger never moves without pressing.
-                root.touchInput = false
+                if (!touchDetector.active) root.touchInput = false
                 root.updateHover(mouse.x, mouse.y)
                 return
             }
+            // While a finger is down, where it is: a desktop also sends mouse moves from wherever
+            // the real cursor is, which must not read as the finger dragging.
+            const at = touchDetector.active ? touchDetector.point.position : Qt.point(mouse.x, mouse.y)
             // Pressed and held in a pick mode: the finger aims, as a mouse hovers.
             if (aiming) {
-                root.updateHover(mouse.x, mouse.y)
+                root.updateHover(at.x, at.y)
                 return
             }
-            const deltaX = mouse.x - pressX
-            const deltaY = mouse.y - pressY
+            const deltaX = at.x - pressX
+            const deltaY = at.y - pressY
             const slop = pointerInputRouter.tapSlop(root.touchInput)
             if (Math.abs(deltaX) > slop || Math.abs(deltaY) > slop) {
                 dragging = true
@@ -3080,7 +3103,8 @@ Item {
             interval: pointerInputRouter.pressAndHoldMs
             repeat: false
             onTriggered: {
-                if (input.dragging || input.pressButton !== Qt.LeftButton || root.handleDrag) return
+                if (input.dragging || root.handleDrag) return
+                if (input.pressButton !== Qt.LeftButton && !touchDetector.active) return
                 navigation.clearPendingOrbitPivot()
                 if (root.measurementActive || root.toolPicking || root.faceFrameSelectionEnabled) {
                     input.aiming = true

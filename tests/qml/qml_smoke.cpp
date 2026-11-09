@@ -1415,7 +1415,8 @@ void QmlSmokeTest::aFingerGetsBiggerTargetsAndALongPressOpensTheMenu()
     QVERIFY(viewport->property("measureVertexPixels").toDouble() > mouseVertexPixels);
     auto* menu = viewport->findChild<QObject*>(QStringLiteral("viewportContextMenu"));
     QVERIFY(menu != nullptr);
-    QTRY_VERIFY_WITH_TIMEOUT(menu->property("opened").toBool() || menu->property("visible").toBool(), 2000);
+    QTRY_VERIFY2_WITH_TIMEOUT(menu->property("opened").toBool() || menu->property("visible").toBool(),
+                              qPrintable(QStringLiteral("touchInput %1").arg(viewport->property("touchInput").toBool())), 2000);
     QTest::touchEvent(&window, screen.get()).release(0, QPoint(200, 150));
     QMetaObject::invokeMethod(menu, "close");
     QTRY_VERIFY_WITH_TIMEOUT(!menu->property("visible").toBool(), 2000);
