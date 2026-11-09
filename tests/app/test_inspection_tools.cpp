@@ -353,6 +353,8 @@ void InspectionToolsTest::captureSettingsBoundCustomScaleAndInclusionOptions()
     }
 
     loupe::app::tools::CaptureController capture;
+    // A capture is of the model unless the measurements are asked for.
+    QVERIFY(!capture.includeMeasurements());
     capture.setViewportSize({400, 300});
     capture.setCustomScale(3.17);
     capture.setIncludeMeasurements(false);

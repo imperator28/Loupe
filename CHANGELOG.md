@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.1.6
+
+Faster opening, a reworked Measure tool that picks the axes of round features, sections
+along a face or about an axis, explode lines and saved exploded layouts, touch support,
+and a What's New that lists every release since yours. Built from six betas; each one's
+notes are on its GitHub pre-release.
+Opening native NX, Creo and SOLIDWORKS files (#5) still waits on a decision about a
+commercial import SDK and is not in this release.
+
+### New
+
+- **Opens faster**: each part is measured once rather than for every copy, mass properties
+  run alongside meshing, and parts are meshed on every core. A 27.7 MB assembly that took
+  36 s to open fully takes 22 s on a 4-core machine. Repeated parts are loaded once and
+  drawn from one shape (an assembly of 24 identical stages opens about five times faster),
+  and the file you launched Loupe with starts importing as Loupe starts.
+- **Measure, reworked**:
+  - Before you click, the face, edge or point a click takes lights up, with a chip naming it
+    or saying why this mode cannot use it.
+  - Point to point snaps to corners, edge midpoints, hole centres and points on edges.
+  - **Centerlines**: hover a hole, pin or boss to pick its exact axis, drawn dash-dot over
+    the feature and every coaxial face. Measure a point or a face to it, between two axes,
+    or the angle to it. Alt takes the face instead.
+  - Surface to surface is the gap square to parallel faces, or the true minimum distance.
+  - Angle is drawn as an arc between the picks. Edges and areas add up with Shift or
+    Ctrl/⌘. Volume and bounds work on any selection, with the bounds box drawn and sized.
+  - Pin results to keep them in view; drag a pinned tag anywhere and give it a colour.
+- **Sections you aim**:
+  - Pick a flat face to section along its plane.
+  - Pick a hole or shaft to section square to its axis, or turn a plane through the axis to
+    any angle.
+  - Cut parts show solid, with their holes open.
+- **Exploded views that explain**:
+  - Save layouts and come back to them in one click.
+  - Pick the pivot with snapping; on a hole or shaft the handle lines up with its axis.
+  - Dashed explode lines run from each moved part to where it goes, along the shared axis
+    for a pin or screw in its hole.
+- **Touch** on Windows touchscreens and touch Macs: one finger orbits, two pan, pinch zooms.
+  A double tap fits, and press and hold opens the menu (or aims, in Measure and Section).
+- **Cmd/Ctrl+A** selects every part shown in Inspect, and checks every part in Export.
+- **What's New** lists this release and the ones before it, marking every one since the
+  version you updated from.
+- **Captures can include the measurements**, laid out for the capture's size (off by
+  default).
+- **The view toolbar is restyled**: a compact floating bar with outline icons and labels.
+
+### Fixed
+
+- **Sub-assemblies used more than once** showed and exported only the first copy. Each copy
+  is now its own, in the tree, the view and exports.
+- **Exporting repeated parts**: Select all refused the batch when a part was placed twice or
+  two parts shared a name. Each part is now one file, and same-named parts are numbered.
+- **Updating a copy in Program Files** (Windows) stayed on the old version. The update now
+  asks for administrator permission when it needs it, and an update that could not be
+  installed says why.
+- **Picking with a section on** went to the part the section had cut away. Clicks go
+  through it now, and picking a face plane turns the section off while picking.
+- **Measure drew outside the view**, and stayed put after a window resize. It is clipped to
+  the view and follows the resize.
+- **Section caps** could show a solid part hollow, and a fast drag ran the section arrow off
+  the cut.
+- **A capture scale out of reach** greyed out with no reason; it now says why.
+
+### Known limitations
+
+- Touch has not been tried on touch hardware yet.
+- The Drawing workspace's projection is not yet reliable enough for cutting.
+
+Coming from 0.1.5 installed in `C:\Program Files`: 0.1.5 still runs its old update, so
+install 0.1.6 once by hand (unzip it over the Loupe folder as an administrator). Later
+updates work in place.
+
 ## v0.1.6-beta.6
 
 A testing build from feedback on beta.5. Published as a pre-release; everything in

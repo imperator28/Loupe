@@ -71,7 +71,8 @@ private:
     QSize viewportSize_;
     double scale_{1.0};
     bool transparentBackground_{true};
-    bool includeMeasurements_{true};
+    // Off until asked for: a capture is of the model unless the measurements are wanted in it.
+    bool includeMeasurements_{false};
     bool includeSectionCaps_{true};
     QString statusMessage_;
     bool lastSaveSucceeded_{false};
