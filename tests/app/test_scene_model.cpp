@@ -8,6 +8,7 @@
 #include <numbers>
 #include "app/render/SceneModel.h"
 #include "app/render/CadEdgeGeometry.h"
+#include "app/render/ExplodeLineGeometry.h"
 #include "app/render/SectionMeshBuilder.h"
 #include "app/tools/MeasureGeometry.h"
 #include "protocol/GeometryPayload.h"
@@ -44,6 +45,7 @@ private slots:
     void faceFrameDistinguishesAFlatFaceFromACurvedOne();
     void faceViewLooksAlongAPlaneNormalOrACylinderAxis();
     void aRoundFaceKnowsItsAxisAcrossCoaxialFaces();
+    void explodeLinesAreCutIntoDashesOrCenterlines();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -732,6 +734,27 @@ void SceneModelTest::aRoundFaceKnowsItsAxisAcrossCoaxialFaces()
     QVERIFY(std::abs(face.axisFrom.x() - 10.0F) < 1e-5F);
     // A flat face has none.
     QVERIFY(!mesh.faceEntity(99, placed, {}, {}, false).value<loupe::app::tools::MeasureEntity>().hasAxis);
+}
+
+void SceneModelTest::explodeLinesAreCutIntoDashesOrCenterlines()
+{
+    loupe::app::render::ExplodeLineGeometry geometry;
+    const auto line = [](const bool centerline) {
+        return QVariantList{QVariantMap{{QStringLiteral("segments"),
+            QVariantList{QVariantMap{{QStringLiteral("from"), QVariant::fromValue(QVector3D{0, 0, 0})},
+                                     {QStringLiteral("to"), QVariant::fromValue(QVector3D{10, 0, 0})},
+                                     {QStringLiteral("centerline"), centerline}}}}}};
+    };
+    // 10 long, 1 on and 1 off: five dashes.
+    geometry.setLines(line(false), 1.0, 1.0);
+    QCOMPARE(geometry.segmentCount(), 5);
+    QCOMPARE(geometry.vertexData().size(), static_cast<qsizetype>(5 * 2 * 3 * sizeof(float)));
+    // A centerline: a long dash (2) and a dot (0.25) every 2 + 1 + 0.25 + 1 = 4.25: dashes at
+    // 0, 4.25 and 8.5 (the last cut at the end), dots at 3 and 7.25 -- the third would be past it.
+    geometry.setLines(line(true), 1.0, 1.0);
+    QCOMPARE(geometry.segmentCount(), 5);
+    geometry.clearLines();
+    QCOMPARE(geometry.segmentCount(), 0);
 }
 
 int main(int argc, char* argv[])

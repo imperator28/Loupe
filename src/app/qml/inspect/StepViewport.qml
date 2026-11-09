@@ -354,11 +354,38 @@ Item {
     // Start picking the pivot: the next click on a part puts the handle there.
     function beginPivotPick() {
         if (!explodedLayoutEnabled) return
+        pivotPickPurpose = "pivot"
         pickingPivot = true
+    }
+
+    // The same pick, for where a node's explode line starts (#41): a corner, a hole's centre
+    // or an axis, which then moves with the node.
+    property string pivotPickPurpose: "pivot"
+    property string anchorNodeId: ""
+    function beginAnchorPick(nodeId) {
+        if (!explodedLayoutEnabled || !explode || !nodeId) return
+        anchorNodeId = explode.lineOwnerOf(nodeId)
+        pivotPickPurpose = "anchor"
+        pickingPivot = true
+    }
+    function pickAnchorAt(x, y) {
+        const hit = view.pick(x, y)
+        if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition || !explode) return false
+        const snap = pivotCandidateAt(hit)
+        const info = snap ? snap.info : null
+        const point = info && info.point !== undefined ? info.point : hit.scenePosition
+        const onAxis = info && (info.kind === "axis" || info.kind === "centre") && info.axis !== undefined && info.axis.length() > 0
+        explode.setLineAnchor(anchorNodeId, explode.assembledPoint(anchorNodeId, point),
+                              onAxis ? explode.assembledDirection(anchorNodeId, info.axis) : Qt.vector3d(0, 0, 0))
+        pickingPivot = false
+        pivotPickPurpose = "pivot"
+        if (!measurementActive) showHoverTopology(null)
+        return true
     }
 
     function cancelPivotPick() {
         pickingPivot = false
+        pivotPickPurpose = "pivot"
         if (!measurementActive) showHoverTopology(null)
     }
 
@@ -375,6 +402,7 @@ Item {
     // turns to the face clicked, or for a circle's centre to the circle's axis. False when
     // the click missed every part.
     function pickPivotAt(x, y) {
+        if (pivotPickPurpose === "anchor") return pickAnchorAt(x, y)
         const hit = view.pick(x, y)
         if (!hit.objectHit || !hit.objectHit.nodeId || !hit.scenePosition) return false
         const model = hit.objectHit
@@ -787,8 +815,103 @@ Item {
             root.placeParts(partIds)
             root.explodeMoved()
         }
+        function onChanged() {
+            root.refreshExplodeLines()
+            seatAxisTimer.restart()
+        }
     }
-    onExplodedLayoutEnabledChanged: placeAllParts()
+    Timer { id: seatAxisTimer; interval: 120; repeat: false; onTriggered: root.detectSeatAxes() }
+
+    // The explode lines as they stand: dashes sized to the model, so they read the same at
+    // any size of assembly.
+    function refreshExplodeLines() {
+        if (!root.explode || !root.explodedLayoutEnabled) {
+            explodeLineGeometry.clearLines()
+            return
+        }
+        const lines = root.explode.explodeLines()
+        if (lines.length === 0) {
+            explodeLineGeometry.clearLines()
+            return
+        }
+        const bounds = root.explode.displayedBounds([])
+        let size = 100
+        if (bounds.valid) size = bounds.maximum.minus(bounds.minimum).length()
+        const dash = Math.max(size / 140, 0.05)
+        explodeLineGeometry.setLines(lines, dash, dash * 0.6)
+    }
+
+    // Where each moved node seats along a shared axis: a round feature of it coaxial with one
+    // of a part it was not moved with (a screw in its hole, a pin in its bore, a shaft in its
+    // bearing). Of several, the one most along the way it moved. In assembled coordinates.
+    property int seatGeometryRevision: 0
+    function detectSeatAxes() {
+        if (!root.explode) return
+        const moved = root.explode.lineNodes()
+        if (moved.length === 0) {
+            root.explode.setSeatAxes({})
+            return
+        }
+        // Every part's axes, where the file puts the part.
+        const axesByPart = {}
+        for (const key in modelByNode) {
+            const model = modelByNode[key]
+            if (!model || !model.geometry || typeof model.geometry.faceAxes !== "function") continue
+            const axes = model.geometry.faceAxes()
+            if (axes.length === 0) continue
+            const placement = placementByNode[model.nodeId]
+            const list = axesByPart[model.nodeId] || []
+            for (const axis of axes) {
+                let point = axis.origin
+                let direction = axis.direction
+                if (placement) {
+                    point = placement.rotation.times(point).plus(placement.position)
+                    direction = placement.rotation.times(direction)
+                }
+                list.push({ point: point, direction: direction.normalized() })
+            }
+            axesByPart[model.nodeId] = list
+        }
+        const coaxial = function(a, b) {
+            if (Math.abs(a.direction.dotProduct(b.direction)) < 0.9999) return false
+            const offset = b.point.minus(a.point)
+            return offset.minus(a.direction.times(offset.dotProduct(a.direction))).length() < 0.02
+        }
+        const result = {}
+        for (const nodeId of moved) {
+            const group = {}
+            for (const part of root.explode.partsUnderNode(nodeId)) group[part] = true
+            const travel = root.explode.offsetOf(nodeId)
+            const way = travel.length() > 0 ? travel.normalized() : Qt.vector3d(0, 0, 0)
+            let best = null
+            let bestScore = -1
+            for (const part in group) {
+                for (const a of axesByPart[part] || []) {
+                    const score = Math.abs(a.direction.dotProduct(way))
+                    if (score <= bestScore) continue
+                    let seated = false
+                    for (const other in axesByPart) {
+                        if (group[other]) continue
+                        for (const b of axesByPart[other]) {
+                            if (coaxial(a, b)) { seated = true; break }
+                        }
+                        if (seated) break
+                    }
+                    if (seated) { best = a; bestScore = score }
+                }
+            }
+            if (!best) continue
+            // On the axis, level with the node's centre.
+            const centre = root.explode.assembledCentre(nodeId)
+            const point = best.point.plus(best.direction.times(centre.minus(best.point).dotProduct(best.direction)))
+            result[nodeId] = { point: point, direction: best.direction }
+        }
+        root.explode.setSeatAxes(result)
+    }
+    onExplodedLayoutEnabledChanged: {
+        placeAllParts()
+        refreshExplodeLines()
+    }
     onHandlesShownChanged: if (!handlesShown) handleHover = null
 
     ViewportVisualTheme {
@@ -1929,7 +2052,10 @@ Item {
         if (!pick || !pick.info) return null
         pick.info.eligible = true
         pick.info.reason = ""
-        pick.info.detail = pick.info.kind === "centre" || pick.info.kind === "axis" ? qsTr("Pivot on its axis") : qsTr("Pivot here")
+        const onAxis = pick.info.kind === "centre" || pick.info.kind === "axis"
+        pick.info.detail = root.pivotPickPurpose === "anchor"
+                ? (onAxis ? qsTr("Line along its axis") : qsTr("Line from here"))
+                : (onAxis ? qsTr("Pivot on its axis") : qsTr("Pivot here"))
         return pick
     }
 
@@ -2446,6 +2572,22 @@ Item {
                 }
             }
 
+            // Explode lines (#41): from where each moved part seats to where it is. In the
+            // scene, so parts in front hide them and a capture holds them.
+            Model {
+                id: explodeLineModel
+                objectName: "explodeLines"
+                visible: root.explodedLayoutEnabled && explodeLineGeometry.segmentCount > 0
+                pickable: false
+                geometry: ExplodeLineGeometry { id: explodeLineGeometry }
+                materials: PrincipledMaterial {
+                    lighting: PrincipledMaterial.NoLighting
+                    baseColor: root.theme ? root.theme.muted : "gray"
+                    lineWidth: 1.25
+                    cullMode: Material.NoCulling
+                }
+            }
+
             SectionManipulator {
                 id: sceneSectionManipulator
                 visible: !root.presentationOnly && !root.captureUiHidden && root.controller && root.controller.section.enabled
@@ -2643,8 +2785,9 @@ Item {
         Label {
             id: pivotPickLabel
             anchors.centerIn: parent
-            text: root.sectionPlanePicking ? qsTr("Click a flat face to section along its plane  ·  Esc to cancel")
-                                           : qsTr("Click a point on a part to move the handle there  ·  Esc to cancel")
+            text: root.sectionPlanePicking ? qsTr("Click a flat face, or a round one for its axis, to section along it  ·  Esc to cancel")
+                : root.pivotPickPurpose === "anchor" ? qsTr("Click where the explode line starts: a corner, a hole's centre or an axis  ·  Esc to cancel")
+                : qsTr("Click a point on a part to move the handle there  ·  Esc to cancel")
             color: root.theme ? root.theme.foreground : "transparent"
         }
     }

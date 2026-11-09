@@ -79,6 +79,8 @@ qt_add_executable(loupe-app
     render/PartPalette.h
     render/HandleRingGeometry.cpp
     render/HandleRingGeometry.h
+    render/ExplodeLineGeometry.cpp
+    render/ExplodeLineGeometry.h
 )
 
 set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")

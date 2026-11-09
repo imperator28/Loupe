@@ -59,6 +59,8 @@ private slots:
     void explodeBlendEasesPartsHome();
     void explodeLocalPlaneFollowsTheMovedPart();
     void explodeTypedOffsetsAndAnglesAndSnapping();
+    void explodeLinesRunFromWhereAPartSeatsToWhereItIs();
+    void explodeLinesFollowAnAxisAndKeepTheirAnchorsInALayout();
 };
 
 void InspectionToolsTest::pointDistanceUsesEffectiveUnit()
@@ -1119,6 +1121,123 @@ void InspectionToolsTest::explodeLocalPlaneFollowsTheMovedPart()
     QVERIFY2(closeTo(turned.toVector3D(), {0, -1, 0}), qPrintable(describe(turned.toVector3D())));
     // The plane runs through the part's centre (100, 0, 0), so it does in the part's own frame too.
     QVERIFY2(qAbs(turned.w()) < 1e-3F, qPrintable(QString::number(turned.w())));
+}
+
+namespace {
+
+QVector3D segmentEnd(const QVariantMap& line, const int index, const char* end)
+{
+    return line.value(QStringLiteral("segments")).toList().at(index).toMap().value(QString::fromLatin1(end)).value<QVector3D>();
+}
+
+QVariantMap lineOf(const loupe::app::tools::ExplodeController& explode, const QString& nodeId)
+{
+    for (const auto& value : explode.explodeLines()) {
+        const auto line = value.toMap();
+        if (line.value(QStringLiteral("nodeId")).toString() == nodeId) return line;
+    }
+    return {};
+}
+
+} // namespace
+
+void InspectionToolsTest::explodeLinesRunFromWhereAPartSeatsToWhereItIs()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    QVERIFY(explode.explodeLines().isEmpty());
+
+    // A sub-assembly moved as a whole: one line, from its centre as assembled to where it is.
+    explode.translateBy({QStringLiteral("sub")}, {0, 0, 30});
+    QCOMPARE(explode.explodeLines().size(), 1);
+    auto sub = lineOf(explode, QStringLiteral("sub"));
+    QVERIFY(closeTo(segmentEnd(sub, 0, "from"), {0, 0, 0}));
+    QVERIFY(closeTo(segmentEnd(sub, 0, "to"), {0, 0, 30}));
+    QVERIFY(!sub.value(QStringLiteral("segments")).toList().at(0).toMap().value(QStringLiteral("centerline")).toBool());
+
+    // A part moved again inside it: its own line, from its seat in the moved sub-assembly.
+    explode.translateBy({QStringLiteral("left")}, {-20, 0, 0});
+    QCOMPARE(explode.explodeLines().size(), 2);
+    const auto left = lineOf(explode, QStringLiteral("left"));
+    QVERIFY(closeTo(segmentEnd(left, 0, "from"), {-10, 0, 30}));
+    QVERIFY(closeTo(segmentEnd(left, 0, "to"), {-30, 0, 30}));
+    QCOMPARE(explode.lineOwnerOf(QStringLiteral("right")), QStringLiteral("sub"));
+    QCOMPARE(explode.lineOwnerOf(QStringLiteral("left")), QStringLiteral("left"));
+
+    // Eased halfway home, the lines are half as long; on the assembly there are none.
+    explode.setBlend(0.5);
+    sub = lineOf(explode, QStringLiteral("sub"));
+    QVERIFY(closeTo(segmentEnd(sub, 0, "to"), {0, 0, 15}));
+    explode.setBlend(0.0);
+    QVERIFY(explode.explodeLines().isEmpty());
+    explode.setBlend(1.0);
+
+    // Hidden, one by one or all; the style turns them into centerlines.
+    explode.setLineHidden(QStringLiteral("left"), true);
+    QCOMPARE(explode.explodeLines().size(), 1);
+    QVERIFY(explode.canUndo());
+    explode.undo();
+    QCOMPARE(explode.explodeLines().size(), 2);
+    explode.setLineStyle(QStringLiteral("centerline"));
+    QVERIFY(lineOf(explode, QStringLiteral("sub")).value(QStringLiteral("segments")).toList().at(0).toMap()
+                .value(QStringLiteral("centerline")).toBool());
+    explode.setLinesShown(false);
+    QVERIFY(explode.explodeLines().isEmpty());
+    explode.setLinesShown(true);
+
+    // A turned part whose line starts off its centre: along its travel, then a jog to the seat.
+    loupe::app::tools::ExplodeController turned;
+    buildExplodeFixture(turned);
+    turned.setLineAnchor(QStringLiteral("far"), {101, 0, 0}, {});
+    turned.setAngles(QStringLiteral("far"), {0, 0, 90});
+    turned.translateBy({QStringLiteral("far")}, {0, 40, 0});
+    const auto far = lineOf(turned, QStringLiteral("far"));
+    const auto segments = far.value(QStringLiteral("segments")).toList();
+    QCOMPARE(segments.size(), 2);
+    QVERIFY(closeTo(segmentEnd(far, 0, "from"), {101, 0, 0}));
+    QVERIFY2(closeTo(segmentEnd(far, 0, "to"), {101, 40, 0}), qPrintable(describe(segmentEnd(far, 0, "to"))));
+    QVERIFY2(closeTo(segmentEnd(far, 1, "to"), {100, 41, 0}), qPrintable(describe(segmentEnd(far, 1, "to"))));
+}
+
+void InspectionToolsTest::explodeLinesFollowAnAxisAndKeepTheirAnchorsInALayout()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    // "far" seats on an axis along x (a pin in its bore): found by the viewport, not picked.
+    explode.setSeatAxes({{QStringLiteral("far"), QVariantMap{{QStringLiteral("point"), QVariant::fromValue(QVector3D{100, 0, 0})},
+                                                             {QStringLiteral("direction"), QVariant::fromValue(QVector3D{1, 0, 0})}}}});
+    explode.translateBy({QStringLiteral("far")}, {50, 0, 0});
+    auto far = lineOf(explode, QStringLiteral("far"));
+    auto segments = far.value(QStringLiteral("segments")).toList();
+    QCOMPARE(segments.size(), 1);
+    QVERIFY(segments.at(0).toMap().value(QStringLiteral("centerline")).toBool());
+    // Along the axis, a little past each end.
+    QVERIFY(segmentEnd(far, 0, "from").x() < 100.0F);
+    QVERIFY(segmentEnd(far, 0, "to").x() > 150.0F);
+    QVERIFY(std::abs(segmentEnd(far, 0, "from").y()) < 1e-4F);
+    // Moved off the axis as well: along it as far as it goes, then across to the part.
+    explode.translateBy({QStringLiteral("far")}, {0, 0, 20});
+    far = lineOf(explode, QStringLiteral("far"));
+    segments = far.value(QStringLiteral("segments")).toList();
+    QCOMPARE(segments.size(), 2);
+    QVERIFY(closeTo(segmentEnd(far, 1, "from"), {150, 0, 0}));
+    QVERIFY(closeTo(segmentEnd(far, 1, "to"), {150, 0, 20}));
+
+    // A picked anchor wins over the found axis, and goes with the layout.
+    explode.setLineAnchor(QStringLiteral("far"), {99, 1, 0}, {});
+    far = lineOf(explode, QStringLiteral("far"));
+    QVERIFY(closeTo(segmentEnd(far, 0, "from"), {99, 1, 0}));
+    explode.setLineHidden(QStringLiteral("sub"), true);
+    const auto snapshot = explode.layoutSnapshot();
+    loupe::app::tools::ExplodeController restored;
+    buildExplodeFixture(restored);
+    QVERIFY(restored.restoreLayout(snapshot));
+    restored.setBlend(1.0);
+    QVERIFY(restored.hasLineAnchor(QStringLiteral("far")));
+    QVERIFY(restored.lineHidden(QStringLiteral("sub")));
+    QVERIFY(closeTo(segmentEnd(lineOf(restored, QStringLiteral("far")), 0, "from"), {99, 1, 0}));
+    // Picked points come back to the node's assembled coordinates, wherever it is shown.
+    QVERIFY(closeTo(explode.assembledPoint(QStringLiteral("far"), {150, 0, 20}), {100, 0, 0}));
 }
 
 void InspectionToolsTest::explodeTypedOffsetsAndAnglesAndSnapping()

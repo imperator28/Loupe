@@ -415,6 +415,28 @@ QVariant MeshGeometry::faceEntity(const quint32 topologyId, const QMatrix4x4& to
     return QVariant::fromValue(face);
 }
 
+QVariantList MeshGeometry::faceAxes() const
+{
+    QVariantList result;
+    QVector<std::pair<QVector3D, QVector3D>> seen;
+    for (const auto& range : sourceTopology_) {
+        if (range.kind != protocol::TopologyKind::Face || !range.hasAxis()) continue;
+        const QVector3D origin{range.axisOrigin[0], range.axisOrigin[1], range.axisOrigin[2]};
+        const QVector3D direction{range.axisDirection[0], range.axisDirection[1], range.axisDirection[2]};
+        const auto same = std::any_of(seen.cbegin(), seen.cend(), [&](const auto& axis) {
+            if (std::abs(QVector3D::dotProduct(axis.second, direction)) < 0.99999998F) return false;
+            const auto offset = origin - axis.first;
+            return (offset - axis.second * QVector3D::dotProduct(offset, axis.second)).length() <= 2e-3F;
+        });
+        if (same) continue;
+        seen.append({origin, direction});
+        result.append(QVariantMap{{QStringLiteral("origin"), QVariant::fromValue(origin)},
+                                  {QStringLiteral("direction"), QVariant::fromValue(direction)},
+                                  {QStringLiteral("radiusMm"), static_cast<double>(range.radiusMm)}});
+    }
+    return result;
+}
+
 std::pair<float, float> MeshGeometry::axisExtent(const QVector3D& origin, const QVector3D& direction) const
 {
     // Coaxial: parallel within about a hundredth of a degree, and through the same line within

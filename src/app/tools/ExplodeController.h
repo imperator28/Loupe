@@ -4,6 +4,7 @@
 #include <QMatrix4x4>
 #include <QObject>
 #include <QQuaternion>
+#include <QSet>
 #include <QStringList>
 #include <QVariantMap>
 #include <QVector>
@@ -35,6 +36,11 @@ class ExplodeController final : public QObject {
     Q_PROPERTY(bool snapEnabled READ snapEnabled WRITE setSnapEnabled NOTIFY settingsChanged)
     Q_PROPERTY(double translationStep READ translationStep WRITE setTranslationStep NOTIFY settingsChanged)
     Q_PROPERTY(double rotationStep READ rotationStep WRITE setRotationStep NOTIFY settingsChanged)
+    // Explode lines (#41): a thin line from where each moved part seats to where it is now.
+    Q_PROPERTY(bool linesShown READ linesShown WRITE setLinesShown NOTIFY settingsChanged)
+    // "dashed", or "centerline" (dash-dot) for every line; a line along an axis is always a
+    // centerline.
+    Q_PROPERTY(QString lineStyle READ lineStyle WRITE setLineStyle NOTIFY settingsChanged)
 
 public:
     explicit ExplodeController(QObject* parent = nullptr);
@@ -124,6 +130,40 @@ public:
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
 
+    // Explode lines. Each node moved in its own right (not only carried by a moved
+    // sub-assembly) gets one, from its anchor where it seats -- inside its parent as the
+    // parent is now -- to where the anchor is carried by its move, as displayed (eased with
+    // blend, so a line is zero long on the assembly and gone):
+    //   {nodeId, segments: [{from, to, centerline}], length}
+    // The anchor is the node's centre unless one was picked (setLineAnchor), or found where
+    // it seats along a shared axis (setSeatAxes). A turned part's line runs along its travel
+    // and jogs to the seat; one with an axis runs along the axis, a little past each end, and
+    // jogs to the part if it moved off it. Hidden lines, and all when linesShown is off, are
+    // left out.
+    Q_INVOKABLE [[nodiscard]] QVariantList explodeLines() const;
+    // A picked anchor, in the node's assembled coordinates (what moves with it): a point, and
+    // an axis through it when `direction` is not zero. Saved with the layout; one step to undo.
+    Q_INVOKABLE void setLineAnchor(const QString& nodeId, const QVector3D& point, const QVector3D& direction);
+    Q_INVOKABLE void clearLineAnchor(const QString& nodeId);
+    Q_INVOKABLE [[nodiscard]] bool hasLineAnchor(const QString& nodeId) const;
+    Q_INVOKABLE void setLineHidden(const QString& nodeId, bool hidden);
+    Q_INVOKABLE [[nodiscard]] bool lineHidden(const QString& nodeId) const;
+    // Axes found where parts seat (a round feature of a moved part coaxial with one of a part
+    // it did not move with): {nodeId: {point, direction}} in assembled coordinates. Worked out
+    // from the geometry by the viewport; not part of the layout.
+    Q_INVOKABLE void setSeatAxes(const QVariantMap& axes);
+    // The nodes that get a line (moved in their own right), whether shown or not.
+    Q_INVOKABLE [[nodiscard]] QStringList lineNodes() const;
+    // The node whose line a part's is: the nearest of it and its ancestors moved in its own
+    // right, else the node itself (its line appears once it moves).
+    Q_INVOKABLE [[nodiscard]] QString lineOwnerOf(const QString& nodeId) const;
+    // A point or direction where the node is displayed, in its assembled coordinates (what
+    // anchors are kept in, so they move with it).
+    Q_INVOKABLE [[nodiscard]] QVector3D assembledPoint(const QString& nodeId, const QVector3D& scenePoint) const;
+    Q_INVOKABLE [[nodiscard]] QVector3D assembledDirection(const QString& nodeId, const QVector3D& sceneDirection) const;
+    // The parts a node carries: itself for a part, everything drawn under a sub-assembly.
+    Q_INVOKABLE [[nodiscard]] QStringList partsUnderNode(const QString& nodeId) const { return partsUnder(nodeId); }
+
     // Every node's own transform, for an export of the exploded layout.
     [[nodiscard]] const QHash<QString, QMatrix4x4>& ownTransforms() const noexcept { return state_.transforms; }
     [[nodiscard]] bool exploded() const noexcept { return !state_.transforms.isEmpty(); }
@@ -139,6 +179,10 @@ public:
     void setTranslationStep(double step);
     [[nodiscard]] double rotationStep() const noexcept { return rotationStep_; }
     void setRotationStep(double step);
+    [[nodiscard]] bool linesShown() const noexcept { return linesShown_; }
+    void setLinesShown(bool shown);
+    [[nodiscard]] QString lineStyle() const { return lineStyle_; }
+    void setLineStyle(const QString& style);
 
 signals:
     void changed();
@@ -160,9 +204,21 @@ private:
         void include(const Bounds& other);
         [[nodiscard]] QVector3D centre() const { return (minimum + maximum) * 0.5F; }
     };
+    struct Anchor {
+        QVector3D point;
+        QVector3D direction; // zero: a point, not an axis
+        bool operator==(const Anchor&) const = default;
+    };
     struct State {
         QHash<QString, QMatrix4x4> transforms;
         QHash<QString, double> autoFactors;
+        QHash<QString, Anchor> anchors;
+        QSet<QString> hiddenLines;
+        [[nodiscard]] bool sameLayout(const State& other) const
+        {
+            return transforms == other.transforms && autoFactors == other.autoFactors && anchors == other.anchors
+                && hiddenLines == other.hiddenLines;
+        }
     };
     enum class Interaction { None, Handle, AutoExplode };
 
@@ -199,6 +255,9 @@ private:
     bool snapEnabled_{true};
     double translationStep_{5.0};
     double rotationStep_{15.0};
+    bool linesShown_{true};
+    QString lineStyle_{QStringLiteral("dashed")};
+    QHash<QString, Anchor> seatAxes_;
 
     Interaction interaction_{Interaction::None};
     State interactionStart_;

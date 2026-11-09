@@ -10,6 +10,7 @@
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/HandleRingGeometry.h"
+#include "app/render/ExplodeLineGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/worker/WorkerLaunch.h"
 #include "app/models/ThemePreference.h"
@@ -100,6 +101,7 @@ int main(int argc, char* argv[])
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
     qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
+    qmlRegisterType<loupe::app::render::ExplodeLineGeometry>("Loupe.App", 1, 0, "ExplodeLineGeometry");
     // One per engine (the app has one). Checks GitHub for a newer release at launch (#3).
     qmlRegisterSingletonType<loupe::app::platform::UpdateController>("Loupe.App", 1, 0, "Updates",
         [](QQmlEngine*, QJSEngine*) -> QObject* { return new loupe::app::platform::UpdateController; });

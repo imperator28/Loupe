@@ -10,6 +10,7 @@
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/HandleRingGeometry.h"
+#include "app/render/ExplodeLineGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/tools/CaptureController.h"
 #include "app/tools/MeasurementController.h"
@@ -103,6 +104,7 @@ private slots:
     void viewportCaptureUsesRequestedRenderResolution();
     void aCaptureHoldsTheMeasurementOnlyWhenAskedAndWhereItIs();
     void aRoundFaceOffersItsAxisAndACornerStillWins();
+    void aMovedPartIsDrawnWithItsExplodeLine();
     void viewportDrawsAFacingFaceInItsPickedColour();
     void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
     void explodedViewHandlesMoveAndTurnTheSelection();
@@ -133,6 +135,7 @@ void QmlSmokeTest::initTestCase()
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
     qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
+    qmlRegisterType<loupe::app::render::ExplodeLineGeometry>("Loupe.App", 1, 0, "ExplodeLineGeometry");
     // One per engine (the app has one). Checks GitHub for a newer release at launch (#3).
     qmlRegisterSingletonType<loupe::app::platform::UpdateController>("Loupe.App", 1, 0, "Updates",
         [](QQmlEngine*, QJSEngine*) -> QObject* { return new loupe::app::platform::UpdateController; });
@@ -1378,6 +1381,97 @@ void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
                                   qPrintable(QStringLiteral("%1 %2: %3").arg(QString::fromLatin1(file), QString::fromLatin1(splitterName))
                                                  .arg(panel->width())), 3000);
     }
+}
+
+void QmlSmokeTest::aMovedPartIsDrawnWithItsExplodeLine()
+{
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("explodedLayoutEnabled"), true}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(320, 240);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(320, 240));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    const QByteArray cube = QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7]}" );
+    // The explode controller learns the parts from the document; here, from the test.
+    controller.explodeController().setHierarchy({{QStringLiteral("moved"), QString{}}, {QStringLiteral("still"), QString{}}});
+    for (const auto& node : {QStringLiteral("moved"), QStringLiteral("still")}) {
+        controller.explodeController().includePartBounds(node, {-1, -1, -1}, {1, 1, 1});
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, node), Q_ARG(QString, node + QStringLiteral("-segment")),
+                                          Q_ARG(QString, QStringLiteral("#67d5c0")), Q_ARG(QByteArray, cube)));
+    }
+    QTest::qWait(200);
+    auto* lines = viewport->findChild<QObject*>(QStringLiteral("explodeLines"));
+    QVERIFY(lines != nullptr);
+    auto* geometry = lines->property("geometry").value<QObject*>();
+    QVERIFY(geometry != nullptr);
+    QCOMPARE(geometry->property("segmentCount").toInt(), 0);
+
+    auto* explode = controller.property("explode").value<QObject*>();
+    QVERIFY(explode != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(explode, "translateBy", Q_ARG(QStringList, QStringList{QStringLiteral("moved")}),
+                                      Q_ARG(QVector3D, QVector3D(0, 0, 30))));
+    QTRY_VERIFY_WITH_TIMEOUT(geometry->property("segmentCount").toInt() > 0, 2000);
+    QVERIFY(lines->property("visible").toBool());
+    // Only the moved part has a line; putting it back takes the line away.
+    QVariantList list;
+    QVERIFY(QMetaObject::invokeMethod(explode, "explodeLines", Q_RETURN_ARG(QVariantList, list)));
+    QCOMPARE(list.size(), 1);
+    QCOMPARE(list.front().toMap().value(QStringLiteral("nodeId")).toString(), QStringLiteral("moved"));
+    QVERIFY(QMetaObject::invokeMethod(explode, "resetNode", Q_ARG(QString, QStringLiteral("moved"))));
+    QTRY_COMPARE_WITH_TIMEOUT(geometry->property("segmentCount").toInt(), 0, 2000);
+    QVERIFY(!lines->property("visible").toBool());
+
+    // A pin in a bore, both round about the same line along z: pulled out, the pin's line runs
+    // along that shared axis, as a centerline.
+    const auto roundPart = [&](const QString& id, const float radius, const float z0, const float z1) {
+        QVector<float> vertices;
+        QVector<float> normals;
+        QVector<quint32> indices;
+        for (int column = 0; column <= 8; ++column) {
+            const auto angle = static_cast<float>(column) / 8.0F * static_cast<float>(std::numbers::pi / 2.0);
+            for (const auto z : {z0, z1}) {
+                vertices << 20.0F + radius * std::cos(angle) << radius * std::sin(angle) << z;
+                normals << std::cos(angle) << std::sin(angle) << 0.0F;
+            }
+        }
+        for (quint32 column = 0; column < 8; ++column)
+            indices << column * 2 << column * 2 + 1 << column * 2 + 3 << column * 2 << column * 2 + 3 << column * 2 + 2;
+        loupe::protocol::TopologyRange range{9, loupe::protocol::TopologyKind::Face, 0, static_cast<quint32>(indices.size()), 10.0F, radius};
+        range.axisOrigin = {20.0F, 0.0F, 0.0F};
+        range.axisDirection = {0.0F, 0.0F, 1.0F};
+        const loupe::protocol::MeshPayload mesh{1, 1, id, id, id + QStringLiteral("-segment"), QStringLiteral("#67d5c0"), 1,
+                                                vertices, normals, indices, {range}};
+        controller.explodeController().includePartBounds(id, {20.0F - radius, -radius, z0}, {20.0F + radius, radius, z1});
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, id), Q_ARG(QString, id + QStringLiteral("-segment")),
+                                          Q_ARG(QString, QStringLiteral("#67d5c0")), Q_ARG(QByteArray, loupe::protocol::encodeGeometry(mesh))));
+    };
+    controller.explodeController().setHierarchy({{QStringLiteral("pin"), QString{}}, {QStringLiteral("bore"), QString{}}});
+    roundPart(QStringLiteral("pin"), 2.0F, 0.0F, 10.0F);
+    roundPart(QStringLiteral("bore"), 2.05F, 2.0F, 8.0F);
+    QVERIFY(QMetaObject::invokeMethod(explode, "translateBy", Q_ARG(QStringList, QStringList{QStringLiteral("pin")}),
+                                      Q_ARG(QVector3D, QVector3D(0, 0, 25))));
+    const auto pinLineIsACenterline = [&]() {
+        QVariantList now;
+        QMetaObject::invokeMethod(explode, "explodeLines", Q_RETURN_ARG(QVariantList, now));
+        if (now.size() != 1) return false;
+        const auto segments = now.front().toMap().value(QStringLiteral("segments")).toList();
+        return segments.size() == 1 && segments.front().toMap().value(QStringLiteral("centerline")).toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(pinLineIsACenterline(), 3000);
 }
 
 void QmlSmokeTest::aRoundFaceOffersItsAxisAndACornerStillWins()

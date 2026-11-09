@@ -47,6 +47,9 @@ public:
     // the face's area centre to aim at and, when the face has one, its longest straight
     // boundary edge, which the caller can square the view up against.
     Q_INVOKABLE [[nodiscard]] QVariantMap faceViewFor(quint32 topologyId) const;
+    // Every distinct centerline of this mesh's round faces, coaxial faces counted once, in the
+    // mesh's own coordinates: [{origin, direction, radiusMm}].
+    Q_INVOKABLE [[nodiscard]] QVariantList faceAxes() const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
     // The face as a measurement pick (a tools::MeasureEntity), in scene coordinates through
     // `toScene` (the drawing model's scene transform): flat or not, its plane, its exact area
