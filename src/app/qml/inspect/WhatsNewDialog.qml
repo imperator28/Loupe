@@ -337,7 +337,7 @@ Dialog {
     onCurrentIndexChanged: if (opened) contentFade.restart()
     SequentialAnimation {
         id: contentFade
-        NumberAnimation { target: rows; property: "opacity"; to: 0.35; duration: 0 }
+        PropertyAction { target: rows; property: "opacity"; value: 0.35 }
         NumberAnimation { target: rows; property: "opacity"; to: 1; duration: root.theme ? root.theme.durStandard : 0; easing.type: Easing.OutCubic }
         ScriptAction { script: list.contentY = 0 }
     }
