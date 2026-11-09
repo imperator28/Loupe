@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.1.6-beta.5
+
+A testing build that picks the centerlines of round features, draws explode lines, adds
+touch support, selects every part with Cmd/Ctrl+A, and puts measurements back into
+captures. Published as a pre-release; everything in v0.1.6-beta.4 is included.
+
+### New
+
+- **Centerlines** (#40): hover a round face (a hole, boss, pin or fillet) and its axis is
+  drawn as a dash-dot centerline over the feature and every coaxial face of the part: a
+  counterbore and its hole are one axis. The axis is exact, read from the CAD geometry.
+  - Point to point measures to it: square from a point, between two parallel axes, or the
+    closest approach of two skew ones. Angle takes it as a straight edge.
+  - A pivot picked on an axis lines the handle up with it, to slide along a shaft or turn
+    about a hinge.
+  - Section cuts through a round face's axis, facing you, or across it with Alt.
+  - Alt takes the face (or a point on it) instead of the axis, and the other way round.
+    Corners, midpoints and hole centres still snap first.
+- **Explode lines** (#41): a thin dashed line from where each moved part seats to where it
+  is now, drawn in the scene (parts in front hide it) and in captures.
+  - A pin in its bore or a screw in its hole is lined along the shared axis, as a centerline.
+  - In the Explode panel: lines on or off, dashed or centerline; for the selected part, pick
+    where its line starts (a corner, a hole's centre or an axis), go back to its centre, or
+    hide its line. These are saved with explode layouts.
+- **Touch** (#42), on Windows touchscreens and touch Macs:
+  - One finger orbits, two fingers pan, pinch zooms, and twisting rolls.
+  - Fingers get more slop before a tap becomes a drag, and bigger targets.
+  - A double tap fits the part, or everything on empty space.
+  - Press and hold opens the menu. In Measure, Section and pivot picks it aims instead:
+    lift to take what is shown.
+  - Not yet tried on touch hardware.
+- **Cmd/Ctrl+A** selects every part shown in Inspect, and checks every part in Export.
+
+### Fixed
+
+- **Capture with measurements** (#43): "Include active measurement" put nothing in the
+  image since the measure rework. The measurements are back, where they are on the model,
+  at any capture size.
+- **Measure drew outside the viewport** (#39): a highlighted edge running off the view went
+  on over the panels beside it, and a line passing behind the camera was drawn mirrored.
+  Both are cut where they should be.
+- The first open of each file after updating rebuilds its cache, since round faces now
+  carry their axis.
+
 ## v0.1.6-beta.4
 
 A testing build that opens the launch file sooner, exports assemblies with repeated parts,
