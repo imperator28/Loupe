@@ -35,6 +35,9 @@ public:
     Q_INVOKABLE void beginCapture();
     Q_INVOKABLE void setCaptureProgress(double progress, const QString& message);
     Q_INVOKABLE void failCapture(const QString& message);
+    // The 3D render with the measurement overlay drawn over it, the overlay stretched to the
+    // render's size when the two differ. A null overlay returns the render unchanged.
+    Q_INVOKABLE QImage composeOverlay(const QImage& render, const QImage& overlay) const;
     Q_INVOKABLE bool saveImage(const QImage& image, const QUrl& destination);
     Q_INVOKABLE bool copyImageToClipboard(const QImage& image);
     [[nodiscard]] QString format() const { return QStringLiteral("png"); }

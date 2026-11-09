@@ -2147,32 +2147,47 @@ Item {
         orthographicCamera.horizontalMagnification = navigation.orthographicMagnification * capture.scale
         orthographicCamera.verticalMagnification = navigation.orthographicMagnification * capture.scale
 
+        // The measurements are drawn over the view, not in it, so the view's grab cannot hold
+        // them: when asked for, the overlay is grabbed at the same size and laid over it, its
+        // lines and text scaled with the capture as the model is.
+        const withMeasurements = capture.includeMeasurements && measurementOverlay.visible
+
+        const finish = function() {
+            view.explicitTextureWidth = 0
+            view.explicitTextureHeight = 0
+            orthographicCamera.horizontalMagnification = navigation.orthographicMagnification
+            orthographicCamera.verticalMagnification = navigation.orthographicMagnification
+            viewportVisualTheme.transparentCapture = false
+            root.captureInProgress = false
+            root.captureUiHidden = false
+            root.applySection()
+        }
+        const fail = function() {
+            capture.failCapture(qsTr("Capture failed: the render could not start."))
+            finish()
+        }
+
         Qt.callLater(function() {
             Qt.callLater(function() {
                 capture.setCaptureProgress(0.48, qsTr("Rendering at %1×…").arg(capture.scale.toFixed(2)))
-                const started = view.grabToImage(function(result) {
-                    capture.setCaptureProgress(0.82, encodingMessage)
-                    onResult(capture, result.image)
-                    view.explicitTextureWidth = 0
-                    view.explicitTextureHeight = 0
-                    orthographicCamera.horizontalMagnification = navigation.orthographicMagnification
-                    orthographicCamera.verticalMagnification = navigation.orthographicMagnification
-                    viewportVisualTheme.transparentCapture = false
-                    root.captureInProgress = false
-                    root.captureUiHidden = false
-                    root.applySection()
+                // Each image is handed to C++ straight from its grab result: kept in a JS variable
+                // it is no longer taken as a QImage argument.
+                const started = view.grabToImage(function(render) {
+                    if (!withMeasurements) {
+                        capture.setCaptureProgress(0.82, encodingMessage)
+                        onResult(capture, render.image)
+                        finish()
+                        return
+                    }
+                    capture.setCaptureProgress(0.66, qsTr("Adding measurements…"))
+                    const overlayStarted = measurementOverlay.grabToImage(function(overlay) {
+                        capture.setCaptureProgress(0.82, encodingMessage)
+                        onResult(capture, capture.composeOverlay(render.image, overlay.image))
+                        finish()
+                    }, grabSize)
+                    if (!overlayStarted) fail()
                 }, grabSize)
-                if (!started) {
-                    capture.failCapture(qsTr("Capture failed: the render could not start."))
-                    view.explicitTextureWidth = 0
-                    view.explicitTextureHeight = 0
-                    orthographicCamera.horizontalMagnification = navigation.orthographicMagnification
-                    orthographicCamera.verticalMagnification = navigation.orthographicMagnification
-                    viewportVisualTheme.transparentCapture = false
-                    root.captureInProgress = false
-                    root.captureUiHidden = false
-                    root.applySection()
-                }
+                if (!started) fail()
             })
         })
     }

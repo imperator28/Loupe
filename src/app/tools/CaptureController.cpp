@@ -3,6 +3,7 @@
 #include <QClipboard>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QPainter>
 #include <QSaveFile>
 
 #include <png.h>
@@ -212,6 +213,22 @@ void CaptureController::failCapture(const QString& message)
     statusMessage_ = message;
     emit progressChanged();
     emit statusChanged();
+}
+
+QImage CaptureController::composeOverlay(const QImage& render, const QImage& overlay) const
+{
+    if (render.isNull() || overlay.isNull()) return render;
+    QImage composed = render.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    composed.setDevicePixelRatio(1.0);
+    QPainter painter(&composed);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    QImage layer = overlay.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    layer.setDevicePixelRatio(1.0);
+    painter.drawImage(QRect(QPoint(0, 0), composed.size()), layer);
+    painter.end();
+    composed.setDevicePixelRatio(render.devicePixelRatio());
+    return composed;
 }
 
 bool CaptureController::saveImage(const QImage& image, const QUrl& destination)
