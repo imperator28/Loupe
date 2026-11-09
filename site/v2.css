@@ -994,15 +994,33 @@ html:not(.preload) .theater:not(.motion) .stage-copy { position: static; grid-co
 html:not(.preload) .theater:not(.motion) .sc { position: static; min-height: 70vh; padding-top: 10vh; }
 html:not(.preload) .theater:not(.motion) .pops, html:not(.preload) .theater:not(.motion) .rail { display: none; }
 
+/* ---------- Story layout: chosen by shape as well as width (layoutMode() in v2.js) ----------
+   The script sets .compact on the app wherever it is drawn small, html.stack when the app sits
+   above the copy (portrait phones, near-square foldables such as an unfolded Galaxy Z Fold), and
+   html.no-rail where the workspace cards don't fit. A landscape phone or foldable gets the
+   side-by-side layout, so these follow the layout rather than a width breakpoint. */
+.app.compact { width: 980px; height: 633px; }
+.app.compact .mac-bar span:not(.mb-r) { display: none; }
+.app.compact .xnotice { width: 330px; }
+.app.compact .app-body { grid-template-columns: 0 1fr 0; gap: 0; }
+.app.compact .side { visibility: hidden; }
+html.stack .split-lines { display: none !important; }
+html.stack .fchip { width: calc(50% - 8px) !important; }
+html.no-rail .rail { display: none; }
+/* a scene's display with no room under its copy (a short screen) is left out, not cut off */
+.pops .no-room { display: none !important; }
+/* Short screens (a phone or a foldable's cover screen on its side, or a short portrait cover
+   screen): tighter copy, so the scene's display keeps some room under it */
+@media (max-height: 699px) and (max-width: 1199px) {
+  .stage-copy .sc h2 { font-size: 1.3rem; margin-bottom: 0.35em; }
+  .stage-copy .sc p { font-size: 0.86rem; line-height: 1.45; }
+  .stage-copy .ws-list li { padding-top: 6px; padding-bottom: 6px; }
+}
+
 /* ---------- Narrow screens ---------- */
 @media (max-width: 899px) {
-  .app.compact { width: 980px; height: 633px; }
-  .app.compact .mac-bar span:not(.mb-r) { display: none; }
-  .app.compact .xnotice { width: 330px; }
   .sc h2 { font-size: 1.55rem; margin-bottom: 0.4em; }
   .sc p { font-size: 0.95rem; line-height: 1.5; }
-  .split-lines { display: none !important; }
-  .fchip { width: calc(50% - 8px) !important; }
   .of-body { grid-template-columns: 1fr; }
   .of-thumb { display: none; }
   .of-tree li { height: 17px; font-size: 12px; }
@@ -1012,9 +1030,6 @@ html:not(.preload) .theater:not(.motion) .pops, html:not(.preload) .theater:not(
   .flow-step span { display: none; }
   .flow-loupe b { display: none; }
   .hero-copy .dl { height: 42px; padding: 0 14px; }
-  .app.compact .app-body { grid-template-columns: 0 1fr 0; gap: 0; }
-  .app.compact .side { visibility: hidden; }
-  .rail { display: none; }
   .png { width: calc(var(--aw) * 0.5); left: calc(var(--ax) + var(--aw) * 0.46); top: calc(var(--ay) + var(--ah) * 0.35); }
   .files, .race, .slice, .mass, .onefile, .outline { top: calc(var(--cy) + var(--ch, 180px)); }
   .firstrun { grid-template-columns: 1fr; }
@@ -1446,3 +1461,14 @@ body { background: transparent; }
 .firstrun .fr-guide { margin-top: 12px; height: 34px; padding: 0 14px; border: 0; border-radius: 9px; cursor: pointer; font: 600 13.5px var(--body); color: var(--text-1); background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--border-subtle); }
 .firstrun .fr-guide:hover { background: #2c3245; }
 html.dg-open { overflow: hidden; }
+/* The first-run guide on a short landscape screen (a phone or foldable on its side): picture and
+   step side by side, so both fit without scrolling */
+@media (max-height: 560px) and (min-width: 540px) {
+  .dg-in { gap: 12px; padding: 14px 18px; }
+  .dg-head p { display: none; }
+  .dg-head h2 { font-size: 1.15rem; margin: 0; }
+  .dg-ok, .dg-x { width: 32px; height: 32px; }
+  .dg-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .dg-steps li:not(.on) { display: none; }
+  .dg-alt { display: none !important; }
+}

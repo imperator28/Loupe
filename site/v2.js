@@ -790,7 +790,7 @@ function drawSplit() {
     });
   }
   if (!on) { laneRank = null; return; }
-  if (narrow()) { // phones: the app sits above the text, so the files simply fill in below
+  if (stacked()) { // the app sits above the text, so the files simply fill in below
     splitSvg.innerHTML = '';
     const colW = $('#pop-files').offsetWidth / 2;
     fileChips.forEach((e, i) => {
@@ -1281,6 +1281,23 @@ function drawMeasureModes() {
 // ---------------------------------------------------------------------------------------------
 let R0, R1, R2, rigBox, tabRects = [], railStep = 0, appScale = 0.5, effScale = 0.5;
 const narrow = () => innerWidth < 900;
+// How the story is laid out: 'side' (the copy beside the app) or 'stack' (the app above the copy).
+// Shape decides as much as width: a landscape phone, or a foldable's screen turned sideways
+// (iPhone Duo, either display), goes side by side, or the app would fill the screen and push the
+// copy off it; a near-square screen (an unfolded Galaxy Z Fold, about 1:1.1) stacks, so the app
+// can be drawn large enough to read instead of sitting small beside the copy.
+const layoutMode = () => {
+  const vw = innerWidth, vh = innerHeight, aspect = vw / vh;
+  if (vw >= 1200 || aspect >= 1.25) return 'side';
+  if (vw < 900) return 'stack';
+  return aspect < 1.15 ? 'stack' : 'side';
+};
+const stacked = () => layoutMode() === 'stack';
+// The app drawn at its compact size (980 wide, no side panels): wherever it is shown small.
+const compactApp = () => narrow() || stacked();
+// The smallest each scene's display is still worth showing at; with less room under the copy
+// (a short screen) it is left out rather than cut off at the bottom of the screen.
+const POP_MIN = { 'pop-race': 140, 'pop-layers': 110, 'pop-explode': 170, 'pop-measure': 130, 'pop-slice': 90, 'pop-mass': 150, 'pop-onefile': 170, 'pop-outline': 110 };
 
 const POP_SCENE = { 'pop-race': 'speed', 'pop-layers': 'present', 'pop-explode': 'explode', 'pop-measure': 'measure', 'pop-slice': 'section', 'pop-mass': 'mass', 'pop-onefile': 'trim', 'pop-outline': 'drawing' };
 const COPY_MAX = 520; // widest the scene copy and its cards get, in px (before the big-display scale)
@@ -1294,14 +1311,19 @@ function measure() {
     // the laptop (lid + base) is 0.5941 of its width tall: size it so all of it shows on load
     rig.style.setProperty('--lw', `${Math.max(300, Math.min(1120, vw * 0.84, (vh - rigTop - 18) / 0.5941))}px`);
   }
-  app.classList.toggle('compact', narrow());
+  const stack = stacked(), compact = compactApp();
+  // the rail of workspace cards needs a wide app and the height under it
+  const railOn = !compact && vh >= 600;
+  document.documentElement.classList.toggle('stack', stack);
+  document.documentElement.classList.toggle('no-rail', !railOn);
+  app.classList.toggle('compact', compact);
   VW = viewportEl.clientWidth; VH = viewportEl.clientHeight; setFrustum();
   if (renderer) { renderer.setSize(VW, VH, false); renderer.render(scene, camera); }
 
   const sr = screenEl.getBoundingClientRect(), rr = rig.getBoundingClientRect(), tr = theater.getBoundingClientRect();
   rigBox = { x: rr.left - tr.left, y: rr.top - tr.top };
   R0 = { x: sr.left - tr.left, y: sr.top - tr.top, w: sr.width };
-  appScale = sr.width / (narrow() ? 980 : 1728); // the app's own size: 1728 x 1117, a 16-inch MacBook Pro at its default scale
+  appScale = sr.width / (compact ? 980 : 1728); // the app's own size: 1728 x 1117, a 16-inch MacBook Pro at its default scale
   app.style.setProperty('--as', appScale);
   if (renderer && !motion) { renderer.setPixelRatio(Math.min(3, Math.max(1, devicePixelRatio * appScale))); renderer.setSize(VW, VH, false); }
   effScale = 0.001; // force a buffer resize on the next placeRig()
@@ -1313,12 +1335,13 @@ function measure() {
 
   // R2: the stage position
   let cx, cy, cw, pz = 1;
-  if (!narrow()) {
-    const railH = 64 + 18;
-    const w2 = Math.min(vw * 0.56, (vh - nav - railH - 56) * SA, 1500);
+  if (!stack) {
+    const railH = railOn ? 64 + 18 : 0, small = vw < 900;
+    // a small landscape screen splits about evenly, so the copy column stays readable
+    const w2 = Math.min(vw * (small ? 0.5 : 0.56), (vh - nav - railH - (small ? 24 : 56)) * SA, 1500);
     // Copy column beside the stage, capped at a readable width; on a big display the pair is
     // centred as one block instead of pinned to the two edges with a gulf between them.
-    const margin = Math.max(24, vw * 0.035), gap = clamp(vw * 0.04, 32, 96);
+    const margin = small ? 16 : Math.max(24, vw * 0.035), gap = small ? 20 : clamp(vw * 0.04, 32, 96);
     // On a big display the stage grows with the window, so the copy and its cards grow too
     // (up to 1.4x), or they read like a phone layout beside it.
     pz = clamp(Math.min(vw / 1600, vh / 900), 1, 1.4);
@@ -1327,11 +1350,16 @@ function measure() {
     const x2 = cx + cw + gap;
     const y2 = nav + (vh - nav - (w2 / SA + railH)) / 2;
     R2 = { x: x2, y: y2, w: w2 };
-    cy = y2 + 8;
+    // on a short screen the copy starts under the nav, not level with the app, to keep its room
+    cy = vh < 700 ? nav + 14 : y2 + 8;
   } else {
-    const w2 = vw - 24;
-    R2 = { x: 12, y: nav + 12, w: w2 };
-    cx = 20; cw = vw - 40; cy = R2.y + w2 / SA + 22;
+    // The app across the top, at most about half the height so the copy has the rest. On a
+    // phone that is the full width; on a near-square screen it is centred, with the copy
+    // under it at the same width.
+    const w2 = Math.min(vw - 24, (vh - nav) * 0.5 * SA);
+    const x2 = (vw - w2) / 2;
+    R2 = { x: x2, y: nav + 12, w: w2 };
+    cx = x2 + 8; cw = w2 - 16; cy = R2.y + w2 / SA + 22;
   }
   const s = theater.style;
   s.setProperty('--pz', pz.toFixed(3));
@@ -1349,14 +1377,19 @@ function measure() {
     el.style.top = `${top}px`;
     el.style.setProperty('--avail', `${Math.max(110, limit - top)}px`);
     if (id === 'pop-mass') el.classList.toggle('tight', limit - top < 370);
+    el.classList.toggle('no-room', limit - top < POP_MIN[id]);
   }
   const ft = below('split'), benchH = $('#pop-bench').offsetHeight || 140;
-  chipStep = narrow() ? 30 : Math.max(22, Math.min(34, Math.floor((limit - ft - benchH - 12) / 8)));
+  const rowsN = stack ? 4 : 8;
+  chipStep = stack ? 30 : Math.max(22, Math.min(34, Math.floor((limit - ft - benchH - 12) / 8)));
   $('#pop-files').style.top = `${ft}px`;
   $('#pop-files').style.setProperty('--chip-h', `${chipStep - 6}px`);
-  const rowsN = narrow() ? 4 : 8;
   $('#pop-files').style.height = `${chipStep * rowsN}px`;
   $('#pop-bench').style.top = `${ft + chipStep * rowsN + 12}px`;
+  // the exported files, and the race under them, only where they fit
+  $('#pop-files').classList.toggle('no-room', limit - ft < chipStep * rowsN);
+  splitSvg.classList.toggle('no-room', limit - ft < chipStep * rowsN);
+  $('#pop-bench').classList.toggle('no-room', limit - ft < chipStep * rowsN + 12 + benchH);
   laneRank = null;
   xhandle?.size();
 
