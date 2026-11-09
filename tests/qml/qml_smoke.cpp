@@ -38,6 +38,7 @@
 #include <QQmlPropertyMap>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QPointingDevice>
 #include <QTemporaryDir>
 #include <QScopeGuard>
 #include <QtTest/QSignalSpy>
@@ -105,6 +106,7 @@ private slots:
     void aCaptureHoldsTheMeasurementOnlyWhenAskedAndWhereItIs();
     void aRoundFaceOffersItsAxisAndACornerStillWins();
     void aMovedPartIsDrawnWithItsExplodeLine();
+    void aFingerGetsBiggerTargetsAndALongPressOpensTheMenu();
     void viewportDrawsAFacingFaceInItsPickedColour();
     void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
     void explodedViewHandlesMoveAndTurnTheSelection();
@@ -1381,6 +1383,55 @@ void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
                                   qPrintable(QStringLiteral("%1 %2: %3").arg(QString::fromLatin1(file), QString::fromLatin1(splitterName))
                                                  .arg(panel->width())), 3000);
     }
+}
+
+void QmlSmokeTest::aFingerGetsBiggerTargetsAndALongPressOpensTheMenu()
+{
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(400, 300);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(400, 300));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QVERIFY(!viewport->property("touchInput").toBool());
+    const auto mouseVertexPixels = viewport->property("measureVertexPixels").toDouble();
+
+    // A finger on the touchscreen, held still on empty space: touch is noticed, the snap radius
+    // grows, and the view's menu comes up after the hold.
+    std::unique_ptr<QPointingDevice> screen(QTest::createTouchDevice(QInputDevice::DeviceType::TouchScreen));
+    QTest::touchEvent(&window, screen.get()).press(0, QPoint(200, 150));
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("touchInput").toBool(), 1000);
+    QVERIFY(viewport->property("measureVertexPixels").toDouble() > mouseVertexPixels);
+    auto* menu = viewport->findChild<QObject*>(QStringLiteral("viewportContextMenu"));
+    QVERIFY(menu != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(menu->property("opened").toBool() || menu->property("visible").toBool(), 2000);
+    QTest::touchEvent(&window, screen.get()).release(0, QPoint(200, 150));
+    QMetaObject::invokeMethod(menu, "close");
+    QTRY_VERIFY_WITH_TIMEOUT(!menu->property("visible").toBool(), 2000);
+
+    // A quick tap does not open it.
+    QTest::touchEvent(&window, screen.get()).press(0, QPoint(150, 120));
+    QTest::qWait(80);
+    QTest::touchEvent(&window, screen.get()).release(0, QPoint(150, 120));
+    QTest::qWait(600);
+    QVERIFY(!menu->property("visible").toBool());
+
+    // A mouse moving over the view (hovering) is a mouse again.
+    QTest::mouseMove(&window, QPoint(100, 100));
+    QTest::mouseMove(&window, QPoint(120, 110));
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("touchInput").toBool(), 1000);
+    QCOMPARE(viewport->property("measureVertexPixels").toDouble(), mouseVertexPixels);
 }
 
 void QmlSmokeTest::aMovedPartIsDrawnWithItsExplodeLine()

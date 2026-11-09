@@ -30,6 +30,8 @@ Item {
     property var hover: null
     property point pointer: Qt.point(0, 0)
     property bool showHover: true
+    // The pointer is a finger (aiming by press and hold): the chip goes above it, not under it.
+    property bool chipAbovePointer: false
     property bool showResult: true
     // The measurement in progress, apart from the pinned ones.
     property bool showCurrent: true
@@ -376,7 +378,9 @@ Item {
                  && String(root.hoverInfo.title).length > 0
         // Below and right of the pointer, flipped where it would leave the viewport.
         x: Math.round(root.pointer.x + gap + width > root.width ? root.pointer.x - gap - width : root.pointer.x + gap)
-        y: Math.round(root.pointer.y + gap + height > root.height ? root.pointer.y - gap - height : root.pointer.y + gap)
+        y: Math.round(root.chipAbovePointer
+                      ? (root.pointer.y - 56 - height >= 0 ? root.pointer.y - 56 - height : root.pointer.y + 56)
+                      : root.pointer.y + gap + height > root.height ? root.pointer.y - gap - height : root.pointer.y + gap)
         width: Math.min(260, Math.max(titleRow.implicitWidth, root.hoverEligible ? hintWidth.width : reasonLabel.implicitWidth) + 20)
         TextMetrics {
             id: hintWidth

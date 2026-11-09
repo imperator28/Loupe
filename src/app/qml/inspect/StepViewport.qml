@@ -112,8 +112,11 @@ Item {
     // Alt held at the last hover or click: on a round face, the picker takes the face (or the
     // point on it) where it would take the axis, and the axis where it would take the face.
     property bool pickAlternate: false
-    readonly property real measureEdgePixels: 7
-    readonly property real measureVertexPixels: 10
+    // The last input was a finger on a touchscreen (#42): no hover, wider slop, bigger targets.
+    // A pen or mouse is not a finger.
+    property bool touchInput: false
+    readonly property real measureEdgePixels: touchInput ? 16 : 7
+    readonly property real measureVertexPixels: touchInput ? 22 : 10
     property var acceptedTopologies: []
     readonly property bool hasAcceptedFaceHighlight: {
         for (const pick of acceptedTopologies) {
@@ -328,7 +331,7 @@ Item {
     // Auto-explode and reset run as short animations over the controller's state.
     property real autoExplodeAnimationFactor: 0
 
-    ExplodeHandleMath { id: handleMath }
+    ExplodeHandleMath { id: handleMath; touch: root.touchInput }
 
     function worldPerPixelAt(point) {
         if (navigation.projectionMode === "orthographic")
@@ -2292,6 +2295,16 @@ Item {
             showHoverTopology(null)
     }
 
+    // The menu a right-click (or a long press) opens: the part's, on a part, else the view's.
+    function openContextMenuAt(x, y) {
+        if (root.componentContextActionsEnabled && root.contextPickAt(x, y)) {
+            if (root.presentationOnly) exportComponentContextMenu.popup(x, y)
+            else componentContextMenu.popup(x, y)
+        } else {
+            viewportContextMenu.popup(x, y)
+        }
+    }
+
     function captureToFile(fileUrl) {
         if (!fileUrl) return
         performCapture(qsTr("Encoding PNG…"), function(capture, image) { capture.saveImage(image, fileUrl) })
@@ -2873,6 +2886,15 @@ Item {
         property real rollApplied: 0
         hoverEnabled: true
 
+        // Notices a finger on a touchscreen without taking it, before the touch reaches this
+        // area as a mouse (one finger orbits, a tap selects) or the pinch handler two fingers.
+        PointHandler {
+            id: touchDetector
+            target: null
+            acceptedDevices: PointerDevice.TouchScreen
+            onActiveChanged: if (active) root.touchInput = true
+        }
+
         cursorShape: root.pickingPivot || root.sectionPlanePicking ? Qt.CrossCursor
                    : root.handleDrag || root.handleHover ? Qt.PointingHandCursor : Qt.ArrowCursor
 
@@ -2882,6 +2904,9 @@ Item {
             pressY = mouse.y
             pressButton = mouse.button
             dragging = false
+            aiming = false
+            holdConsumed = false
+            if (root.touchInput && mouse.button === Qt.LeftButton) holdTimer.restart()
             // A press on a handle drags the selection instead of the view.
             if (mouse.button === Qt.LeftButton && root.handlesShown) {
                 const handle = root.handleAt(mouse.x, mouse.y)
@@ -2906,12 +2931,23 @@ Item {
                     return
                 }
                 root.pickAlternate = (mouse.modifiers & Qt.AltModifier) !== 0
+                // Only a mouse or pen hovers: a finger never moves without pressing.
+                root.touchInput = false
+                root.updateHover(mouse.x, mouse.y)
+                return
+            }
+            // Pressed and held in a pick mode: the finger aims, as a mouse hovers.
+            if (aiming) {
                 root.updateHover(mouse.x, mouse.y)
                 return
             }
             const deltaX = mouse.x - pressX
             const deltaY = mouse.y - pressY
-            if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) dragging = true
+            const slop = pointerInputRouter.tapSlop(root.touchInput)
+            if (Math.abs(deltaX) > slop || Math.abs(deltaY) > slop) {
+                dragging = true
+                holdTimer.stop()
+            }
             if (!dragging) return
             // Alt + left drag spins the view in its own plane. Measured as the
             // cursor's angle about the viewport centre rather than a pixels-per-degree
@@ -2966,6 +3002,27 @@ Item {
                 return
             }
             root.pickAlternate = (mouse.modifiers & Qt.AltModifier) !== 0
+            holdTimer.stop()
+            // A long press opened the menu: the lift does nothing more.
+            if (holdConsumed) {
+                holdConsumed = false
+                pressButton = Qt.NoButton
+                navigation.clearPendingOrbitPivot()
+                return
+            }
+            // Aimed with a held finger: lifting it on a part takes what it aimed at, as a click
+            // would; lifting it off every part takes nothing.
+            if (aiming) {
+                aiming = false
+                const lifted = view.pick(mouse.x, mouse.y)
+                if (!lifted.objectHit || !lifted.objectHit.nodeId) {
+                    root.showHoverTopology(null)
+                    pressButton = Qt.NoButton
+                    navigation.clearPendingOrbitPivot()
+                    return
+                }
+                dragging = false
+            }
             // Picking the pivot: a click puts the handle on the part there, selecting nothing.
             if (root.pickingPivot && !dragging && pressButton === Qt.LeftButton) {
                 root.pickPivotAt(mouse.x, mouse.y)
@@ -2990,13 +3047,8 @@ Item {
                 root.pickAt(mouse.x, mouse.y, additive)
                 root.rememberFaceAt(mouse.x, mouse.y)
             }
-            if (!dragging && pressButton === Qt.RightButton && root.contextActionsEnabled) {
-                if (root.componentContextActionsEnabled && root.contextPickAt(mouse.x, mouse.y)) {
-                    if (root.presentationOnly) exportComponentContextMenu.popup(mouse.x, mouse.y)
-                    else componentContextMenu.popup(mouse.x, mouse.y)
-                }
-                else viewportContextMenu.popup(mouse.x, mouse.y)
-            }
+            if (!dragging && pressButton === Qt.RightButton && root.contextActionsEnabled)
+                root.openContextMenuAt(mouse.x, mouse.y)
             pressButton = Qt.NoButton
             rolling = false
             navigation.clearPendingOrbitPivot()
@@ -3004,6 +3056,41 @@ Item {
         onCanceled: {
             root.endHandleDrag(false)
             pressButton = Qt.NoButton
+            holdTimer.stop()
+            aiming = false
+        }
+        // A double tap fits the part under the finger, or everything when it is on nothing.
+        // (A mouse double-click keeps doing what it did.)
+        onDoubleClicked: function(mouse) {
+            if (!root.touchInput || mouse.button !== Qt.LeftButton || root.presentationOnly) return
+            const hit = view.pick(mouse.x, mouse.y)
+            if (hit.objectHit && hit.objectHit.nodeId) {
+                root.controller.selectNode(hit.objectHit.nodeId, false)
+                root.fitSelection()
+            } else {
+                root.fitCamera()
+            }
+        }
+        // Held still: in a pick mode the finger aims (the hover a mouse would give), elsewhere
+        // the menu a right-click opens comes up.
+        property bool aiming: false
+        property bool holdConsumed: false
+        Timer {
+            id: holdTimer
+            interval: pointerInputRouter.pressAndHoldMs
+            repeat: false
+            onTriggered: {
+                if (input.dragging || input.pressButton !== Qt.LeftButton || root.handleDrag) return
+                navigation.clearPendingOrbitPivot()
+                if (root.measurementActive || root.toolPicking || root.faceFrameSelectionEnabled) {
+                    input.aiming = true
+                    root.updateHover(input.pressX, input.pressY)
+                    return
+                }
+                if (!root.contextActionsEnabled) return
+                input.holdConsumed = true
+                root.openContextMenuAt(input.pressX, input.pressY)
+            }
         }
         onExited: {
             root.hoveredNodeId = ""
@@ -3067,8 +3154,10 @@ Item {
         // The hover is for aiming; a capture shows the result only, and only if asked to.
         hover: root.measurementActive || root.toolPicking ? root.hoverTopology : null
         pointer: root.hoverPointer
-        showHover: (root.measurementActive || root.toolPicking) && !root.captureUiHidden && input.containsMouse
-                   && input.pressedButtons === Qt.NoButton
+        showHover: (root.measurementActive || root.toolPicking) && !root.captureUiHidden
+                   && ((input.containsMouse && input.pressedButtons === Qt.NoButton) || input.aiming)
+        // Aimed by a finger: the chip sits above it, where the finger does not cover it.
+        chipAbovePointer: input.aiming
         // A face's plane, previewed as its normal: about a sixteenth of the view's height long.
         normalPreviewLength: root.hoverTopology && root.hoverTopology.info && root.hoverTopology.info.previewAt !== undefined
                              ? root.worldPerPixelAt(root.hoverTopology.info.previewAt) * 56 : 0
@@ -3133,7 +3222,7 @@ Item {
         // drag handled in onWheel above ("pan" mode), which loses nothing by this.
         // A real touchscreen still pans from the gesture, which is its only way to.
         readonly property bool translationPans:
-                !centroid.device || centroid.device.type !== PointerDevice.TouchPad
+                !centroid.device || pointerInputRouter.pinchTranslationPans(centroid.device.type)
 
         onActiveTranslationChanged: {
             if (!active) return
@@ -3166,8 +3255,8 @@ Item {
                  && root.hasSceneBounds && !root.useSectionFallback
         x: root.sectionAnchorScreen.x
         y: root.sectionAnchorScreen.y - height / 2
-        width: Math.max(28, root.sectionProjectedLength)
-        height: 34
+        width: Math.max(root.touchInput ? 44 : 28, root.sectionProjectedLength)
+        height: root.touchInput ? 48 : 34
         rotation: Math.atan2(root.sectionArrowTipScreen.y - root.sectionAnchorScreen.y,
                              root.sectionArrowTipScreen.x - root.sectionAnchorScreen.x) * 180 / Math.PI
         transformOrigin: Item.Left

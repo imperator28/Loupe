@@ -202,6 +202,14 @@ Dialog {
                 }
 
                 GuideSection {
+                    title: qsTr("Touch")
+                    GuideRow { input: ["t:One finger, drag"]; action: qsTr("Orbit about the point under the finger") }
+                    GuideRow { input: ["t:Two fingers, drag", "/", "t:pinch", "/", "t:twist"]; action: qsTr("Pan / zoom about the fingers / roll") }
+                    GuideRow { input: ["t:Tap", "/", "t:double-tap"]; action: qsTr("Select / fit that part, or everything on empty space") }
+                    GuideRow { input: ["t:Press and hold"]; action: qsTr("The menu; in Measure, Section and pivot picks, aim and lift to take") }
+                }
+
+                GuideSection {
                     title: qsTr("Picking points, edges and axes")
                     GuideRow { input: ["t:Hover"]; action: qsTr("See what a click takes: a vertex, a midpoint, a circle's centre, an edge, a face, or a round face's axis") }
                     GuideRow { input: ["k:Alt", "t:+ click"]; action: qsTr("On a round face: the face (or a point on it) instead of its axis, or the other way round") }
