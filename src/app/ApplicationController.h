@@ -240,6 +240,8 @@ public:
     Q_INVOKABLE void selectNode(const QString& nodeId, bool additive);
     // Several at once, the tree's Shift-click range: in place of the selection, or added to it.
     Q_INVOKABLE void selectNodes(const QStringList& nodeIds, const QString& activeNodeId, bool additive);
+    // Every part shown, as Cmd/Ctrl+A selects them: each part with geometry that is not hidden.
+    Q_INVOKABLE void selectAllParts();
     Q_INVOKABLE bool isNodeSelected(const QString& nodeId) const;
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();

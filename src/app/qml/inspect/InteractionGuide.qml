@@ -194,6 +194,7 @@ Dialog {
                     GuideRow { input: ["k:H"]; action: qsTr("Hide the selection") }
                     GuideRow { input: ["k:T", "/", "k:Shift", "+", "k:T"]; action: qsTr("Make the selection transparent / make everything else transparent") }
                     GuideRow { input: ["k:Mod", "+", "k:F"]; action: qsTr("Find a part in the assembly tree") }
+                    GuideRow { input: ["k:Mod", "+", "k:A"]; action: qsTr("Select every part shown (in Export: every part in the list)") }
                     GuideRow { input: ["k:Mod", "+", "k:8"]; action: qsTr("Look straight at the face under the cursor (again: its other side)") }
                     GuideRow { input: ["k:Mod", "+", "k:Shift", "+", "k:H"]; action: qsTr("Show all") }
                     GuideRow { input: ["k:M", "/", "k:S", "/", "k:E", "/", "k:V"]; action: qsTr("Measure / Section / Exploded view / Saved views") }

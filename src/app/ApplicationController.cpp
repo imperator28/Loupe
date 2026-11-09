@@ -504,6 +504,17 @@ void ApplicationController::selectNodes(const QStringList& nodeIds, const QStrin
     setSelection(selected, activeNodeId);
 }
 
+void ApplicationController::selectAllParts()
+{
+    QStringList parts;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it) {
+        if (isNodeVisible(it.key())) parts.append(it.key());
+    }
+    parts.sort();
+    // The part that was active stays active, so the inspector keeps showing it.
+    setSelection(parts, activeNodeId_);
+}
+
 void ApplicationController::setSelection(const QStringList& nodeIds, const QString& activeNodeId)
 {
     QStringList normalized;

@@ -50,6 +50,7 @@ private slots:
     void rejectsNonStepFilesBeforeStartingImport();
     void opensStepThroughWorkerAndRetainsSnapshot();
     void combinesMultiSelectionMassAndVisibilityActions();
+    void selectAllTakesEveryPartShown();
     void reportsWorkerStartupFailure();
     void forwardsWorkerMeshToViewer();
     void replaysGeometryWithoutBlockingTheCaller();
@@ -287,6 +288,32 @@ void ApplicationControllerTest::combinesMultiSelectionMassAndVisibilityActions()
     controller.hideActiveNode();
     QVERIFY(!controller.isNodeVisible(first));
     QVERIFY(!controller.isNodeVisible(second));
+}
+
+void ApplicationControllerTest::selectAllTakesEveryPartShown()
+{
+    // Cmd/Ctrl+A in Inspect: every part with geometry, not the ones hidden, the active one kept.
+    const auto fixture = loupe::tests::writeRepeatedBoxAssembly(QStringLiteral("controller-select-all.step").toStdString(), loupe::tests::FixtureUnit::Millimeter);
+    loupe::app::ApplicationController controller(QStringLiteral(LOUPE_WORKER_PATH));
+    controller.openFile(QUrl::fromLocalFile(QString::fromStdString(fixture.string())));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.importInProgress(), 10'000);
+    const auto snapshot = QJsonDocument::fromJson(controller.snapshotJson().toUtf8()).object();
+    const auto geometry = snapshot.value(QStringLiteral("geometry")).toArray();
+    QVERIFY(geometry.size() >= 2);
+    const auto first = geometry.at(0).toObject().value(QStringLiteral("nodeId")).toString();
+    const auto second = geometry.at(1).toObject().value(QStringLiteral("nodeId")).toString();
+
+    controller.setActiveNodeId(second);
+    controller.selectAllParts();
+    QCOMPARE(controller.selectedNodeCount(), geometry.size());
+    QVERIFY(controller.isNodeSelected(first) && controller.isNodeSelected(second));
+    QCOMPARE(controller.activeNodeId(), second);
+
+    controller.setActiveNodeId(first);
+    controller.hideActiveNode();
+    controller.selectAllParts();
+    QCOMPARE(controller.selectedNodeCount(), geometry.size() - 1);
+    QVERIFY(!controller.isNodeSelected(first));
 }
 
 void ApplicationControllerTest::reportsWorkerStartupFailure()
