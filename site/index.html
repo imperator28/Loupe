@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=JetBrains+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="v2.css?v=20261108p">
+<link rel="stylesheet" href="v2.css?v=20261109a">
 <script>
   // Before first paint: the scroll story will take over, so keep its no-script fallback layout (which
   // shows the second scene's copy beside the laptop) off screen until v2.js sets the story up.
@@ -336,6 +336,25 @@
           </div>
         </div>
       </div>
+      <!-- Explode: the move handle on its own, to try. Arrows slide, rings turn, the ball moves freely. -->
+      <div class="pop xhandle" id="pop-explode">
+        <div class="xh-stage">
+          <canvas id="xh-gl"></canvas>
+          <span class="xh-read" id="xh-read"></span>
+          <span class="xh-snap">Snaps to 5 mm and 15° · <kbd>Shift</kbd> moves freely</span>
+          <button class="xh-back" id="xh-back" type="button" tabindex="-1">Put back</button>
+        </div>
+        <ul class="xh-legend">
+          <li><svg viewBox="0 0 20 20"><path d="M3 10 H14.5 M11 6.2 L15 10 L11 13.8"/></svg>Drag an arrow to slide along it</li>
+          <li><svg viewBox="0 0 20 20"><path d="M13 4.8 A6 6 0 1 1 6.14 5.4 M5.12 8.22 L6.14 5.4 L3.19 5.92"/></svg>Drag a ring to turn</li>
+          <li><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="3.6" class="fill"/></svg>Drag the ball to move anywhere</li>
+        </ul>
+      </div>
+      <!-- Measure: every mode, laid out as the Measure window's picker. -->
+      <div class="pop mgrid" id="pop-measure">
+        <div class="mg-well" id="mg-well" role="list"></div>
+        <p class="mg-hint" id="mg-hint"></p>
+      </div>
       <figure class="pop slice" id="pop-slice">
         <svg viewBox="-42 -4 84 76" id="slice-svg"></svg>
         <figcaption>2D slice at X = 0 · filled + outline</figcaption>
@@ -413,13 +432,13 @@
         <h2>Mass, before anyone asks.</h2>
         <p>Assign materials from a library built around real products: aluminium, zinc alloy, PC, PA, FR4, silicone and more. Read the mass of a part, a subassembly or any selection.</p>
       </article>
-      <article class="sc" data-scene="split">
-        <h2>Every part, its own STEP. In one go.</h2>
-        <p>Tick the parts a vendor needs and Loupe writes each as a separate STEP or STL, named your way, every file checked as it's written. A full CAD program exports the whole assembly or one part at a time, so a handful of parts means an export for each one.</p>
-      </article>
       <article class="sc" data-scene="trim">
         <h2>Trim it down. Send the rest.</h2>
         <p>Hide what shouldn't leave the building and save the rest as one STEP, with the tree, names, colours and units intact. No deleting bodies, no suppressing components, no broken references.</p>
+      </article>
+      <article class="sc" data-scene="split">
+        <h2>Every part, its own STEP. In one go.</h2>
+        <p>Tick the parts a vendor needs and Loupe writes each as a separate STEP or STL, named your way, every file checked as it's written. A full CAD program exports the whole assembly or one part at a time, so a handful of parts means an export for each one.</p>
       </article>
       <article class="sc" data-scene="drawing">
         <h2>Straight to the laser or the waterjet.</h2>
@@ -590,15 +609,120 @@
         <div>
           <h3>First open on macOS</h3>
           <p>Loupe isn't code-signed yet. If macOS says it “is damaged”, open System Settings → Privacy &amp; Security and click <strong>Open Anyway</strong>, or run the <em>Open Loupe (first run)</em> helper in the zip. From Terminal: <code>xattr -dr com.apple.quarantine Loupe.app</code></p>
+          <button class="fr-guide" type="button" data-guide="macos-arm64">Walk me through it</button>
         </div>
         <div>
           <h3>First open on Windows 11</h3>
           <p>Run <code>Loupe.exe</code>. If SmartScreen warns about an unrecognized publisher, choose <strong>More info → Run anyway</strong>. Keep the unzipped folder together; Loupe loads its runtime from it.</p>
+          <button class="fr-guide" type="button" data-guide="windows-x64">Walk me through it</button>
         </div>
       </div>
     </div>
   </section>
 </main>
+
+<!-- After a download: how to open Loupe the first time, step by step, for the platform downloaded.
+     The pictures are simplified sketches of each screen, built in HTML so they stay sharp. -->
+<dialog class="dg" id="dg" aria-labelledby="dg-title">
+  <div class="dg-in">
+    <header class="dg-head">
+      <span class="dg-ok" aria-hidden="true"><svg viewBox="0 0 24 24"><use href="#i-down"/></svg></span>
+      <div>
+        <h2 id="dg-title">Your download has started</h2>
+        <p>Loupe isn't code-signed yet, so the first open takes a few extra clicks. Here's each one.</p>
+      </div>
+      <button class="dg-x" type="button" aria-label="Close" data-close><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </header>
+    <div class="dg-plat" role="tablist" aria-label="Platform">
+      <button type="button" role="tab" data-plat="mac"><svg><use href="#i-apple"/></svg>macOS</button>
+      <button type="button" role="tab" data-plat="win"><svg><use href="#i-windows"/></svg>Windows 11</button>
+    </div>
+
+    <div class="dg-body">
+      <ol class="dg-steps" data-plat="mac">
+        <li><b>Unzip it</b><span>Double-click <em class="dg-zip" data-zip="mac">the zip</em> in your Downloads folder. It unpacks into a folder of the same name.</span></li>
+        <li><b>Run the first-run helper</b><span>In that folder, double-click <em>Open Loupe (first run)</em>. It's a short script that unblocks Loupe and starts it.</span></li>
+        <li><b>Click Done when macOS stops it</b><span>macOS can't check an unsigned script, so it won't run it yet. Click <em>Done</em>, not Move to Trash. On macOS 14 or earlier, right-click the script, choose <em>Open</em>, and skip to the last step.</span></li>
+        <li><b>Allow it in Privacy &amp; Security</b><span>Open <em>System Settings → Privacy &amp; Security</em> and scroll down to Security. Click <em>Open Anyway</em> beside the helper, then confirm with your password or Touch ID.</span></li>
+        <li><b>Loupe opens</b><span>A Terminal window clears the download block on Loupe and launches it. That's the only time: from now on Loupe opens like any other app. Drag it to Applications if you like.</span></li>
+      </ol>
+      <ol class="dg-steps" data-plat="win">
+        <li><b>Extract the zip</b><span>In Downloads, right-click <em class="dg-zip" data-zip="win">the zip</em> and choose <em>Extract All…</em>, then <em>Extract</em>. Run Loupe from the extracted folder, not from inside the zip.</span></li>
+        <li><b>Open Loupe.exe</b><span>Double-click <em>Loupe.exe</em> in the <em>loupe-windows-x64</em> folder. Keep the folder together: Loupe loads its runtime from the files beside it.</span></li>
+        <li><b>Click More info</b><span>SmartScreen hasn't seen Loupe before because it isn't signed, so it shows a warning first. Click <em>More info</em>.</span></li>
+        <li><b>Click Run anyway</b><span>The publisher shows as unknown; that's expected. Click <em>Run anyway</em>. Windows remembers, so Loupe opens straight away from then on.</span></li>
+      </ol>
+
+      <div class="dg-stage" aria-hidden="true">
+        <!-- macOS -->
+        <div class="dg-art" data-art="mac-0">
+          <div class="mw"><div class="mw-bar"><span class="lights"><i></i><i></i><i></i></span><b>Downloads</b></div>
+            <div class="fd"><aside><small>Favourites</small><span>Applications</span><span>Desktop</span><span>Documents</span><span class="on">Downloads</span></aside>
+              <div class="fd-items"><figure class="hl"><span class="ico zip">ZIP</span><figcaption class="dg-zip" data-zip="mac">loupe-macos-arm64.zip</figcaption><i class="cur"></i></figure><figure class="dim"><span class="ico doc"></span><figcaption>quote.pdf</figcaption></figure></div></div></div>
+        </div>
+        <div class="dg-art" data-art="mac-1">
+          <div class="mw"><div class="mw-bar"><span class="lights"><i></i><i></i><i></i></span><b class="dg-dir" data-dir="mac">loupe-macos-arm64</b></div>
+            <div class="fd"><aside><small>Favourites</small><span>Applications</span><span>Desktop</span><span>Documents</span><span class="on">Downloads</span></aside>
+              <div class="fd-items"><figure><span class="ico appi"><img src="icon.svg" alt=""></span><figcaption>Loupe</figcaption></figure><figure class="hl"><span class="ico cmd">&gt;_</span><figcaption>Open Loupe (first run)</figcaption><i class="cur"></i></figure></div></div></div>
+        </div>
+        <div class="dg-art" data-art="mac-2">
+          <div class="mw ghost"><div class="mw-bar"><span class="lights"><i></i><i></i><i></i></span><b class="dg-dir" data-dir="mac">loupe-macos-arm64</b></div><div class="fd"></div></div>
+          <div class="alert">
+            <span class="ico cmd big">&gt;_</span>
+            <b>“Open Loupe (first run).command” Not Opened</b>
+            <p>Apple could not verify “Open Loupe (first run).command” is free of malware that may harm your Mac or compromise your privacy.</p>
+            <div class="alert-btns"><span class="hl">Done<i class="cur"></i></span><span>Move to Trash</span></div>
+          </div>
+        </div>
+        <div class="dg-art" data-art="mac-3">
+          <div class="mw set"><div class="mw-bar"><span class="lights"><i></i><i></i><i></i></span></div>
+            <div class="st"><aside><span>Wi-Fi</span><span>Bluetooth</span><span>Network</span><span>Notifications</span><span>General</span><span>Appearance</span><span class="on">Privacy &amp; Security</span><span>Desktop &amp; Dock</span></aside>
+              <div class="st-main"><b class="st-h">Privacy &amp; Security</b><small>Security</small>
+                <div class="st-row"><span>Allow applications from</span><em>App Store &amp; Known Developers</em></div>
+                <div class="st-row tall"><span>“Open Loupe (first run).command” was blocked to protect your Mac.</span><em class="sbtn hl">Open Anyway<i class="cur"></i></em></div></div></div></div>
+        </div>
+        <div class="dg-art" data-art="mac-4">
+          <div class="mw term"><div class="mw-bar"><span class="lights"><i></i><i></i><i></i></span><b>Open Loupe (first run).command</b></div>
+            <pre>Unblocking: ~/Downloads/<span class="dg-dir" data-dir="mac">loupe-macos-arm64</span>/Loupe.app
+Done — Loupe is launching. You can close this window.</pre></div>
+          <div class="launch"><img src="icon.svg" alt=""><b>Loupe</b><small>Opens normally from now on</small></div>
+        </div>
+        <!-- Windows -->
+        <div class="dg-art" data-art="win-0">
+          <div class="xw"><div class="xw-bar"><b>Downloads</b><span>— ☐ ✕</span></div>
+            <div class="xp"><div class="xp-row sel"><span class="ico zip sm">ZIP</span><span class="dg-zip" data-zip="win">loupe-windows-x64.zip</span><i class="cur"></i></div><div class="xp-row dim"><span class="ico doc sm"></span>quote.pdf</div></div>
+            <div class="ctx"><span>Open</span><span class="hl">Extract All…</span><span>Open with</span><span>Copy as path</span><hr><span>Properties</span></div></div>
+        </div>
+        <div class="dg-art" data-art="win-1">
+          <div class="xw"><div class="xw-bar"><b>loupe-windows-x64</b><span>— ☐ ✕</span></div>
+            <div class="xp"><div class="xp-row dim"><span class="ico fold sm"></span>platforms</div><div class="xp-row dim"><span class="ico fold sm"></span>qml</div>
+              <div class="xp-row sel hl"><span class="ico appi sm"><img src="icon.svg" alt=""></span>Loupe.exe<i class="cur"></i></div>
+              <div class="xp-row dim"><span class="ico doc sm"></span>loupe-worker.exe</div><div class="xp-row dim"><span class="ico doc sm"></span>Qt6Core.dll</div><div class="xp-row dim"><span class="ico doc sm"></span>…</div></div></div>
+        </div>
+        <div class="dg-art" data-art="win-2">
+          <div class="ss"><b>Windows protected your PC</b>
+            <p>Microsoft Defender SmartScreen prevented an unrecognized app from starting. Running this app might put your PC at risk.</p>
+            <p><u class="hl">More info<i class="cur"></i></u></p>
+            <div class="ss-btns"><span>Don't run</span></div></div>
+        </div>
+        <div class="dg-art" data-art="win-3">
+          <div class="ss"><b>Windows protected your PC</b>
+            <p>Microsoft Defender SmartScreen prevented an unrecognized app from starting. Running this app might put your PC at risk.</p>
+            <p>App: Loupe.exe<br>Publisher: Unknown publisher</p>
+            <div class="ss-btns"><span class="hl">Run anyway<i class="cur"></i></span><span>Don't run</span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="dg-foot">
+      <span class="dg-dots" aria-hidden="true"></span>
+      <span class="dg-alt" data-plat="mac">Prefer Terminal? <code>xattr -dr com.apple.quarantine Loupe.app</code></span>
+      <span class="dg-alt" data-plat="win">Nothing happens? Make sure you extracted the zip first.</span>
+      <button class="dg-btn" type="button" data-step="-1">Back</button>
+      <button class="dg-btn primary" type="button" data-step="1">Next</button>
+    </footer>
+  </div>
+</dialog>
 
 <footer class="foot">
   <span>Loupe is open source under the Apache License 2.0.</span>
@@ -607,6 +731,6 @@
 
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js"></script>
-<script type="module" src="v2.js?v=20261108p"></script>
+<script type="module" src="v2.js?v=20261109a"></script>
 </body>
 </html>
