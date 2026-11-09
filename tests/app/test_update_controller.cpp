@@ -40,6 +40,7 @@ private slots:
     void theWindowsSwapAsksForAnAdministratorAtOnceWhenTheFolderIsClosedToTheUser();
 #endif
     void whatsNewIsReadForTheReleaseAndShownOncePerRelease();
+    void whatsNewListsEveryReleaseSinceTheOneUpdatedFrom();
     void everyReleaseShipsWhatsNewWithIconsThatExist();
     void launchSweepsTheTempFilesOfLoupesThatAreGone();
 };
@@ -344,6 +345,36 @@ void UpdateControllerTest::whatsNewIsReadForTheReleaseAndShownOncePerRelease()
     QVERIFY(UpdateController::shouldShowWhatsNew(QStringLiteral("0.1.4"), QStringLiteral("0.1.5"), true));
     QVERIFY(!UpdateController::shouldShowWhatsNew(QStringLiteral("0.1.5"), QStringLiteral("0.1.5"), true));
     QVERIFY(!UpdateController::shouldShowWhatsNew(QStringLiteral("0.1.4"), QStringLiteral("0.1.5"), false));
+}
+
+void UpdateControllerTest::whatsNewListsEveryReleaseSinceTheOneUpdatedFrom()
+{
+    const auto json = QByteArrayLiteral(R"({"versions":[
+        {"version":"0.1.3","items":[{"icon":"a","title":"Three","body":"."}]},
+        {"version":"0.1.6","items":[{"icon":"a","title":"Six","body":"."}]},
+        {"version":"0.1.4","items":[{"icon":"a","title":"Four","body":"."}]},
+        {"version":"0.1.5","items":[{"icon":"a","title":"Five","body":"."}]},
+        {"version":"0.1.7","items":[{"icon":"a","title":"Seven, not out yet","body":"."}]}]})");
+    const auto versions = [](const QVariantList& releases) {
+        QStringList result;
+        for (const auto& release : releases) {
+            const auto map = release.toMap();
+            result << map.value(QStringLiteral("version")).toString() + (map.value(QStringLiteral("unseen")).toBool() ? QStringLiteral("*") : QString{});
+        }
+        return result;
+    };
+    // Updated from 0.1.4 to a 0.1.6 beta: 0.1.6 and 0.1.5 are new, newest first; nothing later
+    // than this build; the earlier ones follow.
+    auto releases = UpdateController::whatsNewReleasesFor(json, QStringLiteral("v0.1.6-beta.5"), QStringLiteral("0.1.4"));
+    QCOMPARE(versions(releases), (QStringList{QStringLiteral("0.1.6*"), QStringLiteral("0.1.5*"), QStringLiteral("0.1.4"), QStringLiteral("0.1.3")}));
+    QVERIFY(releases.front().toMap().value(QStringLiteral("current")).toBool());
+    QCOMPARE(releases.front().toMap().value(QStringLiteral("items")).toList().size(), 1);
+    // A fresh install: only this release is new, the one before it still listed.
+    releases = UpdateController::whatsNewReleasesFor(json, QStringLiteral("0.1.6"), {}, 2);
+    QCOMPARE(versions(releases), (QStringList{QStringLiteral("0.1.6*"), QStringLiteral("0.1.5")}));
+    // Many releases skipped: every new one stays, past the limit, with the one before them.
+    releases = UpdateController::whatsNewReleasesFor(json, QStringLiteral("0.1.6"), QStringLiteral("0.1.2"), 2);
+    QCOMPARE(versions(releases), (QStringList{QStringLiteral("0.1.6*"), QStringLiteral("0.1.5*"), QStringLiteral("0.1.4*"), QStringLiteral("0.1.3*")}));
 }
 
 void UpdateControllerTest::everyReleaseShipsWhatsNewWithIconsThatExist()

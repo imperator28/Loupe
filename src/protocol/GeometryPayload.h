@@ -22,6 +22,15 @@ struct TopologyRange final {
     quint32 indexCount{};
     float measureMm{};
     float radiusMm{};
+    // A round face's centerline, in millimetres in the payload's coordinates: a point on it and
+    // its unit direction. Cylinders, cones, tori and surfaces of revolution have one; anything
+    // else, and every edge, leaves the direction zero.
+    std::array<float, 3> axisOrigin{};
+    std::array<float, 3> axisDirection{};
+    [[nodiscard]] bool hasAxis() const noexcept
+    {
+        return axisDirection[0] != 0.0F || axisDirection[1] != 0.0F || axisDirection[2] != 0.0F;
+    }
 };
 
 // A mesh in its own coordinates, or, when `shared`, one part's mesh in that part's own

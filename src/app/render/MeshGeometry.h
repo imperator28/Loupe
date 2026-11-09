@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include <QMatrix4x4>
 #include <QVariant>
 #include <QVariantList>
@@ -45,6 +47,9 @@ public:
     // the face's area centre to aim at and, when the face has one, its longest straight
     // boundary edge, which the caller can square the view up against.
     Q_INVOKABLE [[nodiscard]] QVariantMap faceViewFor(quint32 topologyId) const;
+    // Every distinct centerline of this mesh's round faces, coaxial faces counted once, in the
+    // mesh's own coordinates: [{origin, direction, radiusMm}].
+    Q_INVOKABLE [[nodiscard]] QVariantList faceAxes() const;
     Q_INVOKABLE bool copyTopologyFrom(QObject* source, quint32 topologyId);
     // The face as a measurement pick (a tools::MeasureEntity), in scene coordinates through
     // `toScene` (the drawing model's scene transform): flat or not, its plane, its exact area
@@ -80,6 +85,10 @@ signals:
     void sectionBusyChanged();
 
 private:
+    // Where the faces of this mesh on the line (origin, direction) run along it, as distances
+    // from origin: every face whose own axis is that line counts.
+    [[nodiscard]] std::pair<float, float> axisExtent(const QVector3D& origin, const QVector3D& direction) const;
+
     friend class CadEdgeGeometry;
 
     void upload();

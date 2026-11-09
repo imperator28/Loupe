@@ -48,7 +48,7 @@ namespace {
 // material assignment don't treat unrelated sibling bodies as one part.
 // Bumped again (-8): an inch file is no longer misread as unresolved with a 1.0
 // factor, so a cached snapshot carries a unit decision export would get wrong.
-const auto kImporterVersion = QStringLiteral("step-importer-9");
+const auto kImporterVersion = QStringLiteral("step-importer-10");
 const auto kMeshProfile = QStringLiteral("progressive-1");
 // Mesh payloads now contain the composed occurrence transform.  Keep older
 // local-coordinate payloads out of the replay cache.
@@ -502,6 +502,17 @@ void ApplicationController::selectNodes(const QStringList& nodeIds, const QStrin
     for (const auto& nodeId : nodeIds)
         if (!selected.contains(nodeId)) selected.append(nodeId);
     setSelection(selected, activeNodeId);
+}
+
+void ApplicationController::selectAllParts()
+{
+    QStringList parts;
+    for (auto it = geometryByNode_.cbegin(); it != geometryByNode_.cend(); ++it) {
+        if (isNodeVisible(it.key())) parts.append(it.key());
+    }
+    parts.sort();
+    // The part that was active stays active, so the inspector keeps showing it.
+    setSelection(parts, activeNodeId_);
 }
 
 void ApplicationController::setSelection(const QStringList& nodeIds, const QString& activeNodeId)
@@ -2198,6 +2209,13 @@ bool ApplicationController::sectionAlongFace(const QString& nodeId, const QVaria
     if (face.kind != tools::MeasureEntity::Kind::Face || !face.planar || face.planeNormal.isNull()) return false;
     sectionController_.usePlane(face.planeNormal, face.planePoint,
                                 tr("Flat face on %1").arg(displayNameByNode_.value(nodeId, tr("Component"))));
+    return true;
+}
+
+bool ApplicationController::sectionAlongAxis(const QString& nodeId, const QVector3D& point, const QVector3D& direction)
+{
+    if (nodeId.isEmpty() || direction.isNull() || !std::isfinite(direction.x()) || !std::isfinite(point.x())) return false;
+    sectionController_.useAxis(point, direction, tr("Axis on %1").arg(displayNameByNode_.value(nodeId, tr("Component"))));
     return true;
 }
 

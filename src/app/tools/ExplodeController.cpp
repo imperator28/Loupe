@@ -115,6 +115,7 @@ void ExplodeController::clear()
     interactionNodes_.clear();
     interactionPlacements_.clear();
     state_ = {};
+    seatAxes_.clear();
     undo_.clear();
     redo_.clear();
     partBounds_.clear();
@@ -420,7 +421,7 @@ void ExplodeController::applyEdit(const State& before, const QStringList& change
         for (const auto& part : partsUnder(node)) parts.insert(part);
     }
     announce(parts.values());
-    if (before.transforms != state_.transforms || before.autoFactors != state_.autoFactors) pushUndo(before);
+    if (!before.sameLayout(state_)) pushUndo(before);
 }
 
 void ExplodeController::beginInteraction(const QStringList& nodeIds)
@@ -639,7 +640,7 @@ void ExplodeController::resetAll()
     state_ = {};
     blend_ = 1.0;
     announceStateChange(before);
-    if (before.transforms != state_.transforms || before.autoFactors != state_.autoFactors) pushUndo(before);
+    if (!before.sameLayout(state_)) pushUndo(before);
 }
 
 void ExplodeController::undo()
@@ -698,7 +699,15 @@ QVariantMap ExplodeController::snapshotOf(const State& state)
     }
     QVariantMap factors;
     for (auto it = state.autoFactors.cbegin(); it != state.autoFactors.cend(); ++it) factors.insert(it.key(), *it);
-    return {{QStringLiteral("transforms"), transforms}, {QStringLiteral("autoFactors"), factors}};
+    QVariantMap anchors;
+    for (auto it = state.anchors.cbegin(); it != state.anchors.cend(); ++it) {
+        anchors.insert(it.key(), QVariantList{it->point.x(), it->point.y(), it->point.z(),
+                                              it->direction.x(), it->direction.y(), it->direction.z()});
+    }
+    QStringList hidden(state.hiddenLines.cbegin(), state.hiddenLines.cend());
+    hidden.sort();
+    return {{QStringLiteral("transforms"), transforms}, {QStringLiteral("autoFactors"), factors},
+            {QStringLiteral("anchors"), anchors}, {QStringLiteral("hiddenLines"), hidden}};
 }
 
 QVariantMap ExplodeController::layoutSnapshot() const
@@ -733,12 +742,30 @@ bool ExplodeController::restoreLayout(const QVariantMap& snapshot)
         const auto factor = it.value().toDouble();
         if (std::isfinite(factor) && factor > 0.0) restored.autoFactors.insert(it.key(), factor);
     }
+    const auto anchors = snapshot.value(QStringLiteral("anchors")).toMap();
+    for (auto it = anchors.cbegin(); it != anchors.cend(); ++it) {
+        if (!hasNode(it.key())) continue;
+        const auto values = it.value().toList();
+        if (values.size() != 6) continue;
+        float entries[6];
+        bool valid = true;
+        for (int index = 0; index < 6; ++index) {
+            bool ok = false;
+            const auto value = values.at(index).toDouble(&ok);
+            valid = valid && ok && std::isfinite(value);
+            entries[index] = static_cast<float>(value);
+        }
+        if (valid) restored.anchors.insert(it.key(), {{entries[0], entries[1], entries[2]}, QVector3D{entries[3], entries[4], entries[5]}.normalized()});
+    }
+    for (const auto& node : snapshot.value(QStringLiteral("hiddenLines")).toStringList()) {
+        if (hasNode(node)) restored.hiddenLines.insert(node);
+    }
     if (restored.transforms.isEmpty()) return false;
     const auto before = state_;
     state_ = restored;
     blend_ = 0.0;
     announceStateChange(before);
-    if (before.transforms != state_.transforms || before.autoFactors != state_.autoFactors) pushUndo(before);
+    if (!before.sameLayout(state_)) pushUndo(before);
     return true;
 }
 
@@ -771,6 +798,165 @@ QString ExplodeController::layoutSummary() const
     const auto parts = moved == 1 ? tr("1 part moved") : tr("%1 parts moved").arg(moved);
     if (turned == 0) return parts;
     return QStringLiteral("%1 · %2").arg(parts, turned == 1 ? tr("1 turned") : tr("%1 turned").arg(turned));
+}
+
+QStringList ExplodeController::lineNodes() const
+{
+    QStringList nodes;
+    for (auto it = state_.transforms.cbegin(); it != state_.transforms.cend(); ++it) nodes.append(it.key());
+    nodes.sort();
+    return nodes;
+}
+
+QString ExplodeController::lineOwnerOf(const QString& nodeId) const
+{
+    for (auto node = nodeId; !node.isEmpty(); node = parentOf(node)) {
+        if (state_.transforms.contains(node)) return node;
+        if (isAncestor(node, parentOf(node))) break;
+    }
+    return nodeId;
+}
+
+QVector3D ExplodeController::assembledPoint(const QString& nodeId, const QVector3D& scenePoint) const
+{
+    return displayedTransform(nodeId).inverted().map(scenePoint);
+}
+
+QVector3D ExplodeController::assembledDirection(const QString& nodeId, const QVector3D& sceneDirection) const
+{
+    return displayedTransform(nodeId).inverted().mapVector(sceneDirection).normalized();
+}
+
+QVariantList ExplodeController::explodeLines() const
+{
+    QVariantList lines;
+    if (!linesShown_ || state_.transforms.isEmpty()) return lines;
+    const auto centerlineStyle = lineStyle_ == QStringLiteral("centerline");
+    for (const auto& nodeId : lineNodes()) {
+        if (state_.hiddenLines.contains(nodeId) || !hasNode(nodeId)) continue;
+        const auto bounds = nodeBounds(nodeId);
+        if (!bounds.valid) continue;
+        // Where it seats: inside its parent as the parent is shown now.
+        const auto seatFrame = displayedTransform(parentOf(nodeId));
+        const auto shown = displayedTransform(nodeId);
+        const auto centre = bounds.centre();
+        Anchor anchor{centre, {}};
+        if (const auto picked = state_.anchors.constFind(nodeId); picked != state_.anchors.cend()) anchor = *picked;
+        else if (const auto seat = seatAxes_.constFind(nodeId); seat != seatAxes_.cend()) anchor = *seat;
+        const auto start = seatFrame.map(anchor.point);
+        const auto end = shown.map(anchor.point);
+        const auto size = (bounds.maximum - bounds.minimum).length();
+        const auto tiny = std::max(1e-4F, size * 1e-5F);
+        if ((end - start).length() <= tiny) continue;
+
+        QVariantList segments;
+        const auto segment = [&segments](const QVector3D& from, const QVector3D& to, const bool centerline) {
+            segments.append(QVariantMap{{QStringLiteral("from"), QVariant::fromValue(from)},
+                                        {QStringLiteral("to"), QVariant::fromValue(to)},
+                                        {QStringLiteral("centerline"), centerline}});
+        };
+        float length = 0.0F;
+        if (!anchor.direction.isNull()) {
+            // Along the axis as it seats, as far as the move goes along it, a little past
+            // either end so it reads as a centerline; then across to the part if it left it.
+            const auto axis = seatFrame.mapVector(anchor.direction).normalized();
+            const auto along = QVector3D::dotProduct(end - start, axis);
+            const auto onAxis = start + axis * along;
+            const auto sign = along < 0.0F ? -1.0F : 1.0F;
+            const auto overshoot = std::max(std::abs(along) * 0.06F, std::max(2.0F, size * 0.02F));
+            if (std::abs(along) > tiny) segment(start - axis * (sign * overshoot), onAxis + axis * (sign * overshoot), true);
+            if ((end - onAxis).length() > tiny) segment(onAxis, end, centerlineStyle);
+            length = std::abs(along) + (end - onAxis).length();
+        } else {
+            // A turned part's anchor does not travel with its centre: along the travel, then a
+            // short jog to the seat, rather than a diagonal through whatever is between.
+            const auto travel = shown.map(centre) - seatFrame.map(centre);
+            const auto corner = start + travel;
+            if ((end - corner).length() > tiny && travel.length() > tiny) {
+                segment(start, corner, centerlineStyle);
+                segment(corner, end, centerlineStyle);
+                length = travel.length() + (end - corner).length();
+            } else {
+                segment(start, end, centerlineStyle);
+                length = (end - start).length();
+            }
+        }
+        if (segments.isEmpty()) continue;
+        lines.append(QVariantMap{{QStringLiteral("nodeId"), nodeId}, {QStringLiteral("segments"), segments},
+                                 {QStringLiteral("length"), static_cast<double>(length)}});
+    }
+    return lines;
+}
+
+void ExplodeController::setLineAnchor(const QString& nodeId, const QVector3D& point, const QVector3D& direction)
+{
+    if (!hasNode(nodeId) || !std::isfinite(point.x()) || !std::isfinite(point.y()) || !std::isfinite(point.z())) return;
+    const auto before = state_;
+    state_.anchors.insert(nodeId, {point, direction.isNull() ? QVector3D{} : direction.normalized()});
+    if (state_.sameLayout(before)) return;
+    pushUndo(before);
+    announce({});
+}
+
+void ExplodeController::clearLineAnchor(const QString& nodeId)
+{
+    if (!state_.anchors.contains(nodeId)) return;
+    const auto before = state_;
+    state_.anchors.remove(nodeId);
+    pushUndo(before);
+    announce({});
+}
+
+bool ExplodeController::hasLineAnchor(const QString& nodeId) const
+{
+    return state_.anchors.contains(nodeId);
+}
+
+void ExplodeController::setLineHidden(const QString& nodeId, const bool hidden)
+{
+    if (!hasNode(nodeId) || state_.hiddenLines.contains(nodeId) == hidden) return;
+    const auto before = state_;
+    if (hidden) state_.hiddenLines.insert(nodeId);
+    else state_.hiddenLines.remove(nodeId);
+    pushUndo(before);
+    announce({});
+}
+
+bool ExplodeController::lineHidden(const QString& nodeId) const
+{
+    return state_.hiddenLines.contains(nodeId);
+}
+
+void ExplodeController::setSeatAxes(const QVariantMap& axes)
+{
+    QHash<QString, Anchor> next;
+    for (auto it = axes.cbegin(); it != axes.cend(); ++it) {
+        const auto entry = it.value().toMap();
+        const auto point = entry.value(QStringLiteral("point")).value<QVector3D>();
+        const auto direction = entry.value(QStringLiteral("direction")).value<QVector3D>();
+        if (direction.isNull() || !std::isfinite(point.x()) || !std::isfinite(direction.x())) continue;
+        next.insert(it.key(), {point, direction.normalized()});
+    }
+    if (next == seatAxes_) return;
+    seatAxes_ = next;
+    announce({});
+}
+
+void ExplodeController::setLinesShown(const bool shown)
+{
+    if (linesShown_ == shown) return;
+    linesShown_ = shown;
+    emit settingsChanged();
+    announce({});
+}
+
+void ExplodeController::setLineStyle(const QString& style)
+{
+    const auto normalized = style == QStringLiteral("centerline") ? style : QStringLiteral("dashed");
+    if (lineStyle_ == normalized) return;
+    lineStyle_ = normalized;
+    emit settingsChanged();
+    announce({});
 }
 
 void ExplodeController::setBlend(const double blend)

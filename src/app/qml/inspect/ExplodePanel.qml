@@ -52,6 +52,10 @@ Rectangle {
     readonly property var rotationSteps: [5, 15, 45, 90]
     readonly property string modifierName: Qt.platform.os === "osx" ? "⌘" : "Ctrl"
     property bool advancedOpen: false
+    // The node whose explode line the selected part's is (itself, or the moved sub-assembly
+    // it goes with).
+    readonly property string lineOwner: taskController && selectedNodeId.length > 0 && revision >= 0
+                                        ? taskController.lineOwnerOf(selectedNodeId) : ""
 
     function nameOf(nodeId) {
         const name = documentController && nodeId.length > 0 ? documentController.nodeDisplayName(nodeId) : ""
@@ -326,7 +330,85 @@ Rectangle {
             }
         }
 
-        // 4. Everything precise, for when it is needed.
+        // 4. Explode lines: from where each moved part seats to where it is.
+        SectionTitle { text: qsTr("Explode lines") }
+        ThemedSwitch {
+            theme: root.theme
+            objectName: "explodeLinesSwitch"
+            Layout.fillWidth: true
+            text: qsTr("Show lines to where parts go")
+            checked: root.taskController !== null && root.taskController.linesShown
+            onToggled: if (root.taskController) root.taskController.linesShown = checked
+        }
+        ThemedSegmentedControl {
+            objectName: "explodeLineStyle"
+            theme: root.theme
+            Layout.fillWidth: true
+            visible: root.taskController !== null && root.taskController.linesShown
+            model: [qsTr("Dashed"), qsTr("Centerline")]
+            currentIndex: root.taskController && root.taskController.lineStyle === "centerline" ? 1 : 0
+            onActivated: function(index) { root.taskController.lineStyle = index === 1 ? "centerline" : "dashed" }
+            Accessible.name: qsTr("Line style")
+        }
+        Label {
+            Layout.fillWidth: true
+            visible: root.taskController !== null && root.taskController.linesShown
+            wrapMode: Text.WordWrap
+            color: root.subduedForeground
+            font.pixelSize: root.theme.fontCaption
+            text: qsTr("A line runs through the middle of each part along the way it moved; a pin or screw in its hole follows the hole's axis.")
+        }
+        // The selected part's own line: where it starts, and whether it is drawn.
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: root.lineOwner.length > 0 && root.taskController !== null && root.taskController.linesShown
+            spacing: root.theme.spacing1
+            ThemedButton {
+                theme: root.theme
+                objectName: "explodePickAnchorButton"
+                Layout.fillWidth: true
+                text: qsTr("Pick where its line starts")
+                enabled: root.viewport !== null
+                selectedAppearance: root.viewport !== null && root.viewport.pickingPivot && root.viewport.pivotPickPurpose === "anchor"
+                onClicked: root.viewport.pickingPivot ? root.viewport.cancelPivotPick() : root.viewport.beginAnchorPick(root.selectedNodeId)
+                ThemedToolTip {
+                    theme: root.theme
+                    text: qsTr("Click a corner, a hole's centre or an axis for this part's line to start from")
+                    visible: parent.hovered
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: root.theme.spacing1
+                ThemedButton {
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    text: qsTr("From its middle")
+                    enabled: {
+                        const revision = root.revision
+                        const owner = root.lineOwner
+                        return root.taskController !== null && revision >= 0 && owner.length > 0 && root.taskController.hasLineAnchor(owner)
+                    }
+                    onClicked: root.taskController.clearLineAnchor(root.lineOwner)
+                }
+                ThemedButton {
+                    theme: root.theme
+                    objectName: "explodeHideLineButton"
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 1
+                    readonly property bool hiddenLine: {
+                        const revision = root.revision
+                        const owner = root.lineOwner
+                        return root.taskController !== null && revision >= 0 && owner.length > 0 && root.taskController.lineHidden(owner)
+                    }
+                    text: hiddenLine ? qsTr("Show its line") : qsTr("Hide its line")
+                    onClicked: root.taskController.setLineHidden(root.lineOwner, !hiddenLine)
+                }
+            }
+        }
+
+        // 5. Everything precise, for when it is needed.
         ThemedButton {
             theme: root.theme
             objectName: "explodeAdvancedButton"

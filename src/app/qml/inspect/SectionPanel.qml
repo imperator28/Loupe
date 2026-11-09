@@ -101,7 +101,7 @@ Rectangle {
             theme: root.theme
             Layout.fillWidth: true
             readonly property bool picking: root.taskController !== null && root.taskController.pickingPlane
-            text: picking ? qsTr("Click a flat face in the view…") : qsTr("Pick face plane")
+            text: picking ? qsTr("Click a flat face or a hole in the view…") : qsTr("Pick face plane or axis")
             selectedAppearance: picking || (root.taskController !== null && root.taskController.usingSelectedPlane)
             onClicked: {
                 if (!root.taskController) return
@@ -111,7 +111,7 @@ Rectangle {
             ThemedToolTip {
                 theme: root.theme
                 text: pickPlaneButton.picking ? qsTr("Esc cancels")
-                                              : qsTr("Section along the plane of a flat face you click in the view")
+                                              : qsTr("Section along a flat face you click, or about the axis of a round one")
                 visible: pickPlaneButton.hovered
             }
         }
@@ -120,10 +120,57 @@ Rectangle {
             Layout.fillWidth: true
             visible: text.length > 0
             text: root.taskController && root.taskController.planeLabel.length > 0
-                  ? qsTr("Plane of: %1").arg(root.taskController.planeLabel) : ""
+                  ? (root.taskController.usingAxis ? qsTr("About: %1") : qsTr("Plane of: %1")).arg(root.taskController.planeLabel) : ""
             elide: Text.ElideRight
             color: root.subduedForeground
             font.pixelSize: root.theme ? root.theme.fontCaption : 11
+        }
+        // About an axis: across it (the default, placed where it was picked; the position slider
+        // moves it along the axis), or through it, turned to any angle about it.
+        ColumnLayout {
+            objectName: "sectionAxisControls"
+            Layout.fillWidth: true
+            visible: root.taskController !== null && root.taskController.usingAxis
+            spacing: root.theme ? root.theme.spacing2 : 8
+            ThemedSegmentedControl {
+                objectName: "sectionAxisMode"
+                theme: root.theme
+                Layout.fillWidth: true
+                model: [qsTr("Across the axis"), qsTr("Through the axis")]
+                currentIndex: root.taskController && root.taskController.axisMode === "through" ? 1 : 0
+                onActivated: function(index) { root.taskController.axisMode = index === 1 ? "through" : "across" }
+                Accessible.name: qsTr("Section about the axis")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.taskController !== null && root.taskController.axisMode === "through"
+                spacing: root.theme ? root.theme.spacing2 : 8
+                Label { text: qsTr("Angle"); color: root.foreground }
+                ThemedSlider {
+                    objectName: "sectionAxisAngleSlider"
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    from: 0
+                    to: 360
+                    stepSize: 1
+                    value: root.taskController ? root.taskController.axisAngle : 0
+                    Accessible.name: qsTr("Angle about the axis")
+                    onMoved: root.taskController.axisAngle = value
+                }
+                ThemedSpinBox {
+                    objectName: "sectionAxisAngleField"
+                    theme: root.theme
+                    editable: true
+                    from: 0
+                    to: 359
+                    stepSize: 15
+                    wrap: true
+                    value: root.taskController ? Math.round(root.taskController.axisAngle) % 360 : 0
+                    textFromValue: function(value) { return qsTr("%1°").arg(value) }
+                    valueFromText: function(text) { return Number(text.replace("°", "")) }
+                    onValueModified: root.taskController.axisAngle = value
+                }
+            }
         }
         ThemedButton {
             theme: root.theme

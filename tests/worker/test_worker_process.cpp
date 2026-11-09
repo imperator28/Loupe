@@ -35,6 +35,7 @@ private slots:
     void validStepProducesNonEmptySnapshot();
     void anImportStartedAtLaunchIsHeldUntilTheAppConnects();
     void validStepStreamsTriangulatedMesh();
+    void aRoundFaceCarriesItsExactAxis();
     void everyCopyAndEverySolidGetsItsMassPropertiesBeforeReady();
     void copiesOfAPartShareOneMeshAndArePlacedApart();
     void reviewedPlanWritesAndValidatesStep();
@@ -327,6 +328,46 @@ void WorkerProcessTest::validStepStreamsTriangulatedMesh()
     QVERIFY(edges->vertices.size() >= 6);
     QVERIFY(edges->indices.size() >= 2);
     QVERIFY(worker.state() == QProcess::Running);
+}
+
+void WorkerProcessTest::aRoundFaceCarriesItsExactAxis()
+{
+    // A cylinder of radius 5 along Z: its round face's axis is OCCT's, and its flat ends have none.
+    const auto fixture = loupe::tests::writeSingleCylinderStep(QStringLiteral("worker-cylinder.step").toStdString());
+    QProcess worker;
+    const auto name = serverName();
+    worker.start(QStringLiteral(LOUPE_WORKER_PATH), {QStringLiteral("--server-name"), name});
+    QVERIFY(worker.waitForStarted(3'000));
+    QLocalSocket socket;
+    QVERIFY(connectToWorker(socket, name));
+    loupe::protocol::FrameDecoder decoder;
+    readEvent(socket, decoder);
+    send(socket, {{QStringLiteral("version"), QJsonObject{{QStringLiteral("major"), 2}, {QStringLiteral("minor"), 0}}},
+                  {QStringLiteral("type"), QStringLiteral("openFile")}, {QStringLiteral("requestId"), 11},
+                  {QStringLiteral("path"), QString::fromStdString(fixture.string())}});
+    QVERIFY(!readEventOfType(socket, decoder, QStringLiteral("snapshotReady")).isEmpty());
+    QVector<loupe::protocol::TopologyRange> faces;
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < 10'000 && faces.isEmpty()) {
+        const auto frame = readFrame(socket, decoder);
+        if (!frame || frame->type != loupe::protocol::FrameType::Geometry) continue;
+        const auto geometry = loupe::protocol::decodeGeometry(frame->payload);
+        if (const auto* mesh = std::get_if<loupe::protocol::MeshPayload>(&geometry)) faces = mesh->topology;
+    }
+    QCOMPARE(faces.size(), 3);
+    int round = 0;
+    for (const auto& face : faces) {
+        if (!face.hasAxis()) {
+            QCOMPARE(face.radiusMm, 0.0F);
+            continue;
+        }
+        ++round;
+        QVERIFY(std::abs(face.radiusMm - 5.0F) < 1e-4F);
+        QVERIFY(std::abs(std::abs(face.axisDirection[2]) - 1.0F) < 1e-6F);
+        QVERIFY(std::abs(face.axisOrigin[0]) < 1e-4F && std::abs(face.axisOrigin[1]) < 1e-4F);
+    }
+    QCOMPARE(round, 1);
 }
 
 namespace {

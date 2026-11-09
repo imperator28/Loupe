@@ -56,6 +56,24 @@ Rectangle {
                 }
             }
         }
+        // A preset out of reach says why, rather than only greying out.
+        Label {
+            objectName: "captureScaleLimit"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            wrapMode: Text.WordWrap
+            color: root.subduedForeground
+            font.pixelSize: root.theme ? root.theme.fontCaption : 11
+            // The smallest preset out of reach: the ones above it are too, for the same reason.
+            text: {
+                if (!root.taskController || root.taskController.maximumScale <= 0) return ""
+                for (const preset of [2, 3, 5]) {
+                    const reason = root.taskController.scaleLimitReason(preset)
+                    if (reason.length > 0) return reason
+                }
+                return ""
+            }
+        }
         RowLayout {
             Layout.fillWidth: true
             Label { text: qsTr("Custom"); Layout.fillWidth: true; color: root.foreground }

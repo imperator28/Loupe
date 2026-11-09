@@ -5,14 +5,16 @@ import QtQuick
 QtObject {
     id: math
 
+    // Whether the last input was a finger: a fingertip needs targets about 44 pt across.
+    property bool touch: false
     // How close, in pixels, the pointer must be to grab an arrow or a ring.
-    readonly property real arrowTolerance: 9
-    readonly property real ringTolerance: 7
+    readonly property real arrowTolerance: touch ? 20 : 9
+    readonly property real ringTolerance: touch ? 18 : 7
     // An arrow seen almost end-on is too short on screen to drag along meaningfully.
     readonly property real minimumArrowPixels: 14
     // The ball at the middle of the handle moves the selection freely, in the plane of the
     // screen. It wins over the edge-on rings that run through it.
-    readonly property real centreRadius: 11
+    readonly property real centreRadius: touch ? 22 : 11
 
     function distanceToSegment(px, py, ax, ay, bx, by) {
         const dx = bx - ax

@@ -85,4 +85,19 @@ TestCase {
         compare(router.wheelZoomDelta(8, 120), 120)
         compare(router.wheelZoomDelta(8, 0), 8)
     }
+
+    function test_aTouchscreenPinchPansAndATrackpadPinchDoesNot() {
+        verify(router.pinchTranslationPans(PointerDevice.TouchScreen))
+        verify(!router.pinchTranslationPans(PointerDevice.TouchPad))
+        // Unknown (no device given): a real gesture, so it pans as before.
+        verify(router.pinchTranslationPans(PointerDevice.Unknown))
+    }
+
+    function test_aFingerGetsMoreSlopAndBiggerTargets() {
+        verify(router.tapSlop(true) > router.tapSlop(false))
+        compare(router.targetSize(9, false, 22), 9)
+        compare(router.targetSize(9, true, 22), 22)
+        compare(router.targetSize(40, true, 22), 40)
+        verify(router.pressAndHoldMs >= 300 && router.pressAndHoldMs <= 800)
+    }
 }

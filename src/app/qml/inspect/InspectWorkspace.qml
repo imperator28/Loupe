@@ -47,6 +47,10 @@ Item {
         treeSelectionAnchor = stableId
     }
     signal openFileRequested()
+    function textFieldFocused() {
+        const item = root.Window.window ? root.Window.window.activeFocusItem : null
+        return !!(item && typeof item.selectAll === "function" && "text" in item)
+    }
 
     // -1: not enough to go on yet; 0: the projected finish has passed and work continues.
     function remainingText(seconds) {
@@ -223,6 +227,13 @@ Item {
                         Accessible.name: qsTr("Next match")
                         onClicked: root.stepTreeMatch(1)
                     }
+                }
+                // Cmd/Ctrl+A: every part shown, in the tree and the view; a text field keeps it.
+                Shortcut {
+                    objectName: "inspectSelectAllShortcut"
+                    sequences: [StandardKey.SelectAll]
+                    enabled: root.visible && root.controller !== null && !root.textFieldFocused()
+                    onActivated: root.controller.selectAllParts()
                 }
                 Shortcut {
                     sequences: [StandardKey.Find]

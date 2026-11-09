@@ -79,6 +79,8 @@ qt_add_executable(loupe-app
     render/PartPalette.h
     render/HandleRingGeometry.cpp
     render/HandleRingGeometry.h
+    render/ExplodeLineGeometry.cpp
+    render/ExplodeLineGeometry.h
 )
 
 set(loupe_branding_dir "${PROJECT_SOURCE_DIR}/assets/branding")
@@ -233,6 +235,7 @@ qt_add_qml_module(loupe-app
         qml/inspect/MeasurementPanel.qml
         qml/inspect/MeasurementOverlay.qml
         qml/inspect/MeasurementAnnotation.qml
+        qml/inspect/NearClip.js
         qml/inspect/SectionPanel.qml
         qml/inspect/ExplodePanel.qml
         qml/inspect/FloatingToolWindow.qml

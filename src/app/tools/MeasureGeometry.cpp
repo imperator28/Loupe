@@ -22,6 +22,7 @@ QString MeasureEntity::kindName() const
         if (circular) return QCoreApplication::translate("Measure", "Circular edge");
         if (linear) return QCoreApplication::translate("Measure", "Straight edge");
         return QCoreApplication::translate("Measure", "Curved edge");
+    case Kind::Axis: return QCoreApplication::translate("Measure", "Axis");
     case Kind::Face:
         if (planar) return QCoreApplication::translate("Measure", "Flat face");
         if (radiusMm > 0.0) return QCoreApplication::translate("Measure", "Round face");
@@ -67,7 +68,7 @@ Primitives primitivesOf(const MeasureEntity& entity)
                                         (triangle.c - triangle.centre).length()});
             result.triangles.append(triangle);
         }
-    } else if (entity.kind == MeasureEntity::Kind::Edge && entity.polyline.size() >= 2) {
+    } else if ((entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::Axis) && entity.polyline.size() >= 2) {
         result.segments.reserve(entity.polyline.size() - 1);
         for (qsizetype index = 0; index + 1 < entity.polyline.size(); ++index)
             result.segments.append({entity.polyline.at(index), entity.polyline.at(index + 1)});
@@ -291,6 +292,90 @@ ClosestPoints closestPoints(const MeasureEntity& first, const MeasureEntity& sec
     return search.result();
 }
 
+MeasureEntity axisEntity(const MeasureEntity& source, const QVector3D& near)
+{
+    MeasureEntity axis;
+    QVector3D origin;
+    QVector3D direction;
+    QVector3D from;
+    QVector3D to;
+    if (source.kind == MeasureEntity::Kind::Face && source.hasAxis) {
+        origin = source.centre;
+        direction = source.axis.normalized();
+        from = source.axisFrom;
+        to = source.axisTo;
+    } else if ((source.kind == MeasureEntity::Kind::Edge || source.kind == MeasureEntity::Kind::CircleCentre) && source.circular) {
+        // A circle has no length along its axis: drawn a little either side of its plane.
+        origin = source.centre;
+        direction = source.axis.normalized();
+        const auto reach = static_cast<float>(std::max(source.radiusMm, 0.5) * 1.25);
+        from = origin - direction * reach;
+        to = origin + direction * reach;
+    } else {
+        return axis;
+    }
+    if (direction.isNull() || !std::isfinite(direction.x()) || !std::isfinite(origin.x())) return axis;
+    axis.kind = MeasureEntity::Kind::Axis;
+    axis.topologyId = source.topologyId;
+    axis.nodeId = source.nodeId;
+    axis.nodeLabel = source.nodeLabel;
+    axis.radiusMm = source.radiusMm;
+    axis.normal = source.normal;
+    axis.linear = true;
+    axis.direction = direction;
+    axis.centre = origin;
+    axis.axis = direction;
+    axis.hasAxis = true;
+    axis.axisFrom = from;
+    axis.axisTo = to;
+    axis.point = origin + direction * QVector3D::dotProduct(near - origin, direction);
+    // Where it was picked on the face, which tells a hole (its wall facing the axis) from a boss.
+    axis.planePoint = source.point;
+    axis.polyline = {from, to};
+    axis.lengthMm = static_cast<double>((to - from).length());
+    return axis;
+}
+
+ClosestPoints lineDistance(const MeasureEntity& first, const MeasureEntity& second)
+{
+    const auto isAxis = [](const MeasureEntity& entity) { return entity.kind == MeasureEntity::Kind::Axis && !entity.axis.isNull(); };
+    if (!isAxis(first) && !isAxis(second)) return {};
+    const auto foot = [](const MeasureEntity& line, const QVector3D& target) {
+        const auto direction = line.axis.normalized();
+        return line.centre + direction * QVector3D::dotProduct(target - line.centre, direction);
+    };
+    ClosestPoints result;
+    if (isAxis(first) && isAxis(second)) {
+        const auto d1 = first.axis.normalized();
+        const auto d2 = second.axis.normalized();
+        const auto cross = QVector3D::crossProduct(d1, d2);
+        if (cross.lengthSquared() < 1e-10F) {
+            // Parallel: square across from where the first was picked.
+            result.first = first.point;
+            result.second = foot(second, first.point);
+        } else {
+            // Skew or crossing: the closest points of the two lines (Ericson 5.1.8, unbounded).
+            const auto r = first.centre - second.centre;
+            const auto b = static_cast<double>(QVector3D::dotProduct(d1, d2));
+            const auto c = static_cast<double>(QVector3D::dotProduct(d1, r));
+            const auto f = static_cast<double>(QVector3D::dotProduct(d2, r));
+            const auto denominator = 1.0 - b * b;
+            const auto s = (b * f - c) / denominator;
+            const auto t = (f - b * c) / denominator;
+            result.first = first.centre + d1 * static_cast<float>(s);
+            result.second = second.centre + d2 * static_cast<float>(t);
+        }
+    } else if (isAxis(first)) {
+        result.second = second.kind == MeasureEntity::Kind::CircleCentre ? second.centre : second.point;
+        result.first = foot(first, result.second);
+    } else {
+        result.first = first.kind == MeasureEntity::Kind::CircleCentre ? first.centre : first.point;
+        result.second = foot(second, result.first);
+    }
+    result.distance = static_cast<double>((result.second - result.first).length());
+    return result;
+}
+
 bool parallelPlanes(const MeasureEntity& first, const MeasureEntity& second, const double toleranceDegrees)
 {
     if (!first.planar || !second.planar || first.planeNormal.isNull() || second.planeNormal.isNull()) return false;
@@ -315,7 +400,7 @@ double angleBetween(const MeasureEntity& first, const MeasureEntity& second)
     const auto directionOf = [](const MeasureEntity& entity, bool* line) {
         *line = false;
         if (entity.kind == MeasureEntity::Kind::Face && entity.planar) return entity.planeNormal.normalized();
-        if (entity.kind == MeasureEntity::Kind::Edge && entity.linear) {
+        if ((entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::Axis) && entity.linear) {
             *line = true;
             return entity.direction.normalized();
         }
@@ -337,7 +422,9 @@ AngleArc angleArc(const MeasureEntity& first, const MeasureEntity& second)
 {
     AngleArc arc;
     const auto isPlane = [](const MeasureEntity& entity) { return entity.kind == MeasureEntity::Kind::Face && entity.planar; };
-    const auto isLine = [](const MeasureEntity& entity) { return entity.kind == MeasureEntity::Kind::Edge && entity.linear; };
+    const auto isLine = [](const MeasureEntity& entity) {
+        return (entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::Axis) && entity.linear;
+    };
     // Where each pick sits on its own face or line.
     const auto anchorOf = [](const MeasureEntity& entity) { return entity.point; };
     const auto finish = [&arc](const QVector3D& centre, QVector3D from, QVector3D to, const float reach) {

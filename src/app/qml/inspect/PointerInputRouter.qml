@@ -79,4 +79,30 @@ QtObject {
     function wheelZoomDelta(pixelY, angleY) {
         return angleY !== 0 ? angleY : pixelY
     }
+
+    // ---- Touch (#42) ----
+
+    // Whether a two-finger gesture's translation pans the view. A touchscreen has no other way
+    // to pan; a trackpad pans by scrolling (wheelMode above), and its pinch's synthetic centroid
+    // drifts as the fingers close, so panning from it moved the view on every zoom. Decided by
+    // the device the gesture comes from, not the platform: a touch Mac's screen is a
+    // touchscreen, its trackpad a trackpad.
+    function pinchTranslationPans(deviceType) {
+        return deviceType !== PointerDevice.TouchPad
+    }
+
+    // How far a press may wander and still be a tap (a click), in pixels: a fingertip rolls and
+    // jitters far more than a mouse.
+    function tapSlop(touch) {
+        return touch ? 10 : 3
+    }
+
+    // How long a finger is held still before it aims (in a pick mode) or opens the menu.
+    readonly property int pressAndHoldMs: 450
+
+    // What a pointer can grab, in pixels: a fingertip needs about 9 mm (44 pt), a mouse a few
+    // pixels. `mouse` is the size for a mouse; on touch it grows to at least `touchMinimum`.
+    function targetSize(mouse, touch, touchMinimum) {
+        return touch ? Math.max(mouse, touchMinimum) : mouse
+    }
 }

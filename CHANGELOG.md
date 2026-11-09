@@ -1,5 +1,156 @@
 # Changelog
 
+## v0.1.6
+
+Faster opening, a reworked Measure tool that picks the axes of round features, sections
+along a face or about an axis, explode lines and saved exploded layouts, touch support,
+and a What's New that lists every release since yours. Built from six betas; each one's
+notes are on its GitHub pre-release.
+Opening native NX, Creo and SOLIDWORKS files (#5) still waits on a decision about a
+commercial import SDK and is not in this release.
+
+### New
+
+- **Opens faster**: each part is measured once rather than for every copy, mass properties
+  run alongside meshing, and parts are meshed on every core. A 27.7 MB assembly that took
+  36 s to open fully takes 22 s on a 4-core machine. Repeated parts are loaded once and
+  drawn from one shape (an assembly of 24 identical stages opens about five times faster),
+  and the file you launched Loupe with starts importing as Loupe starts.
+- **Measure, reworked**:
+  - Before you click, the face, edge or point a click takes lights up, with a chip naming it
+    or saying why this mode cannot use it.
+  - Point to point snaps to corners, edge midpoints, hole centres and points on edges.
+  - **Centerlines**: hover a hole, pin or boss to pick its exact axis, drawn dash-dot over
+    the feature and every coaxial face. Measure a point or a face to it, between two axes,
+    or the angle to it. Alt takes the face instead.
+  - Surface to surface is the gap square to parallel faces, or the true minimum distance.
+  - Angle is drawn as an arc between the picks. Edges and areas add up with Shift or
+    Ctrl/⌘. Volume and bounds work on any selection, with the bounds box drawn and sized.
+  - Pin results to keep them in view; drag a pinned tag anywhere and give it a colour.
+- **Sections you aim**:
+  - Pick a flat face to section along its plane.
+  - Pick a hole or shaft to section square to its axis, or turn a plane through the axis to
+    any angle.
+  - Cut parts show solid, with their holes open.
+- **Exploded views that explain**:
+  - Save layouts and come back to them in one click.
+  - Pick the pivot with snapping; on a hole or shaft the handle lines up with its axis.
+  - Dashed explode lines run from each moved part to where it goes, along the shared axis
+    for a pin or screw in its hole.
+- **Touch** on Windows touchscreens and touch Macs: one finger orbits, two pan, pinch zooms.
+  A double tap fits, and press and hold opens the menu (or aims, in Measure and Section).
+- **Cmd/Ctrl+A** selects every part shown in Inspect, and checks every part in Export.
+- **What's New** lists this release and the ones before it, marking every one since the
+  version you updated from.
+- **Captures can include the measurements**, laid out for the capture's size (off by
+  default).
+- **The view toolbar is restyled**: a compact floating bar with outline icons and labels.
+
+### Fixed
+
+- **Sub-assemblies used more than once** showed and exported only the first copy. Each copy
+  is now its own, in the tree, the view and exports.
+- **Exporting repeated parts**: Select all refused the batch when a part was placed twice or
+  two parts shared a name. Each part is now one file, and same-named parts are numbered.
+- **Updating a copy in Program Files** (Windows) stayed on the old version. The update now
+  asks for administrator permission when it needs it, and an update that could not be
+  installed says why.
+- **Picking with a section on** went to the part the section had cut away. Clicks go
+  through it now, and picking a face plane turns the section off while picking.
+- **Measure drew outside the view**, and stayed put after a window resize. It is clipped to
+  the view and follows the resize.
+- **Section caps** could show a solid part hollow, and a fast drag ran the section arrow off
+  the cut.
+- **A capture scale out of reach** greyed out with no reason; it now says why.
+
+### Known limitations
+
+- Touch has not been tried on touch hardware yet.
+- The Drawing workspace's projection is not yet reliable enough for cutting.
+
+Coming from 0.1.5 installed in `C:\Program Files`: 0.1.5 still runs its old update, so
+install 0.1.6 once by hand (unzip it over the Loupe folder as an administrator). Later
+updates work in place.
+
+## v0.1.6-beta.6
+
+A testing build from feedback on beta.5. Published as a pre-release; everything in
+v0.1.6-beta.5 is included.
+
+### Changed
+
+- **Sections about an axis**: picking a hole or shaft sections square to its axis, where
+  it was picked; the position slider moves it along the axis. "Through the axis" in the
+  Section panel turns a plane containing the axis to any angle about it.
+- **Axis to face**: surface to surface measures from an axis to a flat face parallel to it,
+  square across (a hole's centre to a datum face).
+- **Explode lines** run through the middle of each part along the way it moved. Only a real
+  round feature (a hole, pin or boss) the part moved along lines it on an axis; fillets no
+  longer pull lines to edges. Where a part stands in front of a line, the line shows faintly
+  through it instead of disappearing.
+- **The Explode panel's line controls** have room: the style sits on its own row, and the
+  part's line buttons on two.
+- **Export**: clicking a part in the bucket selects it in the component tree and the master
+  view, and the standalone preview keeps it shown and lit.
+
+### Fixed
+
+- **Picking a face with a section on**: a click went to the part the section had cut away,
+  so a flat face could be refused as curved. Clicks now go through what is cut away, and
+  picking a face plane turns the section off while picking (back on if cancelled).
+- **Measurements after resizing the window** stayed where they were until the view was
+  turned; they follow the resize now.
+- **5x capture greyed out with no reason**: a scale out of reach now says why (the capture
+  would be wider or taller than 16,384 px at this view's size) and what the most is.
+
+## v0.1.6-beta.5
+
+A testing build that picks the centerlines of round features, draws explode lines, adds
+touch support, selects every part with Cmd/Ctrl+A, and puts measurements back into
+captures. Published as a pre-release; everything in v0.1.6-beta.4 is included.
+
+### New
+
+- **Centerlines** (#40): hover a round face (a hole, boss, pin or fillet) and its axis is
+  drawn as a dash-dot centerline over the feature and every coaxial face of the part: a
+  counterbore and its hole are one axis. The axis is exact, read from the CAD geometry.
+  - Point to point measures to it: square from a point, between two parallel axes, or the
+    closest approach of two skew ones. Angle takes it as a straight edge.
+  - A pivot picked on an axis lines the handle up with it, to slide along a shaft or turn
+    about a hinge.
+  - Section cuts through a round face's axis, facing you, or across it with Alt.
+  - Alt takes the face (or a point on it) instead of the axis, and the other way round.
+    Corners, midpoints and hole centres still snap first.
+- **Explode lines** (#41): a thin dashed line from where each moved part seats to where it
+  is now, drawn in the scene (parts in front hide it) and in captures.
+  - A pin in its bore or a screw in its hole is lined along the shared axis, as a centerline.
+  - In the Explode panel: lines on or off, dashed or centerline; for the selected part, pick
+    where its line starts (a corner, a hole's centre or an axis), go back to its centre, or
+    hide its line. These are saved with explode layouts.
+- **Touch** (#42), on Windows touchscreens and touch Macs:
+  - One finger orbits, two fingers pan, pinch zooms, and twisting rolls.
+  - Fingers get more slop before a tap becomes a drag, and bigger targets.
+  - A double tap fits the part, or everything on empty space.
+  - Press and hold opens the menu. In Measure, Section and pivot picks it aims instead:
+    lift to take what is shown.
+  - Not yet tried on touch hardware.
+- **Cmd/Ctrl+A** selects every part shown in Inspect, and checks every part in Export.
+- **What's New lists every release since yours**: releases down the left, the chosen one's
+  highlights on the right. An update through the app over several releases marks each one
+  new, and earlier releases stay a click away (or Up and Down, or the button to the older
+  one). The 0.1.6 highlights are rewritten shorter.
+
+### Fixed
+
+- **Capture with measurements** (#43): "Include active measurement" put nothing in the
+  image since the measure rework. The measurements are back, where they are on the model,
+  at any capture size.
+- **Measure drew outside the viewport** (#39): a highlighted edge running off the view went
+  on over the panels beside it, and a line passing behind the camera was drawn mirrored.
+  Both are cut where they should be.
+- The first open of each file after updating rebuilds its cache, since round faces now
+  carry their axis.
+
 ## v0.1.6-beta.4
 
 A testing build that opens the launch file sooner, exports assemblies with repeated parts,

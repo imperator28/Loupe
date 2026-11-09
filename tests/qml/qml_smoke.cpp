@@ -10,8 +10,10 @@
 #include "app/platform/WindowChrome.h"
 #include "app/render/CadEdgeGeometry.h"
 #include "app/render/HandleRingGeometry.h"
+#include "app/render/ExplodeLineGeometry.h"
 #include "app/render/MeshGeometry.h"
 #include "app/tools/CaptureController.h"
+#include "app/tools/MeasurementController.h"
 #include "app/tools/SectionController.h"
 #include "protocol/GeometryPayload.h"
 
@@ -26,6 +28,8 @@
 #include <QMimeData>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlContext>
+#include <QQmlExpression>
 #include <QJsonDocument>
 #include <QJSValue>
 #include <QQuaternion>
@@ -34,6 +38,7 @@
 #include <QQmlPropertyMap>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QPointingDevice>
 #include <QTemporaryDir>
 #include <QScopeGuard>
 #include <QtTest/QSignalSpy>
@@ -98,6 +103,10 @@ private slots:
     void measurementFaceHighlightLoadsTopology();
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
+    void aCaptureHoldsTheMeasurementOnlyWhenAskedAndWhereItIs();
+    void aRoundFaceOffersItsAxisAndACornerStillWins();
+    void aMovedPartIsDrawnWithItsExplodeLine();
+    void aFingerGetsBiggerTargetsAndALongPressOpensTheMenu();
     void viewportDrawsAFacingFaceInItsPickedColour();
     void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
     void explodedViewHandlesMoveAndTurnTheSelection();
@@ -128,6 +137,7 @@ void QmlSmokeTest::initTestCase()
     qmlRegisterType<loupe::app::render::MeshGeometry>("Loupe.App", 1, 0, "MeshGeometry");
     qmlRegisterType<loupe::app::render::CadEdgeGeometry>("Loupe.App", 1, 0, "CadEdgeGeometry");
     qmlRegisterType<loupe::app::render::HandleRingGeometry>("Loupe.App", 1, 0, "HandleRingGeometry");
+    qmlRegisterType<loupe::app::render::ExplodeLineGeometry>("Loupe.App", 1, 0, "ExplodeLineGeometry");
     // One per engine (the app has one). Checks GitHub for a newer release at launch (#3).
     qmlRegisterSingletonType<loupe::app::platform::UpdateController>("Loupe.App", 1, 0, "Updates",
         [](QQmlEngine*, QJSEngine*) -> QObject* { return new loupe::app::platform::UpdateController; });
@@ -1292,6 +1302,8 @@ void QmlSmokeTest::updateIndicatorShowsTheDownloadAsARing()
 
 void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
 {
+    // Updated from 0.1.4 to 0.1.6: both releases since are marked, 0.1.6 shown first, 0.1.5 a
+    // click (or Down, or Older) away, and closing marks it seen.
     QQmlEngine engine;
     QQmlComponent component(&engine);
     component.setData(QByteArrayLiteral(
@@ -1300,14 +1312,21 @@ void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
         "import \"..\"\n"
         "Window {\n"
         "  id: host\n"
-        "  width: 800; height: 700; visible: true\n"
+        "  width: 900; height: 640; visible: true\n"
         "  property alias dialog: dialog\n"
         "  property int seen: 0\n"
         "  Theme { id: theme }\n"
         "  property QtObject updates: QtObject {\n"
-        "    property var whatsNewItems: [{icon: \"tabs\", title: \"Tabs and windows\", body: \"Several files.\"},\n"
-        "                                 {icon: \"explode\", title: \"Exploded view\", body: \"Pull it apart.\"}]\n"
-        "    property string whatsNewVersion: \"0.1.5\"\n"
+        "    property var whatsNewReleases: [\n"
+        "      {version: \"0.1.6\", current: true, unseen: true, items: [\n"
+        "        {icon: \"fit\", title: \"Opens faster\", body: \"Big assemblies open in about a third less time, and repeated parts load once.\"},\n"
+        "        {icon: \"measure\", title: \"Measure by snapping\", body: \"See what a click takes, from corners and hole centres to the axes of round features.\"},\n"
+        "        {icon: \"section\", title: \"Sections you aim\", body: \"Cut along a face or through a hole's axis.\"}]},\n"
+        "      {version: \"0.1.5\", current: false, unseen: true, items: [\n"
+        "        {icon: \"tabs\", title: \"Tabs and windows\", body: \"Several files.\"},\n"
+        "        {icon: \"explode\", title: \"Exploded view\", body: \"Pull it apart.\"}]},\n"
+        "      {version: \"0.1.4\", current: false, unseen: false, items: [\n"
+        "        {icon: \"check\", title: \"Earlier\", body: \"Before.\"}]}]\n"
         "    function markWhatsNewSeen() { seen += 1 }\n"
         "  }\n"
         "  WhatsNewDialog { id: dialog; theme: theme; updates: host.updates }\n"
@@ -1321,9 +1340,35 @@ void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
     auto* dialog = host->property("dialog").value<QObject*>();
     QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
     QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 3000);
-    QCOMPARE(dialog->property("items").toList().size(), 2);
+    QCOMPARE(dialog->property("currentIndex").toInt(), 0);
+    QCOMPARE(dialog->property("items").toList().size(), 3);
+    QCOMPARE(dialog->property("unseenCount").toInt(), 2);
     auto* title = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewTitle"));
-    QVERIFY(title == nullptr || title->property("text").toString().contains(QStringLiteral("What's New")));
+    QVERIFY(title != nullptr);
+    QCOMPARE(title->property("text").toString(), QStringLiteral("Loupe 0.1.6"));
+    auto* list = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewReleaseList"));
+    QVERIFY(list != nullptr && list->isVisible());
+    if (const auto path = qEnvironmentVariable("LOUPE_WHATS_NEW_SCREENSHOT"); !path.isEmpty()) {
+        QTest::qWait(300);
+        window->grabWindow().save(path);
+    }
+
+    // Older steps to 0.1.5; its row is selectable directly too.
+    auto* older = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewOlder"));
+    QVERIFY(older != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(older, "clicked"));
+    QCOMPARE(dialog->property("currentIndex").toInt(), 1);
+    QCOMPARE(title->property("text").toString(), QStringLiteral("Loupe 0.1.5"));
+    QCOMPARE(dialog->property("items").toList().size(), 2);
+    // The list makes its rows once it is laid out.
+    QQuickItem* earliest = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((earliest = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewRelease-0.1.4"))) != nullptr, 3000);
+    QVERIFY(QMetaObject::invokeMethod(earliest, "clicked"));
+    QCOMPARE(dialog->property("currentIndex").toInt(), 2);
+    QVERIFY(!older->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "step", Q_ARG(QVariant, -2)));
+    QCOMPARE(dialog->property("currentIndex").toInt(), 0);
+
     QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
     QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 3000);
     QCOMPARE(host->property("seen").toInt(), 1);
@@ -1373,6 +1418,352 @@ void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
                                   qPrintable(QStringLiteral("%1 %2: %3").arg(QString::fromLatin1(file), QString::fromLatin1(splitterName))
                                                  .arg(panel->width())), 3000);
     }
+}
+
+void QmlSmokeTest::aFingerGetsBiggerTargetsAndALongPressOpensTheMenu()
+{
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(400, 300);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(400, 300));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QVERIFY(!viewport->property("touchInput").toBool());
+    const auto mouseVertexPixels = viewport->property("measureVertexPixels").toDouble();
+
+    // A finger on the touchscreen, held still on empty space: touch is noticed, the snap radius
+    // grows, and the view's menu comes up after the hold.
+    std::unique_ptr<QPointingDevice> screen(QTest::createTouchDevice(QInputDevice::DeviceType::TouchScreen));
+    QTest::touchEvent(&window, screen.get()).press(0, QPoint(200, 150));
+    QTRY_VERIFY_WITH_TIMEOUT(viewport->property("touchInput").toBool(), 1000);
+    QVERIFY(viewport->property("measureVertexPixels").toDouble() > mouseVertexPixels);
+    auto* menu = viewport->findChild<QObject*>(QStringLiteral("viewportContextMenu"));
+    QVERIFY(menu != nullptr);
+    QTRY_VERIFY2_WITH_TIMEOUT(menu->property("opened").toBool() || menu->property("visible").toBool(),
+                              qPrintable(QStringLiteral("touchInput %1").arg(viewport->property("touchInput").toBool())), 2000);
+    QTest::touchEvent(&window, screen.get()).release(0, QPoint(200, 150));
+    QMetaObject::invokeMethod(menu, "close");
+    QTRY_VERIFY_WITH_TIMEOUT(!menu->property("visible").toBool(), 2000);
+
+    // A quick tap does not open it.
+    QTest::touchEvent(&window, screen.get()).press(0, QPoint(150, 120));
+    QTest::qWait(80);
+    QTest::touchEvent(&window, screen.get()).release(0, QPoint(150, 120));
+    QTest::qWait(600);
+    QVERIFY(!menu->property("visible").toBool());
+
+    // A mouse moving over the view (hovering) is a mouse again.
+    QTest::mouseMove(&window, QPoint(100, 100));
+    QTest::mouseMove(&window, QPoint(120, 110));
+    QTRY_VERIFY_WITH_TIMEOUT(!viewport->property("touchInput").toBool(), 1000);
+    QCOMPARE(viewport->property("measureVertexPixels").toDouble(), mouseVertexPixels);
+}
+
+void QmlSmokeTest::aMovedPartIsDrawnWithItsExplodeLine()
+{
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())},
+        {QStringLiteral("explodedLayoutEnabled"), true}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(320, 240);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(320, 240));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    const QByteArray cube = QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7]}" );
+    // The explode controller learns the parts from the document; here, from the test.
+    controller.explodeController().setHierarchy({{QStringLiteral("moved"), QString{}}, {QStringLiteral("still"), QString{}}});
+    for (const auto& node : {QStringLiteral("moved"), QStringLiteral("still")}) {
+        controller.explodeController().includePartBounds(node, {-1, -1, -1}, {1, 1, 1});
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, node), Q_ARG(QString, node + QStringLiteral("-segment")),
+                                          Q_ARG(QString, QStringLiteral("#67d5c0")), Q_ARG(QByteArray, cube)));
+    }
+    QTest::qWait(200);
+    auto* lines = viewport->findChild<QObject*>(QStringLiteral("explodeLines"));
+    QVERIFY(lines != nullptr);
+    auto* geometry = lines->property("geometry").value<QObject*>();
+    QVERIFY(geometry != nullptr);
+    QCOMPARE(geometry->property("segmentCount").toInt(), 0);
+
+    auto* explode = controller.property("explode").value<QObject*>();
+    QVERIFY(explode != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(explode, "translateBy", Q_ARG(QStringList, QStringList{QStringLiteral("moved")}),
+                                      Q_ARG(QVector3D, QVector3D(0, 0, 30))));
+    QTRY_VERIFY_WITH_TIMEOUT(geometry->property("segmentCount").toInt() > 0, 2000);
+    QVERIFY(lines->property("visible").toBool());
+    // Only the moved part has a line; putting it back takes the line away.
+    QVariantList list;
+    QVERIFY(QMetaObject::invokeMethod(explode, "explodeLines", Q_RETURN_ARG(QVariantList, list)));
+    QCOMPARE(list.size(), 1);
+    QCOMPARE(list.front().toMap().value(QStringLiteral("nodeId")).toString(), QStringLiteral("moved"));
+    QVERIFY(QMetaObject::invokeMethod(explode, "resetNode", Q_ARG(QString, QStringLiteral("moved"))));
+    QTRY_COMPARE_WITH_TIMEOUT(geometry->property("segmentCount").toInt(), 0, 2000);
+    QVERIFY(!lines->property("visible").toBool());
+
+    // A pin in a bore, both round about the same line along z: pulled out, the pin's line runs
+    // along that shared axis, as a centerline. (Whole cylinders: a sliver of one, a fillet's,
+    // says nothing about where a part seats.)
+    const auto roundPart = [&](const QString& id, const float radius, const float z0, const float z1, const float sweep = 1.0F) {
+        QVector<float> vertices;
+        QVector<float> normals;
+        QVector<quint32> indices;
+        for (int column = 0; column <= 8; ++column) {
+            const auto angle = static_cast<float>(column) / 8.0F * sweep * static_cast<float>(2.0 * std::numbers::pi);
+            for (const auto z : {z0, z1}) {
+                vertices << 20.0F + radius * std::cos(angle) << radius * std::sin(angle) << z;
+                normals << std::cos(angle) << std::sin(angle) << 0.0F;
+            }
+        }
+        for (quint32 column = 0; column < 8; ++column)
+            indices << column * 2 << column * 2 + 1 << column * 2 + 3 << column * 2 << column * 2 + 3 << column * 2 + 2;
+        loupe::protocol::TopologyRange range{9, loupe::protocol::TopologyKind::Face, 0, static_cast<quint32>(indices.size()), 10.0F, radius};
+        range.axisOrigin = {20.0F, 0.0F, 0.0F};
+        range.axisDirection = {0.0F, 0.0F, 1.0F};
+        const loupe::protocol::MeshPayload mesh{1, 1, id, id, id + QStringLiteral("-segment"), QStringLiteral("#67d5c0"), 1,
+                                                vertices, normals, indices, {range}};
+        controller.explodeController().includePartBounds(id, {20.0F - radius, -radius, z0}, {20.0F + radius, radius, z1});
+        QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, id), Q_ARG(QString, id + QStringLiteral("-segment")),
+                                          Q_ARG(QString, QStringLiteral("#67d5c0")), Q_ARG(QByteArray, loupe::protocol::encodeGeometry(mesh))));
+    };
+    controller.explodeController().setHierarchy({{QStringLiteral("pin"), QString{}}, {QStringLiteral("bore"), QString{}}});
+    roundPart(QStringLiteral("pin"), 2.0F, 0.0F, 10.0F);
+    roundPart(QStringLiteral("bore"), 2.05F, 2.0F, 8.0F);
+    QVERIFY(QMetaObject::invokeMethod(explode, "translateBy", Q_ARG(QStringList, QStringList{QStringLiteral("pin")}),
+                                      Q_ARG(QVector3D, QVector3D(0, 0, 25))));
+    const auto pinLineIsACenterline = [&]() {
+        QVariantList now;
+        QMetaObject::invokeMethod(explode, "explodeLines", Q_RETURN_ARG(QVariantList, now));
+        if (now.size() != 1) return false;
+        const auto segments = now.front().toMap().value(QStringLiteral("segments")).toList();
+        return segments.size() == 1 && segments.front().toMap().value(QStringLiteral("centerline")).toBool();
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(pinLineIsACenterline(), 3000);
+
+    // Coaxial only as two fillets are (quarter cylinders): no seat, so a plain line from the
+    // part's middle.
+    controller.explodeController().setHierarchy({{QStringLiteral("cap"), QString{}}, {QStringLiteral("edge"), QString{}}});
+    roundPart(QStringLiteral("cap"), 2.0F, 0.0F, 10.0F, 0.25F);
+    roundPart(QStringLiteral("edge"), 2.0F, 2.0F, 8.0F, 0.25F);
+    QVERIFY(QMetaObject::invokeMethod(explode, "translateBy", Q_ARG(QStringList, QStringList{QStringLiteral("cap")}),
+                                      Q_ARG(QVector3D, QVector3D(0, 0, 25))));
+    QTest::qWait(400);
+    QVariantList plain;
+    QVERIFY(QMetaObject::invokeMethod(explode, "explodeLines", Q_RETURN_ARG(QVariantList, plain)));
+    QCOMPARE(plain.size(), 1);
+    QVERIFY(!plain.front().toMap().value(QStringLiteral("segments")).toList().front().toMap().value(QStringLiteral("centerline")).toBool());
+}
+
+void QmlSmokeTest::aRoundFaceOffersItsAxisAndACornerStillWins()
+{
+    // The shared picker (measure, pivot, section): over a round face it takes the face's axis,
+    // but a corner inside the snap radius still wins; Alt takes the point on the face.
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(640, 480);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(640, 480));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // A quarter of a hole's wall, radius 10 about z, 20 deep, and the straight edge along one side.
+    QVector<float> vertices;
+    QVector<float> normals;
+    QVector<quint32> indices;
+    for (int column = 0; column <= 8; ++column) {
+        const auto angle = static_cast<float>(column) / 8.0F * static_cast<float>(std::numbers::pi / 2.0);
+        for (const auto z : {0.0F, 20.0F}) {
+            vertices << 10.0F * std::cos(angle) << 10.0F * std::sin(angle) << z;
+            normals << -std::cos(angle) << -std::sin(angle) << 0.0F;
+        }
+    }
+    for (quint32 column = 0; column < 8; ++column)
+        indices << column * 2 << column * 2 + 1 << column * 2 + 3 << column * 2 << column * 2 + 3 << column * 2 + 2;
+    loupe::protocol::TopologyRange wall{41, loupe::protocol::TopologyKind::Face, 0, static_cast<quint32>(indices.size()), 314.0F, 10.0F};
+    wall.axisOrigin = {0.0F, 0.0F, 0.0F};
+    wall.axisDirection = {0.0F, 0.0F, 1.0F};
+    const loupe::protocol::MeshPayload mesh{1, 1, QStringLiteral("definition"), QStringLiteral("node"), QStringLiteral("segment"),
+                                            QStringLiteral("#67d5c0"), 1, vertices, normals, indices, {wall}};
+    const loupe::protocol::EdgePayload edge{1, 1, QStringLiteral("definition"), QStringLiteral("node"), 1,
+                                            {10.0F, 0.0F, 0.0F, 10.0F, 0.0F, 20.0F}, {0, 1},
+                                            {{7, loupe::protocol::TopologyKind::Edge, 0, 2, 20.0F, 0.0F}}};
+    QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, QStringLiteral("node")),
+                                      Q_ARG(QString, QStringLiteral("segment")), Q_ARG(QString, QStringLiteral("#67d5c0")),
+                                      Q_ARG(QByteArray, loupe::protocol::encodeGeometry(mesh))));
+    QVERIFY(QMetaObject::invokeMethod(&controller, "edgeReady", Q_ARG(QString, QStringLiteral("node")),
+                                      Q_ARG(QByteArray, loupe::protocol::encodeGeometry(edge))));
+    QTest::qWait(300);
+
+    // What the picker takes for a hit at `at`, with Alt held or not, as point to point does.
+    const auto pickKind = [&](const QVector3D& at, const QVector3D& normal, bool alternate) {
+        viewport->setProperty("pickAlternate", alternate);
+        QQmlExpression expression(qmlContext(viewport), viewport,
+            QStringLiteral("(function() { const pick = measureCandidateAt({ objectHit: modelByNode['segment'], "
+                           "scenePosition: Qt.vector3d(%1, %2, %3), sceneNormal: Qt.vector3d(%4, %5, %6) }, false, 0); "
+                           "return pick ? pick.info.kind + '|' + (pick.info.hint || '') + '|' + pick.info.point.z : 'none' })()")
+                .arg(at.x()).arg(at.y()).arg(at.z()).arg(normal.x()).arg(normal.y()).arg(normal.z()));
+        const auto value = expression.evaluate().toString();
+        if (expression.hasError()) return expression.error().toString();
+        return value;
+    };
+    // Snap radius in scene units at this zoom: the middle of the wall must be well outside it.
+    QQmlExpression tolerance(qmlContext(viewport), viewport, QStringLiteral("worldPerPixelAt(Qt.vector3d(7, 7, 10)) * measureVertexPixels"));
+    const auto radius = tolerance.evaluate().toDouble();
+    QVERIFY2(radius > 0.0 && radius < 3.0, qPrintable(QString::number(radius)));
+
+    const auto middle = pickKind({7.071F, 7.071F, 10.0F}, {-0.7071F, -0.7071F, 0.0F}, false);
+    QVERIFY2(middle.startsWith(QStringLiteral("axis|")), qPrintable(middle));
+    QVERIFY2(middle.endsWith(QStringLiteral("|10")), qPrintable(middle)); // its point: on the axis, level with the hit
+    const auto surface = pickKind({7.071F, 7.071F, 10.0F}, {-0.7071F, -0.7071F, 0.0F}, true);
+    QVERIFY2(surface.startsWith(QStringLiteral("surfacePoint|")), qPrintable(surface));
+    const auto corner = pickKind({10.0F, static_cast<float>(radius * 0.2), 20.0F}, {-1.0F, 0.0F, 0.0F}, false);
+    QVERIFY2(corner.startsWith(QStringLiteral("vertex|")), qPrintable(corner));
+    viewport->setProperty("pickAlternate", false);
+}
+
+void QmlSmokeTest::aCaptureHoldsTheMeasurementOnlyWhenAskedAndWhereItIs()
+{
+    // The measurements are drawn over the 3D view, not in it: a capture that asks for them has
+    // them, at the capture's size and where they are on the model; one that does not, has none.
+    loupe::app::ApplicationController controller;
+    auto* capture = qobject_cast<loupe::app::tools::CaptureController*>(controller.captureController());
+    auto* measurement = qobject_cast<loupe::app::tools::MeasurementController*>(controller.measurementController());
+    QVERIFY(capture != nullptr && measurement != nullptr);
+    capture->setTransparentBackground(true);
+
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QVERIFY2(theme != nullptr, qPrintable(themeComponent.errorString()));
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(320, 240);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(320, 240));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(capture->resolvedWidth() > 0 && capture->resolvedHeight() > 0, 3000);
+
+    const QByteArray cube = QByteArrayLiteral(
+        "{\"vertices\":[-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1],"
+        "\"indices\":[0,2,1,0,3,2,4,5,6,4,6,7,0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7]}" );
+    QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, QStringLiteral("node")),
+                                      Q_ARG(QString, QStringLiteral("segment")), Q_ARG(QString, QStringLiteral("#67d5c0")),
+                                      Q_ARG(QByteArray, cube)));
+    QTest::qWait(500);
+
+    // A distance across the cube's top face, front corner to front corner.
+    measurement->setModeName(QStringLiteral("point"));
+    QVERIFY(measurement->acceptEntity(loupe::app::tools::MeasurementController::surfacePointEntity({-1, 1, 1}, {0, 0, 1}), QStringLiteral("Cube")));
+    QVERIFY(measurement->acceptEntity(loupe::app::tools::MeasurementController::surfacePointEntity({1, 1, 1}, {0, 0, 1}), QStringLiteral("Cube")));
+    QCOMPARE(measurement->pickedPoints().size(), 2);
+    QTest::qWait(200);
+
+    QVariant amberValue;
+    QVERIFY(QMetaObject::invokeMethod(theme.get(), "measureColor", Q_RETURN_ARG(QVariant, amberValue), Q_ARG(QVariant, QStringLiteral("amber"))));
+    const QColor amber = amberValue.value<QColor>();
+    QVERIFY(amber.isValid());
+    // Where the measurement's own colour is in an image: its bounds, normalised to the image.
+    const auto amberBounds = [&](const QImage& image, int* count) {
+        QRect bounds;
+        *count = 0;
+        const QImage argb = image.convertToFormat(QImage::Format_ARGB32);
+        for (int y = 0; y < argb.height(); ++y) {
+            for (int x = 0; x < argb.width(); ++x) {
+                const QColor pixel = QColor::fromRgba(argb.pixel(x, y));
+                if (pixel.alpha() < 200) continue;
+                if (std::abs(pixel.red() - amber.red()) + std::abs(pixel.green() - amber.green()) + std::abs(pixel.blue() - amber.blue()) > 40) continue;
+                ++*count;
+                bounds |= QRect(x, y, 1, 1);
+            }
+        }
+        return QRectF(double(bounds.x()) / argb.width(), double(bounds.y()) / argb.height(),
+                      double(bounds.width()) / argb.width(), double(bounds.height()) / argb.height());
+    };
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto captureTo = [&](double scale, bool include, const QString& name, QImage* result) {
+        capture->setCustomScale(scale);
+        capture->setIncludeMeasurements(include);
+        const auto expectedSize = capture->resolvedSize();
+        const auto path = directory.filePath(name);
+        QVERIFY(QMetaObject::invokeMethod(viewport, "captureToFile", Q_ARG(QVariant, QVariant::fromValue(QUrl::fromLocalFile(path)))));
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(path), 10'000);
+        QTRY_VERIFY_WITH_TIMEOUT(!capture->inProgress(), 10'000);
+        *result = QImage(path);
+        QVERIFY(!result->isNull());
+        QCOMPARE(result->size(), expectedSize);
+    };
+
+    QImage without;
+    QImage with2x;
+    QImage with3x;
+    captureTo(2.0, false, QStringLiteral("without.png"), &without);
+    captureTo(2.0, true, QStringLiteral("with-2x.png"), &with2x);
+    captureTo(3.0, true, QStringLiteral("with-3x.png"), &with3x);
+    int withoutCount = 0;
+    int with2xCount = 0;
+    int with3xCount = 0;
+    amberBounds(without, &withoutCount);
+    const auto bounds2x = amberBounds(with2x, &with2xCount);
+    const auto bounds3x = amberBounds(with3x, &with3xCount);
+    QVERIFY2(withoutCount < 20, qPrintable(QStringLiteral("unasked, the capture still has %1 measurement pixels").arg(withoutCount)));
+    QVERIFY2(with2xCount > 100, qPrintable(QStringLiteral("asked, the capture has only %1 measurement pixels").arg(with2xCount)));
+    QVERIFY(with3xCount > with2xCount);
+    // The same place in both, whatever the capture's size: laid out for it, not for the window.
+    QVERIFY2(std::abs(bounds2x.center().x() - bounds3x.center().x()) < 0.03 && std::abs(bounds2x.center().y() - bounds3x.center().y()) < 0.03,
+             qPrintable(QStringLiteral("2x at (%1, %2), 3x at (%3, %4)").arg(bounds2x.center().x()).arg(bounds2x.center().y())
+                            .arg(bounds3x.center().x()).arg(bounds3x.center().y())));
+    // And where the picks are on the model: the points as the view projects them on screen.
+    QVariant fromScreen;
+    QVERIFY(QMetaObject::invokeMethod(viewport->findChild<QObject*>(QStringLiteral("measurementOverlay")), "project",
+                                      Q_RETURN_ARG(QVariant, fromScreen), Q_ARG(QVariant, QVariant::fromValue(QVector3D(-1, 1, 1)))));
+    QVariant toScreen;
+    QVERIFY(QMetaObject::invokeMethod(viewport->findChild<QObject*>(QStringLiteral("measurementOverlay")), "project",
+                                      Q_RETURN_ARG(QVariant, toScreen), Q_ARG(QVariant, QVariant::fromValue(QVector3D(1, 1, 1)))));
+    const QPointF middle = (fromScreen.toPointF() + toScreen.toPointF()) / 2.0;
+    const QPointF expected(middle.x() / viewport->width(), middle.y() / viewport->height());
+    QVERIFY2(std::abs(bounds2x.center().x() - expected.x()) < 0.08 && std::abs(bounds2x.center().y() - expected.y()) < 0.12,
+             qPrintable(QStringLiteral("measurement at (%1, %2), picks around (%3, %4)").arg(bounds2x.center().x()).arg(bounds2x.center().y())
+                            .arg(expected.x()).arg(expected.y())));
 }
 
 void QmlSmokeTest::viewportCaptureUsesRequestedRenderResolution()

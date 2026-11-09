@@ -240,6 +240,8 @@ public:
     Q_INVOKABLE void selectNode(const QString& nodeId, bool additive);
     // Several at once, the tree's Shift-click range: in place of the selection, or added to it.
     Q_INVOKABLE void selectNodes(const QStringList& nodeIds, const QString& activeNodeId, bool additive);
+    // Every part shown, as Cmd/Ctrl+A selects them: each part with geometry that is not hidden.
+    Q_INVOKABLE void selectAllParts();
     Q_INVOKABLE bool isNodeSelected(const QString& nodeId) const;
     Q_INVOKABLE void openFile(const QUrl& file);
     Q_INVOKABLE void cancelImport();
@@ -328,6 +330,9 @@ public:
     // Sections along a picked face's plane (Section > Pick face plane). False for anything
     // but a flat face: a curved one has no plane to cut along.
     Q_INVOKABLE bool sectionAlongFace(const QString& nodeId, const QVariant& entity);
+    // Sections about a picked axis of a part: square to it at `point` to begin with; the
+    // Section panel turns it to a plane through the axis at any angle.
+    Q_INVOKABLE bool sectionAlongAxis(const QString& nodeId, const QVector3D& point, const QVector3D& direction);
     Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
                                         double x, double y, double z, double normalX, double normalY, double normalZ,
                                         double measureMm, double radiusMm);

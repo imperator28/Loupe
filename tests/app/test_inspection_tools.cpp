@@ -30,6 +30,7 @@ private slots:
     void angleIsBetweenFlatFacesAndStraightEdgesOnly();
     void closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace();
     void circularEdgesKnowTheirCentreAndRadius();
+    void axesMeasureAsLinesAndTurnLikeStraightEdges();
     void pointPicksMeasureWithComponentsAndRefuseTheWrongKind();
     void angleArcReadsAsTheOpeningBetweenThePicks();
     void edgeAndAreaPicksAddUpAndComeBackOut();
@@ -39,6 +40,7 @@ private slots:
     void sectionCanUseASelectedFacePlane();
     void sectionOffsetsASelectedFacePlaneAndResetsWhenAxisChanges();
     void sectionAlongAPickedFaceKeepsItsPlaneWhateverIsClickedNext();
+    void sectionAboutAnAxisGoesAcrossItOrTurnsThroughIt();
     void sectionInteractionCanCommitOrCancelPreviewPosition();
     void captureSettingsResolveTransparentPngDimensions();
     void captureSettingsBoundCustomScaleAndInclusionOptions();
@@ -58,6 +60,8 @@ private slots:
     void explodeBlendEasesPartsHome();
     void explodeLocalPlaneFollowsTheMovedPart();
     void explodeTypedOffsetsAndAnglesAndSnapping();
+    void explodeLinesRunFromWhereAPartSeatsToWhereItIs();
+    void explodeLinesFollowAnAxisAndKeepTheirAnchorsInALayout();
 };
 
 void InspectionToolsTest::pointDistanceUsesEffectiveUnit()
@@ -242,11 +246,65 @@ void InspectionToolsTest::sectionAlongAPickedFaceKeepsItsPlaneWhateverIsClickedN
     QCOMPARE(section.effectiveNormal(), QVector3D(0.0F, 0.0F, 1.0F));
     QCOMPARE(section.effectiveOffset(), 6.0);
 
+    // While another face is picked the section is off, so the faces it cut can be clicked;
+    // cancelled, it comes back as it was.
+    section.beginPlanePick();
+    QVERIFY(!section.enabled());
+    section.cancelPlanePick();
+    QVERIFY(section.enabled());
+    QCOMPARE(section.effectiveOffset(), 6.0);
+    // Picked, it is on along the new face.
+    section.beginPlanePick();
+    section.usePlane({1.0F, 0.0F, 0.0F}, {2.0F, 0.0F, 0.0F}, QStringLiteral("Flat face on Cover"));
+    QVERIFY(section.enabled());
+    QCOMPARE(section.effectiveOffset(), 2.0);
+    // Off when the pick began stays off when it is cancelled.
+    section.setEnabled(false);
+    section.beginPlanePick();
+    section.cancelPlanePick();
+    QVERIFY(!section.enabled());
+    section.setEnabled(true);
+
     // An axis ends it, and a pick in progress.
     section.beginPlanePick();
     section.setAxis(loupe::app::tools::SectionAxis::Y);
     QVERIFY(!section.pickingPlane());
     QVERIFY(section.planeLabel().isEmpty());
+    QVERIFY(section.enabled());
+}
+
+void InspectionToolsTest::sectionAboutAnAxisGoesAcrossItOrTurnsThroughIt()
+{
+    loupe::app::tools::SectionController section;
+    // A hole along X through (0, 2, 3), picked at x = 5: across it there, by default.
+    section.beginPlanePick();
+    section.useAxis({5.0F, 2.0F, 3.0F}, {2.0F, 0.0F, 0.0F}, QStringLiteral("Axis on Bracket"));
+    QVERIFY(section.enabled() && section.usingAxis() && !section.pickingPlane());
+    QCOMPARE(section.axisMode(), QStringLiteral("across"));
+    QCOMPARE(section.effectiveNormal(), QVector3D(1.0F, 0.0F, 0.0F));
+    QCOMPARE(section.effectiveOffset(), 5.0);
+    // Through it: at 0 it holds the axis and the vertical, so its normal is level (along -Y or Y).
+    section.setAxisMode(QStringLiteral("through"));
+    auto normal = section.effectiveNormal();
+    QVERIFY(std::abs(normal.z()) < 1e-6F && std::abs(std::abs(normal.y()) - 1.0F) < 1e-6F);
+    // It always holds the axis: the axis point is on it, at any angle.
+    for (const auto degrees : {0.0, 30.0, 90.0, 215.0}) {
+        section.setAxisAngle(degrees);
+        normal = section.effectiveNormal();
+        QVERIFY(std::abs(QVector3D::dotProduct(normal, QVector3D(1, 0, 0))) < 1e-6F);
+        QVERIFY(std::abs(QVector3D::dotProduct(normal, QVector3D(5.0F, 2.0F, 3.0F)) - section.effectiveOffset()) < 1e-4);
+    }
+    // Turned a quarter, the plane is level, its normal vertical.
+    section.setAxisAngle(90.0);
+    QVERIFY(std::abs(std::abs(section.effectiveNormal().z()) - 1.0F) < 1e-6F);
+    section.setAxisAngle(-90.0);
+    QCOMPARE(section.axisAngle(), 270.0);
+    // A vertical axis starts from a plane holding X.
+    const auto vertical = loupe::app::tools::SectionController::throughAxisNormal({0, 0, 1}, 0.0);
+    QVERIFY(std::abs(vertical.z()) < 1e-6F && std::abs(vertical.x()) < 1e-6F);
+    // Any other plane ends it.
+    section.setAxis(loupe::app::tools::SectionAxis::Y);
+    QVERIFY(!section.usingAxis());
 }
 
 void InspectionToolsTest::sectionInteractionCanCommitOrCancelPreviewPosition()
@@ -284,7 +342,19 @@ void InspectionToolsTest::captureSettingsResolveTransparentPngDimensions()
 
 void InspectionToolsTest::captureSettingsBoundCustomScaleAndInclusionOptions()
 {
+    {
+        // A preset out of reach says why: 5x of a 3600 x 1200 view is 18000 px wide, over 16384.
+        loupe::app::tools::CaptureController capture;
+        capture.setViewportSize(3600, 1200);
+        QVERIFY(capture.maximumScale() < 5.0);
+        QVERIFY(capture.scaleLimitReason(3.0).isEmpty());
+        const auto reason = capture.scaleLimitReason(5.0);
+        QVERIFY2(reason.contains(QStringLiteral("18000")) && reason.contains(QStringLiteral("16384")), qPrintable(reason));
+    }
+
     loupe::app::tools::CaptureController capture;
+    // A capture is of the model unless the measurements are asked for.
+    QVERIFY(!capture.includeMeasurements());
     capture.setViewportSize({400, 300});
     capture.setCustomScale(3.17);
     capture.setIncludeMeasurements(false);
@@ -700,6 +770,84 @@ void InspectionToolsTest::closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace()
     QVERIFY(loupe::app::tools::measure::closestPoints(pin, floor).distance < 1e-5);
 }
 
+void InspectionToolsTest::axesMeasureAsLinesAndTurnLikeStraightEdges()
+{
+    namespace measure = loupe::app::tools::measure;
+    // A round face about the z axis (a hole: its normal at the pick faces the axis).
+    MeasureEntity hole;
+    hole.kind = MeasureEntity::Kind::Face;
+    hole.radiusMm = 3.0;
+    hole.hasAxis = true;
+    hole.centre = {0, 0, 0};
+    hole.axis = {0, 0, 1};
+    hole.axisFrom = {0, 0, -2};
+    hole.axisTo = {0, 0, 12};
+    hole.point = {3, 0, 5};
+    hole.normal = {-1, 0, 0};
+    const auto axis = measure::axisEntity(hole, {3, 0, 5});
+    QCOMPARE(axis.kind, MeasureEntity::Kind::Axis);
+    QVERIFY(axis.linear);
+    QVERIFY(closeTo(axis.point, {0, 0, 5}));
+    QCOMPARE(axis.polyline.size(), 2);
+    // Nothing round, no axis.
+    QVERIFY(!measure::axisEntity(flatFace({-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0}, {}), {}).isValid());
+
+    // A point square to it, wherever along it.
+    MeasureEntity point;
+    point.kind = MeasureEntity::Kind::Vertex;
+    point.point = {3, 4, 40};
+    const auto toPoint = measure::lineDistance(axis, point);
+    QVERIFY(std::abs(toPoint.distance - 5.0) < 1e-5);
+    QVERIFY(closeTo(toPoint.first, {0, 0, 40}));
+    // Two parallel axes 10 apart.
+    auto parallel = hole;
+    parallel.centre = {6, 8, 0};
+    const auto other = measure::axisEntity(parallel, {6, 8, 0});
+    QVERIFY(std::abs(measure::lineDistance(axis, other).distance - 10.0) < 1e-5);
+    // Skew axes: the closest approach.
+    auto skewFace = hole;
+    skewFace.centre = {0, 0, 7};
+    skewFace.axis = {1, 0, 0};
+    const auto skew = measure::lineDistance(axis, measure::axisEntity(skewFace, {0, 0, 7}));
+    QVERIFY(std::abs(skew.distance) < 1e-5);
+    skewFace.centre = {0, 3, 7};
+    const auto apart = measure::lineDistance(axis, measure::axisEntity(skewFace, {0, 3, 7}));
+    QVERIFY(std::abs(apart.distance - 3.0) < 1e-5);
+    QVERIFY(closeTo(apart.first, {0, 0, 7}));
+    QVERIFY(closeTo(apart.second, {0, 3, 7}));
+    // Turns like a straight edge: square to a face across it, along one in its direction.
+    QVERIFY(std::abs(measure::angleBetween(axis, flatFace({-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0}, {})) - 90.0) < 1e-4);
+    QVERIFY(std::abs(measure::angleBetween(axis, straightEdge({0, 0, 0}, {0, 1, 1})) - 45.0) < 1e-4);
+
+    // Through the controller: point to point and angle take it; edge length does not.
+    loupe::app::tools::MeasurementController controller;
+    controller.setModeName(QStringLiteral("point"));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(point), QStringLiteral("Plate")));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Distance to axis"));
+    QVERIFY(std::abs(controller.resultValue() - 5.0) < 1e-5);
+    QCOMPARE(controller.pickedEntities().front().toMap().value(QStringLiteral("entityKind")).toString(), QStringLiteral("axis"));
+    const auto described = controller.describe(QVariant::fromValue(axis));
+    QCOMPARE(described.value(QStringLiteral("kind")).toString(), QStringLiteral("axis"));
+    QVERIFY2(described.value(QStringLiteral("detail")).toString().contains(QStringLiteral("hole")),
+             qPrintable(described.value(QStringLiteral("detail")).toString()));
+    controller.pinResult();
+    QCOMPARE(controller.pinnedResults().back().toMap().value(QStringLiteral("axes")).toList().size(), 1);
+    controller.setModeName(QStringLiteral("edge"));
+    QVERIFY(!controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+    controller.setModeName(QStringLiteral("angle"));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+
+    // Surface to surface: an axis to a flat face parallel to it, square across.
+    controller.setModeName(QStringLiteral("surface-distance"));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+    auto side = flatFace({7, -5, -2}, {7, 5, -2}, {7, 5, 12}, {7, -5, 12}, {});
+    side.point = {7, 0, 3};
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(side), QStringLiteral("Plate")));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Axis to face"));
+    QVERIFY2(std::abs(controller.resultValue() - 7.0) < 1e-4, qPrintable(QString::number(controller.resultValue())));
+}
+
 void InspectionToolsTest::circularEdgesKnowTheirCentreAndRadius()
 {
     MeasureEntity edge;
@@ -1049,6 +1197,123 @@ void InspectionToolsTest::explodeLocalPlaneFollowsTheMovedPart()
     QVERIFY2(closeTo(turned.toVector3D(), {0, -1, 0}), qPrintable(describe(turned.toVector3D())));
     // The plane runs through the part's centre (100, 0, 0), so it does in the part's own frame too.
     QVERIFY2(qAbs(turned.w()) < 1e-3F, qPrintable(QString::number(turned.w())));
+}
+
+namespace {
+
+QVector3D segmentEnd(const QVariantMap& line, const int index, const char* end)
+{
+    return line.value(QStringLiteral("segments")).toList().at(index).toMap().value(QString::fromLatin1(end)).value<QVector3D>();
+}
+
+QVariantMap lineOf(const loupe::app::tools::ExplodeController& explode, const QString& nodeId)
+{
+    for (const auto& value : explode.explodeLines()) {
+        const auto line = value.toMap();
+        if (line.value(QStringLiteral("nodeId")).toString() == nodeId) return line;
+    }
+    return {};
+}
+
+} // namespace
+
+void InspectionToolsTest::explodeLinesRunFromWhereAPartSeatsToWhereItIs()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    QVERIFY(explode.explodeLines().isEmpty());
+
+    // A sub-assembly moved as a whole: one line, from its centre as assembled to where it is.
+    explode.translateBy({QStringLiteral("sub")}, {0, 0, 30});
+    QCOMPARE(explode.explodeLines().size(), 1);
+    auto sub = lineOf(explode, QStringLiteral("sub"));
+    QVERIFY(closeTo(segmentEnd(sub, 0, "from"), {0, 0, 0}));
+    QVERIFY(closeTo(segmentEnd(sub, 0, "to"), {0, 0, 30}));
+    QVERIFY(!sub.value(QStringLiteral("segments")).toList().at(0).toMap().value(QStringLiteral("centerline")).toBool());
+
+    // A part moved again inside it: its own line, from its seat in the moved sub-assembly.
+    explode.translateBy({QStringLiteral("left")}, {-20, 0, 0});
+    QCOMPARE(explode.explodeLines().size(), 2);
+    const auto left = lineOf(explode, QStringLiteral("left"));
+    QVERIFY(closeTo(segmentEnd(left, 0, "from"), {-10, 0, 30}));
+    QVERIFY(closeTo(segmentEnd(left, 0, "to"), {-30, 0, 30}));
+    QCOMPARE(explode.lineOwnerOf(QStringLiteral("right")), QStringLiteral("sub"));
+    QCOMPARE(explode.lineOwnerOf(QStringLiteral("left")), QStringLiteral("left"));
+
+    // Eased halfway home, the lines are half as long; on the assembly there are none.
+    explode.setBlend(0.5);
+    sub = lineOf(explode, QStringLiteral("sub"));
+    QVERIFY(closeTo(segmentEnd(sub, 0, "to"), {0, 0, 15}));
+    explode.setBlend(0.0);
+    QVERIFY(explode.explodeLines().isEmpty());
+    explode.setBlend(1.0);
+
+    // Hidden, one by one or all; the style turns them into centerlines.
+    explode.setLineHidden(QStringLiteral("left"), true);
+    QCOMPARE(explode.explodeLines().size(), 1);
+    QVERIFY(explode.canUndo());
+    explode.undo();
+    QCOMPARE(explode.explodeLines().size(), 2);
+    explode.setLineStyle(QStringLiteral("centerline"));
+    QVERIFY(lineOf(explode, QStringLiteral("sub")).value(QStringLiteral("segments")).toList().at(0).toMap()
+                .value(QStringLiteral("centerline")).toBool());
+    explode.setLinesShown(false);
+    QVERIFY(explode.explodeLines().isEmpty());
+    explode.setLinesShown(true);
+
+    // A turned part whose line starts off its centre: along its travel, then a jog to the seat.
+    loupe::app::tools::ExplodeController turned;
+    buildExplodeFixture(turned);
+    turned.setLineAnchor(QStringLiteral("far"), {101, 0, 0}, {});
+    turned.setAngles(QStringLiteral("far"), {0, 0, 90});
+    turned.translateBy({QStringLiteral("far")}, {0, 40, 0});
+    const auto far = lineOf(turned, QStringLiteral("far"));
+    const auto segments = far.value(QStringLiteral("segments")).toList();
+    QCOMPARE(segments.size(), 2);
+    QVERIFY(closeTo(segmentEnd(far, 0, "from"), {101, 0, 0}));
+    QVERIFY2(closeTo(segmentEnd(far, 0, "to"), {101, 40, 0}), qPrintable(describe(segmentEnd(far, 0, "to"))));
+    QVERIFY2(closeTo(segmentEnd(far, 1, "to"), {100, 41, 0}), qPrintable(describe(segmentEnd(far, 1, "to"))));
+}
+
+void InspectionToolsTest::explodeLinesFollowAnAxisAndKeepTheirAnchorsInALayout()
+{
+    loupe::app::tools::ExplodeController explode;
+    buildExplodeFixture(explode);
+    // "far" seats on an axis along x (a pin in its bore): found by the viewport, not picked.
+    explode.setSeatAxes({{QStringLiteral("far"), QVariantMap{{QStringLiteral("point"), QVariant::fromValue(QVector3D{100, 0, 0})},
+                                                             {QStringLiteral("direction"), QVariant::fromValue(QVector3D{1, 0, 0})}}}});
+    explode.translateBy({QStringLiteral("far")}, {50, 0, 0});
+    auto far = lineOf(explode, QStringLiteral("far"));
+    auto segments = far.value(QStringLiteral("segments")).toList();
+    QCOMPARE(segments.size(), 1);
+    QVERIFY(segments.at(0).toMap().value(QStringLiteral("centerline")).toBool());
+    // Along the axis, a little past each end.
+    QVERIFY(segmentEnd(far, 0, "from").x() < 100.0F);
+    QVERIFY(segmentEnd(far, 0, "to").x() > 150.0F);
+    QVERIFY(std::abs(segmentEnd(far, 0, "from").y()) < 1e-4F);
+    // Moved off the axis as well: along it as far as it goes, then across to the part.
+    explode.translateBy({QStringLiteral("far")}, {0, 0, 20});
+    far = lineOf(explode, QStringLiteral("far"));
+    segments = far.value(QStringLiteral("segments")).toList();
+    QCOMPARE(segments.size(), 2);
+    QVERIFY(closeTo(segmentEnd(far, 1, "from"), {150, 0, 0}));
+    QVERIFY(closeTo(segmentEnd(far, 1, "to"), {150, 0, 20}));
+
+    // A picked anchor wins over the found axis, and goes with the layout.
+    explode.setLineAnchor(QStringLiteral("far"), {99, 1, 0}, {});
+    far = lineOf(explode, QStringLiteral("far"));
+    QVERIFY(closeTo(segmentEnd(far, 0, "from"), {99, 1, 0}));
+    explode.setLineHidden(QStringLiteral("sub"), true);
+    const auto snapshot = explode.layoutSnapshot();
+    loupe::app::tools::ExplodeController restored;
+    buildExplodeFixture(restored);
+    QVERIFY(restored.restoreLayout(snapshot));
+    restored.setBlend(1.0);
+    QVERIFY(restored.hasLineAnchor(QStringLiteral("far")));
+    QVERIFY(restored.lineHidden(QStringLiteral("sub")));
+    QVERIFY(closeTo(segmentEnd(lineOf(restored, QStringLiteral("far")), 0, "from"), {99, 1, 0}));
+    // Picked points come back to the node's assembled coordinates, wherever it is shown.
+    QVERIFY(closeTo(explode.assembledPoint(QStringLiteral("far"), {150, 0, 20}), {100, 0, 0}));
 }
 
 void InspectionToolsTest::explodeTypedOffsetsAndAnglesAndSnapping()

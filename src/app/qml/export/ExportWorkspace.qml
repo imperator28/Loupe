@@ -39,6 +39,17 @@ Item {
         standalonePreview.setRenderMode(mode)
     }
 
+    // Cmd/Ctrl+A: every part in the part list, as its Select all does; a text field keeps it.
+    Shortcut {
+        objectName: "exportSelectAllShortcut"
+        sequences: [StandardKey.SelectAll]
+        enabled: root.visible && root.draft !== null && !root.textFieldFocused()
+        onActivated: root.draft.setAllChecked(true)
+    }
+    function textFieldFocused() {
+        const item = root.Window.window ? root.Window.window.activeFocusItem : null
+        return !!(item && typeof item.selectAll === "function" && "text" in item)
+    }
     Shortcut { sequences: ["1"]; enabled: root.visible; onActivated: root.applyRenderMode(0) }
     Shortcut { sequences: ["2"]; enabled: root.visible; onActivated: root.applyRenderMode(1) }
     Shortcut { sequences: ["3"]; enabled: root.visible; onActivated: root.applyRenderMode(2) }
@@ -159,17 +170,23 @@ Item {
                 emptyText: qsTr("Hover a component to preview its standalone file")
                 requireSelection: true
                 displayOnlyNodeId: root.draft ? root.draft.previewNodeId : ""
-                highlightNodeId: ""
+                // The part clicked last (in the bucket or the tree) stays lit while it is shown.
+                highlightNodeId: root.draft && root.draft.previewNodeId === root.draft.focusedNodeId ? root.draft.focusedNodeId : ""
                 loadEnabled: root.previewsActivated
                 onViewportReadyChanged: root.replayGeometryWhenReady()
             }
 
             ExportBucket {
+                objectName: "exportBucket"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: 220
                 draft: root.draft
                 theme: root.theme
+                onRowSelected: function(nodeId) {
+                    if (root.controller) root.controller.activeNodeId = nodeId
+                    componentPicker.revealNode(nodeId)
+                }
             }
 
             ExportSettings {

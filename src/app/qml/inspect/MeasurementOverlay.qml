@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Shapes
+import "NearClip.js" as NearClip
 
 // What the Measure tool draws over the model, in screen space so it reads at any zoom:
 //   - under the pointer, the snap point a click would take (a vertex's square, a circle
@@ -14,6 +15,9 @@ import QtQuick.Shapes
 // amber, so what is about to happen never reads as what has happened.
 Item {
     id: root
+    // Nothing it draws leaves the viewport: an edge running off the view is cut at its border,
+    // not drawn on over the panels beside it.
+    clip: true
 
     property QtObject theme
     property QtObject visualTheme
@@ -26,6 +30,8 @@ Item {
     property var hover: null
     property point pointer: Qt.point(0, 0)
     property bool showHover: true
+    // The pointer is a finger (aiming by press and hold): the chip goes above it, not under it.
+    property bool chipAbovePointer: false
     property bool showResult: true
     // The measurement in progress, apart from the pinned ones.
     property bool showCurrent: true
@@ -36,12 +42,112 @@ Item {
     readonly property color hoverColor: theme ? theme.accent : "transparent"
     readonly property color haloColor: visualTheme ? visualTheme.markerBorder : "transparent"
 
-    function project(point) {
-        if (!view || point === undefined || point === null || revision < 0) return Qt.point(-10000, -10000)
-        return view.mapFrom3DScene(point)
+    // Where a scene point is off the screen, or behind the camera: far outside every margin.
+    readonly property point offScreen: Qt.point(-10000, -10000)
+
+    // The camera's position, view direction and near plane, for clipping against it. An
+    // orthographic camera projects nothing mirrored, so it clips nothing.
+    function cameraFrame() {
+        const camera = view ? view.camera : null
+        if (!camera || camera.clipNear === undefined || camera.fieldOfView === undefined) return null
+        const position = camera.scenePosition
+        const forward = camera.forward
+        // Cut a little in front of the plane: right on it, points project to infinity.
+        return { position: position, forward: forward, near: Math.max(camera.clipNear * 1.01, camera.clipNear + 1e-4) }
     }
+    function depthFunction(frame) {
+        return function(point) {
+            return (point.x - frame.position.x) * frame.forward.x + (point.y - frame.position.y) * frame.forward.y
+                 + (point.z - frame.position.z) * frame.forward.z
+        }
+    }
+
+    // The screen position of a point already known to be in front of the camera. A capture
+    // renders a larger texture with the orthographic magnification raised to match, so the
+    // camera's normalised projection, and so this, is the same during a capture as on screen.
+    function projectInFront(point) {
+        const screen = view.mapFrom3DScene(point)
+        return Qt.point(screen.x, screen.y)
+    }
+    function project(point) {
+        if (!view || point === undefined || point === null || revision < 0) return offScreen
+        const frame = cameraFrame()
+        if (frame && depthFunction(frame)(point) < frame.near) return offScreen
+        return projectInFront(point)
+    }
+    function isOffScreen(point) { return point.x <= offScreen.x + 1 && point.y <= offScreen.y + 1 }
     function onScreen(point, margin) {
         return point.x >= -margin && point.x <= width + margin && point.y >= -margin && point.y <= height + margin
+    }
+    // A polyline as the screen runs of it in front of the camera: [[point, ...], ...].
+    function projectPath(points) {
+        if (!view || !points || points.length < 2 || revision < 0) return []
+        const frame = cameraFrame()
+        const runs = frame ? NearClip.clipPolyline(points, depthFunction(frame), frame.near) : [points]
+        const result = []
+        for (const run of runs) {
+            const screenRun = []
+            for (const point of run) screenRun.push(projectInFront(point))
+            result.push(screenRun)
+        }
+        return result
+    }
+    // The part of segment a-b in front of the camera, on screen, as [from, to]; null if none.
+    function projectSegment(a, b) {
+        if (!view || !a || !b || revision < 0) return null
+        const frame = cameraFrame()
+        const clipped = frame ? NearClip.clipSegment(a, b, depthFunction(frame), frame.near) : [a, b]
+        return clipped ? [projectInFront(clipped[0]), projectInFront(clipped[1])] : null
+    }
+    // A closed polygon's part in front of the camera, on screen; empty if none.
+    function projectPolygon(points) {
+        if (!view || !points || points.length < 3 || revision < 0) return []
+        const frame = cameraFrame()
+        const clipped = frame ? NearClip.clipPolygon(points, depthFunction(frame), frame.near) : points
+        const result = []
+        for (const point of clipped) result.push(projectInFront(point))
+        return result
+    }
+    // Screen runs as a centerline, the drafting way: long dashes with a dot between.
+    function svgDashDot(runs) {
+        const dash = 14
+        const gap = 3.5
+        const dot = 1.5
+        const period = dash + gap + dot + gap
+        let path = ""
+        const f = function(value) { return value.toFixed(1) }
+        for (const run of runs) {
+            let phase = 0
+            for (let index = 0; index + 1 < run.length; ++index) {
+                const a = run[index]
+                const b = run[index + 1]
+                const length = Math.hypot(b.x - a.x, b.y - a.y)
+                if (!(length > 0) || length > 20000) continue
+                const ux = (b.x - a.x) / length
+                const uy = (b.y - a.y) / length
+                // Each stroke of the pattern that falls on this piece, carried on from the last.
+                for (let at = -phase; at < length; at += period) {
+                    for (const stroke of [[0, dash], [dash + gap, dash + gap + dot]]) {
+                        const start = Math.max(0, at + stroke[0])
+                        const end = Math.min(length, at + stroke[1])
+                        if (end <= start) continue
+                        path += " M " + f(a.x + ux * start) + " " + f(a.y + uy * start) + " L " + f(a.x + ux * end) + " " + f(a.y + uy * end)
+                    }
+                }
+                phase = (phase + length) % period
+            }
+        }
+        return path.trim()
+    }
+    // Screen runs as one SVG path, a move to the start of each.
+    function svgRuns(runs) {
+        let path = ""
+        for (const run of runs) {
+            if (run.length < 2) continue
+            path += (path.length ? " M " : "M ") + run[0].x.toFixed(1) + " " + run[0].y.toFixed(1)
+            for (let index = 1; index < run.length; ++index) path += " L " + run[index].x.toFixed(1) + " " + run[index].y.toFixed(1)
+        }
+        return path
     }
 
     // ---- Pinned results: kept where they were measured, under the one in progress ----
@@ -64,6 +170,7 @@ Item {
             title: modelData.title
             annotation: modelData.annotation
             edges: modelData.edges
+            axes: modelData.axes !== undefined ? modelData.axes : []
             points: modelData.points
         }
     }
@@ -81,38 +188,36 @@ Item {
         edges: {
             const result = []
             for (const entry of root.measurement ? root.measurement.pickedEntities : []) {
-                if (entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
+                if (entry.entityKind !== "axis" && entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
+            }
+            return result
+        }
+        axes: {
+            const result = []
+            for (const entry of root.measurement ? root.measurement.pickedEntities : []) {
+                if (entry.entityKind === "axis" && entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
             }
             return result
         }
     }
 
     // The edge under the pointer, bold in the hover accent, so it is clear which one a click takes.
-    readonly property var hoverPolyline: {
+    // Its runs in front of the camera, on screen.
+    readonly property var hoverRuns: {
         if (!root.showHover || !root.hover || !root.hover.info || !root.hover.info.polyline) return []
-        const result = []
-        for (const point of root.hover.info.polyline) {
-            const screen = root.project(point)
-            result.push(Qt.point(screen.x, screen.y))
-        }
-        return result
+        return root.projectPath(root.hover.info.polyline)
     }
-    // As an SVG path: what the icons draw with, on every graphics back end.
-    readonly property string hoverPath: {
-        const points = hoverPolyline
-        if (points.length < 2) return ""
-        let path = "M " + points[0].x.toFixed(1) + " " + points[0].y.toFixed(1)
-        for (let index = 1; index < points.length; ++index) path += " L " + points[index].x.toFixed(1) + " " + points[index].y.toFixed(1)
-        return path
-    }
+    // As an SVG path: what the icons draw with, on every graphics back end. An axis is drawn as
+    // a centerline, not as an edge.
+    readonly property string hoverPath: hoverKind === "axis" ? svgDashDot(hoverRuns) : svgRuns(hoverRuns)
     Shape {
         objectName: "measurementHoverEdge"
         anchors.fill: parent
-        visible: root.hoverPolyline.length > 1
+        visible: root.hoverPath.length > 0
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeColor: Qt.rgba(root.haloColor.r, root.haloColor.g, root.haloColor.b, 0.5)
-            strokeWidth: 5
+            strokeWidth: root.hoverKind === "axis" ? 4.5 : 5
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
@@ -120,7 +225,7 @@ Item {
         }
         ShapePath {
             strokeColor: root.hoverColor
-            strokeWidth: 3
+            strokeWidth: root.hoverKind === "axis" ? 2 : 3
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
@@ -137,8 +242,12 @@ Item {
         const at = info.previewAt
         const n = info.previewNormal
         const length = root.normalPreviewLength
-        const from = root.project(at)
-        const to = root.project(Qt.vector3d(at.x + n.x * length, at.y + n.y * length, at.z + n.z * length))
+        // Drawn only when its foot is in front of the camera; its tip is cut at the near plane.
+        if (root.isOffScreen(root.project(at))) return null
+        const segment = root.projectSegment(at, Qt.vector3d(at.x + n.x * length, at.y + n.y * length, at.z + n.z * length))
+        if (!segment) return null
+        const from = segment[0]
+        const to = segment[1]
         const dx = to.x - from.x
         const dy = to.y - from.y
         const pixels = Math.sqrt(dx * dx + dy * dy)
@@ -269,8 +378,15 @@ Item {
                  && String(root.hoverInfo.title).length > 0
         // Below and right of the pointer, flipped where it would leave the viewport.
         x: Math.round(root.pointer.x + gap + width > root.width ? root.pointer.x - gap - width : root.pointer.x + gap)
-        y: Math.round(root.pointer.y + gap + height > root.height ? root.pointer.y - gap - height : root.pointer.y + gap)
-        width: Math.min(260, Math.max(titleRow.implicitWidth, root.hoverEligible ? 0 : reasonLabel.implicitWidth) + 20)
+        y: Math.round(root.chipAbovePointer
+                      ? (root.pointer.y - 56 - height >= 0 ? root.pointer.y - 56 - height : root.pointer.y + 56)
+                      : root.pointer.y + gap + height > root.height ? root.pointer.y - gap - height : root.pointer.y + gap)
+        width: Math.min(260, Math.max(titleRow.implicitWidth, root.hoverEligible ? hintWidth.width : reasonLabel.implicitWidth) + 20)
+        TextMetrics {
+            id: hintWidth
+            text: root.hoverInfo && root.hoverInfo.hint ? root.hoverInfo.hint : ""
+            font.pixelSize: root.theme ? root.theme.fontCaption : 11
+        }
         height: chipContent.implicitHeight + 12
         radius: root.theme ? root.theme.radius2 : 0
         color: root.theme ? root.theme.surface3 : "transparent"
@@ -309,6 +425,15 @@ Item {
                     font.pixelSize: root.theme ? root.theme.fontSection : 12
                     font.features: { "tnum": 1 }
                 }
+            }
+            Label {
+                objectName: "measurementHoverHint"
+                width: chipContent.width
+                visible: root.hoverEligible && text.length > 0
+                text: root.hoverInfo && root.hoverInfo.hint ? root.hoverInfo.hint : ""
+                wrapMode: Text.WordWrap
+                color: root.theme ? root.theme.muted : "transparent"
+                font.pixelSize: root.theme ? root.theme.fontCaption : 11
             }
             Label {
                 id: reasonLabel

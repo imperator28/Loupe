@@ -29,12 +29,17 @@ public:
     Q_INVOKABLE void setViewportSize(int width, int height);
     void setScale(int scale);
     Q_INVOKABLE void setCustomScale(double scale);
+    // Why a scale is out of reach, for the panel to say: "" when it is not.
+    Q_INVOKABLE [[nodiscard]] QString scaleLimitReason(double scale) const;
     void setTransparentBackground(bool transparent);
     void setIncludeMeasurements(bool include);
     void setIncludeSectionCaps(bool include);
     Q_INVOKABLE void beginCapture();
     Q_INVOKABLE void setCaptureProgress(double progress, const QString& message);
     Q_INVOKABLE void failCapture(const QString& message);
+    // The 3D render with the measurement overlay drawn over it, the overlay stretched to the
+    // render's size when the two differ. A null overlay returns the render unchanged.
+    Q_INVOKABLE QImage composeOverlay(const QImage& render, const QImage& overlay) const;
     Q_INVOKABLE bool saveImage(const QImage& image, const QUrl& destination);
     Q_INVOKABLE bool copyImageToClipboard(const QImage& image);
     [[nodiscard]] QString format() const { return QStringLiteral("png"); }
@@ -66,7 +71,8 @@ private:
     QSize viewportSize_;
     double scale_{1.0};
     bool transparentBackground_{true};
-    bool includeMeasurements_{true};
+    // Off until asked for: a capture is of the model unless the measurements are wanted in it.
+    bool includeMeasurements_{false};
     bool includeSectionCaps_{true};
     QString statusMessage_;
     bool lastSaveSucceeded_{false};

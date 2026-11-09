@@ -211,21 +211,23 @@ bool MeasurementController::eligible(const MeasureEntity& entity, QString* reaso
     if (!entity.isValid()) return refuse({});
     const auto isFace = entity.kind == MeasureEntity::Kind::Face;
     const auto isEdge = entity.kind == MeasureEntity::Kind::Edge;
+    const auto isAxis = entity.kind == MeasureEntity::Kind::Axis;
     switch (mode_) {
     case MeasurementMode::PointToPoint:
-        return entity.isPointLike() || refuse(tr("Pick a point: a vertex, a circle's centre, or a point on an edge or face."));
+        return entity.isPointLike() || isAxis
+            || refuse(tr("Pick a point: a vertex, a circle's centre, an axis, or a point on an edge or face."));
     case MeasurementMode::EdgeLength:
         return isEdge || refuse(tr("Pick an edge."));
     case MeasurementMode::SurfaceToSurface:
-        return isFace || refuse(tr("Pick a face."));
+        return isFace || isAxis || refuse(tr("Pick a face or an axis."));
     case MeasurementMode::RadiusDiameter:
         if ((isEdge || isFace) && entity.radiusMm > 0.0) return true;
         return refuse(isEdge || isFace ? tr("Not round. Pick a circular edge, or a cylindrical or spherical face.")
                                        : tr("Pick a circular edge or a round face."));
     case MeasurementMode::Angle:
         if (isFace && entity.planar) return true;
-        if (isEdge && entity.linear) return true;
-        if (isFace) return refuse(tr("A curved face has no single direction. Pick a flat face or a straight edge."));
+        if ((isEdge || isAxis) && entity.linear) return true;
+        if (isFace) return refuse(tr("A curved face has no single direction. Pick a flat face, a straight edge or an axis."));
         if (isEdge) return refuse(tr("A curved edge has no single direction. Pick a straight edge or a flat face."));
         return refuse(tr("Pick a flat face or a straight edge."));
     case MeasurementMode::SurfaceArea:
@@ -320,12 +322,14 @@ void MeasurementController::pinResult()
     if (!canPin()) return;
     QVariantList points;
     QVariantList edges;
+    QVariantList axes;
     for (const auto& pick : picks_) {
         points.append(QVariant::fromValue(pick.kind == MeasureEntity::Kind::CircleCentre ? pick.centre : pick.point));
-        if (pick.kind == MeasureEntity::Kind::Edge && pick.polyline.size() >= 2) {
+        const auto isAxis = pick.kind == MeasureEntity::Kind::Axis;
+        if ((pick.kind == MeasureEntity::Kind::Edge || isAxis) && pick.polyline.size() >= 2) {
             QVariantList line;
             for (const auto& point : pick.polyline) line.append(QVariant::fromValue(point));
-            edges.append(QVariant(line));
+            (isAxis ? axes : edges).append(QVariant(line));
         }
     }
     // In turn, so pins made one after another read apart; amber, the measurement colour, first.
@@ -339,7 +343,8 @@ void MeasurementController::pinResult()
                                {QStringLiteral("text"), QStringLiteral("%1 %2").arg(resultText(), resultUnit()).trimmed()},
                                {QStringLiteral("annotation"), result_.annotation},
                                {QStringLiteral("points"), points},
-                               {QStringLiteral("edges"), edges}});
+                               {QStringLiteral("edges"), edges},
+                               {QStringLiteral("axes"), axes}});
     emit pinnedChanged();
     // The next measurement starts clean; the pinned one stays drawn.
     if (requiredPickCount() > 0) clearPicks();
@@ -411,6 +416,14 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
     case MeasureEntity::Kind::CircleCentre:
         detailText = tr("of R %1").arg(formatLength(entity.radiusMm));
         break;
+    case MeasureEntity::Kind::Axis: {
+        // A hole's wall faces its axis (its outward normal points into the hole); a boss's or
+        // pin's faces away from it. planePoint is where on the face it was picked.
+        const auto hole = !entity.normal.isNull() && QVector3D::dotProduct(entity.normal, entity.point - entity.planePoint) > 0.0F;
+        if (entity.radiusMm > 0.0)
+            detailText = (hole ? tr("Ø %1 hole") : tr("Ø %1")).arg(formatLength(entity.radiusMm * 2.0));
+        break;
+    }
     default:
         break;
     }
@@ -425,6 +438,7 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
         case MeasureEntity::Kind::CircleCentre: return QStringLiteral("centre");
         case MeasureEntity::Kind::Edge: return QStringLiteral("edge");
         case MeasureEntity::Kind::Face: return QStringLiteral("face");
+        case MeasureEntity::Kind::Axis: return QStringLiteral("axis");
         case MeasureEntity::Kind::None: break;
         }
         return QString{};
@@ -434,7 +448,7 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
     QVariantList polyline;
     if (entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::CircleCentre
         || entity.kind == MeasureEntity::Kind::EdgePoint || entity.kind == MeasureEntity::Kind::Vertex
-        || entity.kind == MeasureEntity::Kind::Midpoint) {
+        || entity.kind == MeasureEntity::Kind::Midpoint || entity.kind == MeasureEntity::Kind::Axis) {
         polyline.reserve(entity.polyline.size());
         for (const auto& point : entity.polyline) polyline.append(QVariant::fromValue(point));
     }
@@ -457,6 +471,13 @@ QVariantMap MeasurementController::describe(const MeasureEntity& entity) const
             {QStringLiteral("circular"), entity.circular},
             {QStringLiteral("centre"), QVariant::fromValue(entity.centre)},
             {QStringLiteral("axis"), QVariant::fromValue(entity.axis)}};
+}
+
+QVariant MeasurementController::axisEntity(const QVariant& source, const QVector3D& near)
+{
+    if (!source.canConvert<MeasureEntity>()) return {};
+    const auto axis = measure::axisEntity(source.value<MeasureEntity>(), near);
+    return axis.isValid() ? QVariant::fromValue(axis) : QVariant{};
 }
 
 QVariant MeasurementController::surfacePointEntity(const QVector3D& point, const QVector3D& normal)
@@ -586,6 +607,24 @@ void MeasurementController::recompute()
         const auto& b = picks_.at(1);
         result_.valid = true;
         result_.quantity = Quantity::Length;
+        // Axes as lines: in point to point, an axis against a point or another axis; in surface
+        // to surface, two axes (an axis against a face is handled below).
+        const auto bothAxes = a.kind == MeasureEntity::Kind::Axis && b.kind == MeasureEntity::Kind::Axis;
+        if (const auto line = measure::lineDistance(a, b);
+            line.valid() && !legacy && (mode_ == MeasurementMode::PointToPoint || bothAxes)) {
+            const auto parallel = bothAxes && QVector3D::crossProduct(a.axis.normalized(), b.axis.normalized()).lengthSquared() < 1e-10F;
+            result_.title = !bothAxes ? tr("Distance to axis") : parallel ? tr("Distance between axes") : tr("Closest approach");
+            result_.valueMm = line.distance;
+            result_.method = !bothAxes ? tr("Square from the point to the axis")
+                           : parallel ? tr("Square across two parallel axes") : tr("Where two skew axes pass nearest");
+            if (bothAxes) {
+                const auto angle = measure::angleBetween(a, b);
+                if (angle >= 0.0) result_.details.append(detail(tr("Angle"), QStringLiteral("%1°").arg(fixed(angle, 2))));
+            }
+            deltas(line.first, line.second);
+            distanceAnnotation(line.first, line.second, formatLength(line.distance));
+            break;
+        }
         if (mode_ == MeasurementMode::PointToPoint || legacy) {
             result_.title = tr("Distance");
             result_.valueMm = static_cast<double>((b.point - a.point).length());
@@ -596,6 +635,26 @@ void MeasurementController::recompute()
             break;
         }
         const auto angle = measure::angleBetween(a, b);
+        // An axis and a flat face: square from the axis to the face when they run parallel (a
+        // hole's centre to a datum face), else the closest approach.
+        const auto* axisPick = a.kind == MeasureEntity::Kind::Axis ? &a : b.kind == MeasureEntity::Kind::Axis ? &b : nullptr;
+        const auto* facePick = a.kind == MeasureEntity::Kind::Face && a.planar ? &a : b.kind == MeasureEntity::Kind::Face && b.planar ? &b : nullptr;
+        if (axisPick && facePick) {
+            const auto normal = facePick->planeNormal.normalized();
+            const auto direction = axisPick->axis.normalized();
+            if (std::abs(QVector3D::dotProduct(normal, direction)) < 1e-3F) {
+                const auto offset = QVector3D::dotProduct(axisPick->point - facePick->planePoint, normal);
+                const auto onAxis = axisPick->point;
+                const auto onFace = onAxis - normal * offset;
+                result_.title = tr("Axis to face");
+                result_.valueMm = std::abs(static_cast<double>(offset));
+                result_.method = tr("Square from the axis to a flat face parallel to it");
+                deltas(onAxis, onFace);
+                if (axisPick == &a) distanceAnnotation(onAxis, onFace, formatLength(result_.valueMm));
+                else distanceAnnotation(onFace, onAxis, formatLength(result_.valueMm));
+                break;
+            }
+        }
         if (measure::parallelPlanes(a, b)) {
             const auto gap = measure::planeGap(a, b);
             result_.title = tr("Gap");
@@ -634,7 +693,10 @@ void MeasurementController::recompute()
             result_.method = tr("Between the normals at the picked points");
         } else {
             const auto faces = a.kind == MeasureEntity::Kind::Face && b.kind == MeasureEntity::Kind::Face;
-            const auto lines = a.kind == MeasureEntity::Kind::Edge && b.kind == MeasureEntity::Kind::Edge;
+            const auto lineLike = [](const MeasureEntity& entity) {
+                return entity.kind == MeasureEntity::Kind::Edge || entity.kind == MeasureEntity::Kind::Axis;
+            };
+            const auto lines = lineLike(a) && lineLike(b);
             const auto arc = measure::angleArc(a, b);
             degrees = arc.valid ? arc.degrees : measure::angleBetween(a, b);
             result_.method = !arc.valid ? (faces ? tr("The faces are parallel") : tr("The edges are parallel"))
@@ -906,6 +968,7 @@ QVariantList MeasurementController::pickedEntities() const
         const auto& pick = picks_.at(index);
         const auto kind = pick.kind == MeasureEntity::Kind::Face ? QStringLiteral("face")
                         : pick.kind == MeasureEntity::Kind::Edge ? QStringLiteral("edge")
+                        : pick.kind == MeasureEntity::Kind::Axis ? QStringLiteral("axis")
                                                                  : QStringLiteral("point");
         const auto description = describe(pick);
         result.append(QVariantMap{{QStringLiteral("entityKind"), kind},
@@ -919,7 +982,7 @@ QVariantList MeasurementController::pickedEntities() const
                                   {QStringLiteral("nodeId"), pick.nodeId},
                                   {QStringLiteral("polyline"), [&pick]() {
                                        QVariantList line;
-                                       if (pick.kind != MeasureEntity::Kind::Edge) return line;
+                                       if (pick.kind != MeasureEntity::Kind::Edge && pick.kind != MeasureEntity::Kind::Axis) return line;
                                        for (const auto& point : pick.polyline) line.append(QVariant::fromValue(point));
                                        return line;
                                    }()}});

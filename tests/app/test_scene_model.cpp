@@ -8,6 +8,7 @@
 #include <numbers>
 #include "app/render/SceneModel.h"
 #include "app/render/CadEdgeGeometry.h"
+#include "app/render/ExplodeLineGeometry.h"
 #include "app/render/SectionMeshBuilder.h"
 #include "app/tools/MeasureGeometry.h"
 #include "protocol/GeometryPayload.h"
@@ -43,6 +44,8 @@ private slots:
     void faceBoundaryExcludesInternalTessellationEdges();
     void faceFrameDistinguishesAFlatFaceFromACurvedOne();
     void faceViewLooksAlongAPlaneNormalOrACylinderAxis();
+    void aRoundFaceKnowsItsAxisAcrossCoaxialFaces();
+    void explodeLinesAreCutIntoDashesOrCenterlines();
 };
 
 void SceneModelTest::repeatedDefinitionSharesOneGeometry()
@@ -681,6 +684,77 @@ void SceneModelTest::faceViewLooksAlongAPlaneNormalOrACylinderAxis()
     QVERIFY(std::abs(std::abs(axis.y()) - 1.0F) < 1.0e-5F);
 
     QVERIFY(tilted.faceViewFor(99).isEmpty());
+}
+
+void SceneModelTest::aRoundFaceKnowsItsAxisAcrossCoaxialFaces()
+{
+    // Three quarter-cylinder faces about lines along y: a counterbore (radius 2, y 0..1) and its
+    // hole (radius 1, y 1..3) on one axis, and a third face on a parallel axis 5 away.
+    QVector<float> vertices;
+    QVector<float> normals;
+    QVector<quint32> indices;
+    QVector<loupe::protocol::TopologyRange> ranges;
+    const auto addFace = [&](const quint32 id, const float radius, const float x0, const float y0, const float y1) {
+        const auto first = static_cast<quint32>(indices.size());
+        const auto base = static_cast<quint32>(vertices.size() / 3);
+        for (int column = 0; column < 5; ++column) {
+            const auto angle = static_cast<float>(column) / 4.0F * static_cast<float>(std::numbers::pi / 2.0);
+            for (const auto y : {y0, y1}) {
+                vertices << x0 + radius * std::cos(angle) << y << radius * std::sin(angle);
+                normals << -std::cos(angle) << 0.0F << -std::sin(angle);
+            }
+        }
+        for (quint32 column = 0; column + 1 < 5; ++column)
+            indices << base + column * 2 << base + column * 2 + 1 << base + column * 2 + 3 << base + column * 2 << base + column * 2 + 3
+                    << base + column * 2 + 2;
+        loupe::protocol::TopologyRange range{id, loupe::protocol::TopologyKind::Face, first,
+                                             static_cast<quint32>(indices.size()) - first, 1.0F, radius};
+        range.axisOrigin = {x0, 0.5F, 0.0F};
+        range.axisDirection = {0.0F, 1.0F, 0.0F};
+        ranges << range;
+    };
+    addFace(31, 2.0F, 0.0F, 0.0F, 1.0F);
+    addFace(32, 1.0F, 0.0F, 1.0F, 3.0F);
+    addFace(33, 1.0F, 5.0F, -4.0F, 8.0F);
+    loupe::protocol::MeshPayload payload{1, 1, QStringLiteral("definition"), QStringLiteral("node"), QStringLiteral("segment"),
+                                         QStringLiteral("#ffffff"), 1, vertices, normals, indices, ranges};
+    loupe::app::render::MeshGeometry mesh;
+    QVERIFY(mesh.appendWorkerMesh(loupe::protocol::encodeGeometry(payload)));
+    // Placed 10 along x in the scene.
+    QMatrix4x4 placed;
+    placed.translate(10.0F, 0.0F, 0.0F);
+    const auto face = mesh.faceEntity(31, placed, {12, 0.5F, 0}, {-1, 0, 0}, false).value<loupe::app::tools::MeasureEntity>();
+    QVERIFY(face.hasAxis);
+    QVERIFY(std::abs(std::abs(face.axis.y()) - 1.0F) < 1e-6F);
+    QVERIFY(std::abs(face.centre.x() - 10.0F) < 1e-5F && std::abs(face.centre.z()) < 1e-5F);
+    // Over both coaxial faces (y 0..3), 1.5 past each end; not out to the parallel face's -4..8.
+    const auto low = std::min(face.axisFrom.y(), face.axisTo.y());
+    const auto high = std::max(face.axisFrom.y(), face.axisTo.y());
+    QVERIFY2(std::abs(low + 1.5F) < 1e-4F && std::abs(high - 4.5F) < 1e-4F, qPrintable(QStringLiteral("%1..%2").arg(low).arg(high)));
+    QVERIFY(std::abs(face.axisFrom.x() - 10.0F) < 1e-5F);
+    // A flat face has none.
+    QVERIFY(!mesh.faceEntity(99, placed, {}, {}, false).value<loupe::app::tools::MeasureEntity>().hasAxis);
+}
+
+void SceneModelTest::explodeLinesAreCutIntoDashesOrCenterlines()
+{
+    loupe::app::render::ExplodeLineGeometry geometry;
+    const auto line = [](const bool centerline) {
+        return QVariantList{QVariantMap{{QStringLiteral("segments"),
+            QVariantList{QVariantMap{{QStringLiteral("from"), QVariant::fromValue(QVector3D{0, 0, 0})},
+                                     {QStringLiteral("to"), QVariant::fromValue(QVector3D{10, 0, 0})},
+                                     {QStringLiteral("centerline"), centerline}}}}}};
+    };
+    // 10 long, 1 on and 1 off: five dashes.
+    geometry.setLines(line(false), 1.0, 1.0);
+    QCOMPARE(geometry.segmentCount(), 5);
+    QCOMPARE(geometry.vertexData().size(), static_cast<qsizetype>(5 * 2 * 3 * sizeof(float)));
+    // A centerline: a long dash (2) and a dot (0.25) every 2 + 1 + 0.25 + 1 = 4.25: dashes at
+    // 0, 4.25 and 8.5 (the last cut at the end), dots at 3 and 7.25 -- the third would be past it.
+    geometry.setLines(line(true), 1.0, 1.0);
+    QCOMPARE(geometry.segmentCount(), 5);
+    geometry.clearLines();
+    QCOMPARE(geometry.segmentCount(), 0);
 }
 
 int main(int argc, char* argv[])

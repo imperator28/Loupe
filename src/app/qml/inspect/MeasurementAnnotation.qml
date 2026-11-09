@@ -13,13 +13,17 @@ import QtQuick.Shapes
 Item {
     id: root
 
-    // The overlay that projects scene points: project(point) and onScreen(point, margin).
+    // The overlay that projects scene points (MeasurementOverlay): project(point),
+    // onScreen(point, margin), and the near-plane-clipped projectPath(points),
+    // projectSegment(a, b), projectPolygon(points) and svgRuns(runs).
     required property Item projector
     property QtObject theme
     property QtObject visualTheme
     property var annotation: ({})
     // Polylines ([vector3d, ...] each) and pick points ([vector3d, ...]).
     property var edges: []
+    // Axes picked (centerlines, [vector3d from, vector3d to] each): drawn dash-dot.
+    property var axes: []
     property var points: []
     property bool numbered: true
     // A pinned result names what it is on its tag ("Gap 5.000 mm").
@@ -74,12 +78,17 @@ Item {
         return path
     }
 
-    function screenPath(scenePoints) {
+    // A scene polyline as one SVG path of its runs in front of the camera.
+    function scenePath(scenePoints) {
+        return projector.svgRuns(projector.projectPath(scenePoints))
+    }
+    // Scene segments [[a, b], ...] as screen pairs, each cut at the near plane; dropped when
+    // all behind it.
+    function screenPairs(scenePairs) {
         const result = []
-        if (!scenePoints) return result
-        for (const point of scenePoints) {
-            const screen = projector.project(point)
-            result.push(Qt.point(screen.x, screen.y))
+        for (const pair of scenePairs) {
+            const segment = projector.projectSegment(pair[0], pair[1])
+            if (segment) result.push(segment)
         }
         return result
     }
@@ -115,7 +124,9 @@ Item {
         delegate: Shape {
             id: edgeShape
             required property var modelData
-            readonly property string path: root.svgLine(root.screenPath(modelData), false)
+            required property int index
+            objectName: "measurementEdge" + index
+            readonly property string path: root.scenePath(modelData)
             anchors.fill: parent
             preferredRendererType: Shape.CurveRenderer
             ShapePath {
@@ -137,10 +148,40 @@ Item {
         }
     }
 
+    // ---- Picked axes, as centerlines ----
+    Repeater {
+        model: root.axes
+        delegate: Shape {
+            id: axisShape
+            required property var modelData
+            required property int index
+            objectName: "measurementAxis" + index
+            readonly property string path: root.projector.svgDashDot(root.projector.projectPath(modelData))
+            anchors.fill: parent
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: root.halo
+                strokeWidth: 4
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathSvg { path: axisShape.path }
+            }
+            ShapePath {
+                strokeColor: root.lineColor
+                strokeWidth: root.pinned ? 1.5 : 2
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathSvg { path: axisShape.path }
+            }
+        }
+    }
+
     // ---- Dimension line and radius leader ----
     readonly property bool hasLine: kind === "distance" || kind === "radius"
-    readonly property point fromScreen: hasLine ? projector.project(annotation.from) : Qt.point(0, 0)
-    readonly property point toScreen: hasLine ? projector.project(annotation.to) : Qt.point(0, 0)
+    // The line's part in front of the camera, on screen; null when it is all behind it.
+    readonly property var lineSegment: hasLine ? projector.projectSegment(annotation.from, annotation.to) : null
+    readonly property point fromScreen: lineSegment ? lineSegment[0] : Qt.point(-10000, -10000)
+    readonly property point toScreen: lineSegment ? lineSegment[1] : Qt.point(-10000, -10000)
     readonly property real lineLength: Math.hypot(toScreen.x - fromScreen.x, toScreen.y - fromScreen.y)
     readonly property real tickX: lineLength > 0 ? -(toScreen.y - fromScreen.y) / lineLength * 6 : 0
     readonly property real tickY: lineLength > 0 ? (toScreen.x - fromScreen.x) / lineLength * 6 : 0
@@ -148,7 +189,7 @@ Item {
     Shape {
         objectName: "measurementDimension"
         anchors.fill: parent
-        visible: root.hasLine && (root.projector.onScreen(root.fromScreen, 0) || root.projector.onScreen(root.toScreen, 0))
+        visible: root.lineSegment !== null && (root.projector.onScreen(root.fromScreen, 0) || root.projector.onScreen(root.toScreen, 0))
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeColor: root.halo
@@ -182,16 +223,14 @@ Item {
     }
 
     // ---- Angle: an arc from one pick to the other, a leg along each ----
-    readonly property var arcPoints: kind === "angle" ? screenPath(annotation.arc) : []
-    readonly property string arcPath: svgLine(arcPoints, false)
-    readonly property point arcCentre: kind === "angle" ? projector.project(annotation.centre) : Qt.point(0, 0)
-    readonly property point legFrom: kind === "angle" ? projector.project(annotation.legFrom) : Qt.point(0, 0)
-    readonly property point legTo: kind === "angle" ? projector.project(annotation.legTo) : Qt.point(0, 0)
+    readonly property string arcPath: kind === "angle" ? scenePath(annotation.arc) : ""
+    readonly property var legPairs: kind === "angle"
+        ? screenPairs([[annotation.centre, annotation.legFrom], [annotation.centre, annotation.legTo]]) : []
 
     Shape {
         objectName: "measurementAngleArc"
         anchors.fill: parent
-        visible: root.kind === "angle" && root.arcPoints.length > 1
+        visible: root.kind === "angle" && root.arcPath.length > 0
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeColor: root.halo
@@ -207,7 +246,7 @@ Item {
             strokeWidth: 1.25
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
-            PathSvg { path: root.svgDashes([[root.arcCentre, root.legFrom], [root.arcCentre, root.legTo]], 4, 3) }
+            PathSvg { path: root.svgDashes(root.legPairs, 4, 3) }
         }
         ShapePath {
             strokeColor: root.lineColor
@@ -220,13 +259,19 @@ Item {
     }
 
     // ---- Bounds: the box's twelve edges, and its size along X, Y and Z on one edge each ----
-    readonly property var corners: {
+    // Its eight corners in the scene, and on screen (where the size tags go).
+    readonly property var sceneCorners: {
         if (kind !== "box") return []
         const a = annotation.minimum
         const b = annotation.maximum
         const result = []
         for (let index = 0; index < 8; ++index)
-            result.push(projector.project(Qt.vector3d(index & 1 ? b.x : a.x, index & 2 ? b.y : a.y, index & 4 ? b.z : a.z)))
+            result.push(Qt.vector3d(index & 1 ? b.x : a.x, index & 2 ? b.y : a.y, index & 4 ? b.z : a.z))
+        return result
+    }
+    readonly property var corners: {
+        const result = []
+        for (const corner of sceneCorners) result.push(projector.project(corner))
         return result
     }
     // Corner pairs along X (bit 1), Y (bit 2) and Z (bit 4).
@@ -263,10 +308,11 @@ Item {
     // only as lines; where faces overlap on screen the shade deepens, which shows its depth.
     readonly property var boxFaces: [[0, 1, 3, 2], [4, 5, 7, 6], [0, 1, 5, 4], [2, 3, 7, 6], [0, 2, 6, 4], [1, 3, 7, 5]]
     readonly property color faceShade: Qt.rgba(lineColor.r, lineColor.g, lineColor.b, pinned ? 0.05 : 0.07)
+    // A face of the box on screen, cut at the near plane.
     function facePath(face) {
-        if (corners.length !== 8) return []
+        if (sceneCorners.length !== 8) return []
         const f = boxFaces[face]
-        return [corners[f[0]], corners[f[1]], corners[f[2]], corners[f[3]]]
+        return projector.projectPolygon([sceneCorners[f[0]], sceneCorners[f[1]], sceneCorners[f[2]], sceneCorners[f[3]]])
     }
     Shape {
         objectName: "measurementBoxFaces"
@@ -316,11 +362,11 @@ Item {
             PathSvg {
                 path: {
                     const pairs = []
-                    if (root.corners.length !== 8) return ""
+                    if (root.sceneCorners.length !== 8) return ""
                     for (const axis of root.boxEdges) {
-                        for (const pair of axis) pairs.push([root.corners[pair[0]], root.corners[pair[1]]])
+                        for (const pair of axis) pairs.push([root.sceneCorners[pair[0]], root.sceneCorners[pair[1]]])
                     }
-                    return root.svgDashes(pairs, 5, 3)
+                    return root.svgDashes(root.screenPairs(pairs), 5, 3)
                 }
             }
         }
@@ -335,9 +381,13 @@ Item {
             id: sizeTag
             required property var modelData
             readonly property var pair: root.tagEdges[modelData.axis]
-            readonly property point middle: root.corners.length === 8
-                ? Qt.point((root.corners[pair[0]].x + root.corners[pair[1]].x) / 2, (root.corners[pair[0]].y + root.corners[pair[1]].y) / 2)
-                : Qt.point(-10000, -10000)
+            // The edge's middle in the scene, projected: hidden when behind the camera.
+            readonly property point middle: {
+                if (root.sceneCorners.length !== 8) return Qt.point(-10000, -10000)
+                const a = root.sceneCorners[pair[0]]
+                const b = root.sceneCorners[pair[1]]
+                return root.projector.project(Qt.vector3d((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2))
+            }
             objectName: "measurementBoxSize" + modelData.label
             visible: root.projector.onScreen(middle, 0)
             x: Math.round(middle.x - width / 2 + root.liveOffset.x)
