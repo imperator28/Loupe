@@ -30,6 +30,7 @@ private slots:
     void angleIsBetweenFlatFacesAndStraightEdgesOnly();
     void closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace();
     void circularEdgesKnowTheirCentreAndRadius();
+    void axesMeasureAsLinesAndTurnLikeStraightEdges();
     void pointPicksMeasureWithComponentsAndRefuseTheWrongKind();
     void angleArcReadsAsTheOpeningBetweenThePicks();
     void edgeAndAreaPicksAddUpAndComeBackOut();
@@ -698,6 +699,75 @@ void InspectionToolsTest::closestPointsBetweenSkewEdgesAndAnEdgeThroughAFace()
     const auto floor = flatFace({-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0}, {});
     const auto pin = straightEdge({0.2F, 0.3F, -2}, {0.2F, 0.3F, 2});
     QVERIFY(loupe::app::tools::measure::closestPoints(pin, floor).distance < 1e-5);
+}
+
+void InspectionToolsTest::axesMeasureAsLinesAndTurnLikeStraightEdges()
+{
+    namespace measure = loupe::app::tools::measure;
+    // A round face about the z axis (a hole: its normal at the pick faces the axis).
+    MeasureEntity hole;
+    hole.kind = MeasureEntity::Kind::Face;
+    hole.radiusMm = 3.0;
+    hole.hasAxis = true;
+    hole.centre = {0, 0, 0};
+    hole.axis = {0, 0, 1};
+    hole.axisFrom = {0, 0, -2};
+    hole.axisTo = {0, 0, 12};
+    hole.point = {3, 0, 5};
+    hole.normal = {-1, 0, 0};
+    const auto axis = measure::axisEntity(hole, {3, 0, 5});
+    QCOMPARE(axis.kind, MeasureEntity::Kind::Axis);
+    QVERIFY(axis.linear);
+    QVERIFY(closeTo(axis.point, {0, 0, 5}));
+    QCOMPARE(axis.polyline.size(), 2);
+    // Nothing round, no axis.
+    QVERIFY(!measure::axisEntity(flatFace({-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0}, {}), {}).isValid());
+
+    // A point square to it, wherever along it.
+    MeasureEntity point;
+    point.kind = MeasureEntity::Kind::Vertex;
+    point.point = {3, 4, 40};
+    const auto toPoint = measure::lineDistance(axis, point);
+    QVERIFY(std::abs(toPoint.distance - 5.0) < 1e-5);
+    QVERIFY(closeTo(toPoint.first, {0, 0, 40}));
+    // Two parallel axes 10 apart.
+    auto parallel = hole;
+    parallel.centre = {6, 8, 0};
+    const auto other = measure::axisEntity(parallel, {6, 8, 0});
+    QVERIFY(std::abs(measure::lineDistance(axis, other).distance - 10.0) < 1e-5);
+    // Skew axes: the closest approach.
+    auto skewFace = hole;
+    skewFace.centre = {0, 0, 7};
+    skewFace.axis = {1, 0, 0};
+    const auto skew = measure::lineDistance(axis, measure::axisEntity(skewFace, {0, 0, 7}));
+    QVERIFY(std::abs(skew.distance) < 1e-5);
+    skewFace.centre = {0, 3, 7};
+    const auto apart = measure::lineDistance(axis, measure::axisEntity(skewFace, {0, 3, 7}));
+    QVERIFY(std::abs(apart.distance - 3.0) < 1e-5);
+    QVERIFY(closeTo(apart.first, {0, 0, 7}));
+    QVERIFY(closeTo(apart.second, {0, 3, 7}));
+    // Turns like a straight edge: square to a face across it, along one in its direction.
+    QVERIFY(std::abs(measure::angleBetween(axis, flatFace({-1, -1, 0}, {1, -1, 0}, {1, 1, 0}, {-1, 1, 0}, {})) - 90.0) < 1e-4);
+    QVERIFY(std::abs(measure::angleBetween(axis, straightEdge({0, 0, 0}, {0, 1, 1})) - 45.0) < 1e-4);
+
+    // Through the controller: point to point and angle take it; edge length does not.
+    loupe::app::tools::MeasurementController controller;
+    controller.setModeName(QStringLiteral("point"));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(point), QStringLiteral("Plate")));
+    QCOMPARE(controller.resultTitle(), QStringLiteral("Distance to axis"));
+    QVERIFY(std::abs(controller.resultValue() - 5.0) < 1e-5);
+    QCOMPARE(controller.pickedEntities().front().toMap().value(QStringLiteral("entityKind")).toString(), QStringLiteral("axis"));
+    const auto described = controller.describe(QVariant::fromValue(axis));
+    QCOMPARE(described.value(QStringLiteral("kind")).toString(), QStringLiteral("axis"));
+    QVERIFY2(described.value(QStringLiteral("detail")).toString().contains(QStringLiteral("hole")),
+             qPrintable(described.value(QStringLiteral("detail")).toString()));
+    controller.pinResult();
+    QCOMPARE(controller.pinnedResults().back().toMap().value(QStringLiteral("axes")).toList().size(), 1);
+    controller.setModeName(QStringLiteral("edge"));
+    QVERIFY(!controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
+    controller.setModeName(QStringLiteral("angle"));
+    QVERIFY(controller.acceptEntity(QVariant::fromValue(axis), QStringLiteral("Plate")));
 }
 
 void InspectionToolsTest::circularEdgesKnowTheirCentreAndRadius()

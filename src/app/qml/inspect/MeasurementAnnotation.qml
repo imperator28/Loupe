@@ -22,6 +22,8 @@ Item {
     property var annotation: ({})
     // Polylines ([vector3d, ...] each) and pick points ([vector3d, ...]).
     property var edges: []
+    // Axes picked (centerlines, [vector3d from, vector3d to] each): drawn dash-dot.
+    property var axes: []
     property var points: []
     property bool numbered: true
     // A pinned result names what it is on its tag ("Gap 5.000 mm").
@@ -142,6 +144,34 @@ Item {
                 capStyle: ShapePath.RoundCap
                 joinStyle: ShapePath.RoundJoin
                 PathSvg { path: edgeShape.path }
+            }
+        }
+    }
+
+    // ---- Picked axes, as centerlines ----
+    Repeater {
+        model: root.axes
+        delegate: Shape {
+            id: axisShape
+            required property var modelData
+            required property int index
+            objectName: "measurementAxis" + index
+            readonly property string path: root.projector.svgDashDot(root.projector.projectPath(modelData))
+            anchors.fill: parent
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: root.halo
+                strokeWidth: 4
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathSvg { path: axisShape.path }
+            }
+            ShapePath {
+                strokeColor: root.lineColor
+                strokeWidth: root.pinned ? 1.5 : 2
+                fillColor: "transparent"
+                capStyle: ShapePath.RoundCap
+                PathSvg { path: axisShape.path }
             }
         }
     }

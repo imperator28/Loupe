@@ -48,7 +48,7 @@ namespace {
 // material assignment don't treat unrelated sibling bodies as one part.
 // Bumped again (-8): an inch file is no longer misread as unresolved with a 1.0
 // factor, so a cached snapshot carries a unit decision export would get wrong.
-const auto kImporterVersion = QStringLiteral("step-importer-9");
+const auto kImporterVersion = QStringLiteral("step-importer-10");
 const auto kMeshProfile = QStringLiteral("progressive-1");
 // Mesh payloads now contain the composed occurrence transform.  Keep older
 // local-coordinate payloads out of the replay cache.
@@ -2198,6 +2198,16 @@ bool ApplicationController::sectionAlongFace(const QString& nodeId, const QVaria
     if (face.kind != tools::MeasureEntity::Kind::Face || !face.planar || face.planeNormal.isNull()) return false;
     sectionController_.usePlane(face.planeNormal, face.planePoint,
                                 tr("Flat face on %1").arg(displayNameByNode_.value(nodeId, tr("Component"))));
+    return true;
+}
+
+bool ApplicationController::sectionAlongAxis(const QString& nodeId, const QVector3D& normal, const QVector3D& point,
+                                             const bool across)
+{
+    if (nodeId.isEmpty() || normal.isNull() || !std::isfinite(normal.x()) || !std::isfinite(point.x())) return false;
+    const auto part = displayNameByNode_.value(nodeId, tr("Component"));
+    sectionController_.usePlane(normal.normalized(), point,
+                                across ? tr("Across an axis on %1").arg(part) : tr("Through an axis on %1").arg(part));
     return true;
 }
 

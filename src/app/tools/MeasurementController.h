@@ -108,6 +108,9 @@ public:
     Q_INVOKABLE [[nodiscard]] QVariantMap describe(const QVariant& entity) const;
     // A point on a face where the pointer is, for point to point away from any edge.
     Q_INVOKABLE [[nodiscard]] static QVariant surfacePointEntity(const QVector3D& point, const QVector3D& normal);
+    // The centerline of a round face or circular edge (an entity from the viewport's geometry)
+    // as a pick of its own, its point the spot on it nearest `near`; invalid when it has none.
+    Q_INVOKABLE [[nodiscard]] static QVariant axisEntity(const QVariant& source, const QVector3D& near);
     [[nodiscard]] QVariantMap describe(const MeasureEntity& entity) const;
     Q_INVOKABLE void clearPicks();
     Q_INVOKABLE void setModeName(const QString& modeName);

@@ -393,12 +393,53 @@ QVariant MeshGeometry::faceEntity(const quint32 topologyId, const QMatrix4x4& to
         if (!sceneNormal.isNull() && QVector3D::dotProduct(face.planeNormal, sceneNormal) < 0.0F) face.planeNormal = -face.planeNormal;
     }
     face.planePoint = toScene.map(face.planePoint);
+    if (range->hasAxis()) {
+        // The exact centerline, drawn over the feature's length (and that of every coaxial
+        // face of the part: a counterbore and its hole are one axis), a little past each end.
+        const QVector3D origin{range->axisOrigin[0], range->axisOrigin[1], range->axisOrigin[2]};
+        const QVector3D direction{range->axisDirection[0], range->axisDirection[1], range->axisDirection[2]};
+        const auto [from, to] = axisExtent(origin, direction);
+        const auto length = to - from;
+        const auto overshoot = std::max(length * 0.1F, 1.5F);
+        face.hasAxis = true;
+        face.centre = toScene.map(origin);
+        face.axis = toScene.mapVector(direction).normalized();
+        face.axisFrom = toScene.map(origin + direction * (from - overshoot));
+        face.axisTo = toScene.map(origin + direction * (to + overshoot));
+    }
     if (withTriangles) {
         for (auto& point : face.triangles) point = toScene.map(point);
     } else {
         face.triangles.clear();
     }
     return QVariant::fromValue(face);
+}
+
+std::pair<float, float> MeshGeometry::axisExtent(const QVector3D& origin, const QVector3D& direction) const
+{
+    // Coaxial: parallel within about a hundredth of a degree, and through the same line within
+    // 2 µm -- what the B-rep's own tolerance is for features modelled on one axis.
+    constexpr auto tolerance = 2e-3F;
+    auto low = std::numeric_limits<float>::max();
+    auto high = std::numeric_limits<float>::lowest();
+    for (const auto& range : sourceTopology_) {
+        if (range.kind != protocol::TopologyKind::Face || !range.hasAxis()) continue;
+        const QVector3D otherOrigin{range.axisOrigin[0], range.axisOrigin[1], range.axisOrigin[2]};
+        const QVector3D otherDirection{range.axisDirection[0], range.axisDirection[1], range.axisDirection[2]};
+        if (std::abs(QVector3D::dotProduct(direction, otherDirection)) < 0.99999998F) continue;
+        const auto offset = otherOrigin - origin;
+        if ((offset - direction * QVector3D::dotProduct(offset, direction)).length() > tolerance) continue;
+        const auto end = static_cast<qsizetype>(range.firstIndex + range.indexCount);
+        for (auto index = static_cast<qsizetype>(range.firstIndex); index < end; ++index) {
+            const auto vertex = static_cast<qsizetype>(sourceIndexData_.at(index)) * 3;
+            const QVector3D point{sourceVertexData_.at(vertex), sourceVertexData_.at(vertex + 1), sourceVertexData_.at(vertex + 2)};
+            const auto along = QVector3D::dotProduct(point - origin, direction);
+            low = std::min(low, along);
+            high = std::max(high, along);
+        }
+    }
+    if (low > high) return {0.0F, 0.0F};
+    return {low, high};
 }
 
 bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
@@ -425,8 +466,11 @@ bool MeshGeometry::copyTopologyFrom(QObject* source, const quint32 topologyId)
         sourceNormalData_.append(sourceGeometry->sourceNormalData_.at(sourceOffset + 2));
         sourceIndexData_.append(static_cast<quint32>(sourceIndexData_.size()));
     }
-    sourceTopology_ = {{topologyId, protocol::TopologyKind::Face, 0,
-                        static_cast<quint32>(sourceIndexData_.size()), range->measureMm, range->radiusMm}};
+    auto copied = *range;
+    copied.kind = protocol::TopologyKind::Face;
+    copied.firstIndex = 0;
+    copied.indexCount = static_cast<quint32>(sourceIndexData_.size());
+    sourceTopology_ = {copied};
     sectionEnabled_ = false;
     sectionPreview_ = false;
     rebuildDisplayMesh();

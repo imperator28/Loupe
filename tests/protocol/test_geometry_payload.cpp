@@ -11,6 +11,7 @@ class GeometryPayloadTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void topologyRangesCarryARoundFacesAxis();
     void meshRoundTrips();
     void meshFaceAreaSumsTheFaceMeasures();
     void meshBoundsSpanTheVertices();
@@ -216,6 +217,29 @@ void GeometryPayloadTest::rejectsNonFiniteMeasure()
                                           std::numeric_limits<float>::quiet_NaN(), 0.0F}}};
     QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError,
                              static_cast<void>(loupe::protocol::encodeGeometry(source)));
+}
+
+void GeometryPayloadTest::topologyRangesCarryARoundFacesAxis()
+{
+    loupe::protocol::MeshPayload source{7, 3, QStringLiteral("definition"), QStringLiteral("node"), QStringLiteral("segment"),
+                                        QStringLiteral("#2288CC"), 1,
+                                        {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F},
+                                        {0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F},
+                                        {0, 1, 2},
+                                        {{3, loupe::protocol::TopologyKind::Face, 0, 3, 0.5F, 2.0F}}};
+    source.topology[0].axisOrigin = {1.0F, 2.0F, 3.0F};
+    source.topology[0].axisDirection = {0.0F, 0.6F, 0.8F};
+    const auto bytes = loupe::protocol::encodeGeometry(source);
+    const auto mesh = std::get<loupe::protocol::MeshPayload>(loupe::protocol::decodeGeometry(bytes));
+    QVERIFY(mesh.topology.front().hasAxis());
+    QCOMPARE(mesh.topology.front().axisOrigin, (std::array<float, 3>{1.0F, 2.0F, 3.0F}));
+    QCOMPARE(mesh.topology.front().axisDirection, (std::array<float, 3>{0.0F, 0.6F, 0.8F}));
+    // The area is still read straight from the bytes, past the axis.
+    QCOMPARE(loupe::protocol::meshFaceArea(bytes), 0.5);
+    // No axis by default; a direction that is not a unit vector is refused.
+    QVERIFY(!loupe::protocol::TopologyRange{}.hasAxis());
+    source.topology[0].axisDirection = {0.0F, 2.0F, 0.0F};
+    QVERIFY_THROWS_EXCEPTION(loupe::protocol::ProtocolError, static_cast<void>(loupe::protocol::encodeGeometry(source)));
 }
 
 QTEST_MAIN(GeometryPayloadTest)

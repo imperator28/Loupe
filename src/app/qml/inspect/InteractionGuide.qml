@@ -201,6 +201,12 @@ Dialog {
                 }
 
                 GuideSection {
+                    title: qsTr("Picking points, edges and axes")
+                    GuideRow { input: ["t:Hover"]; action: qsTr("See what a click takes: a vertex, a midpoint, a circle's centre, an edge, a face, or a round face's axis") }
+                    GuideRow { input: ["k:Alt", "t:+ click"]; action: qsTr("On a round face: the face (or a point on it) instead of its axis, or the other way round") }
+                }
+
+                GuideSection {
                     title: qsTr("Exploded view")
                     GuideRow { input: ["g:handleArrow:arrow"]; action: qsTr("Drag to slide the selection along that axis") }
                     GuideRow { input: ["g:handleBall:ball"]; action: qsTr("Drag to move the selection anywhere in the screen's plane") }

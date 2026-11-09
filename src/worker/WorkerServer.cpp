@@ -70,6 +70,7 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 
+#include <gp_Ax1.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Quaternion.hxx>
@@ -82,6 +83,7 @@
 #include <cstdlib>
 #include <exception>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -368,6 +370,8 @@ float sanitizeMeasure(const double value)
 struct FaceMeasure final {
     float areaMm2{};
     float radiusMm{};
+    // A round face's centerline in the shape's own coordinates (source units), when it has one.
+    std::optional<gp_Ax1> axis;
 };
 using FaceMeasures = std::unordered_map<TopoDS_Shape, FaceMeasure>;
 
@@ -376,16 +380,46 @@ FaceMeasure measureFace(const TopoDS_Face& face, const double sourceToMillimeter
     GProp_GProps properties;
     BRepGProp::SurfaceProperties(face, properties);
     float radiusMm = 0.0F;
+    std::optional<gp_Ax1> axis;
     try {
+        // The adaptor carries the face's own location, so the axis is in the shape's coordinates.
         const BRepAdaptor_Surface surface(face);
-        if (surface.GetType() == GeomAbs_Cylinder) {
+        switch (surface.GetType()) {
+        case GeomAbs_Cylinder:
             radiusMm = static_cast<float>(surface.Cylinder().Radius() * sourceToMillimeters);
-        } else if (surface.GetType() == GeomAbs_Sphere) {
+            axis = surface.Cylinder().Axis();
+            break;
+        case GeomAbs_Sphere:
             radiusMm = static_cast<float>(surface.Sphere().Radius() * sourceToMillimeters);
+            break;
+        case GeomAbs_Cone: axis = surface.Cone().Axis(); break;
+        case GeomAbs_Torus: axis = surface.Torus().Axis(); break;
+        case GeomAbs_SurfaceOfRevolution: axis = surface.AxeOfRevolution(); break;
+        default: break;
         }
     } catch (const Standard_Failure&) {
+        axis.reset();
     }
-    return {sanitizeMeasure(properties.Mass() * sourceToMillimeters * sourceToMillimeters), sanitizeMeasure(radiusMm)};
+    return {sanitizeMeasure(properties.Mass() * sourceToMillimeters * sourceToMillimeters), sanitizeMeasure(radiusMm), axis};
+}
+
+// The face's axis placed as its mesh is, in millimetres, on its topology range.
+void setAxis(protocol::TopologyRange& range, const std::optional<gp_Ax1>& axis, const gp_Trsf& placement,
+             const double sourceToMillimeters)
+{
+    if (!axis) return;
+    const auto placed = axis->Transformed(placement);
+    const auto& origin = placed.Location();
+    const auto& direction = placed.Direction();
+    const std::array<double, 6> values{origin.X() * sourceToMillimeters, origin.Y() * sourceToMillimeters,
+                                       origin.Z() * sourceToMillimeters, direction.X(), direction.Y(), direction.Z()};
+    if (!std::all_of(values.begin(), values.end(), [](double v) { return std::isfinite(v); })) return;
+    range.axisOrigin = {static_cast<float>(values[0]), static_cast<float>(values[1]), static_cast<float>(values[2])};
+    // Normalised again in single precision, so the payload's unit check holds.
+    const double length = std::sqrt(values[3] * values[3] + values[4] * values[4] + values[5] * values[5]);
+    if (!(length > 0.0)) return;
+    range.axisDirection = {static_cast<float>(values[3] / length), static_cast<float>(values[4] / length),
+                           static_cast<float>(values[5] / length)};
 }
 
 QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placement, const double sourceToMillimeters,
@@ -443,9 +477,11 @@ QVector<MeshSegment> encodeMesh(const TopoDS_Shape& shape, const gp_Trsf& placem
         }
         auto measure = faceMeasures.find(faceMap(faceIndex));
         if (measure == faceMeasures.end()) measure = faceMeasures.emplace(faceMap(faceIndex), measureFace(face, sourceToMillimeters)).first;
-        segment.topology.append({static_cast<quint32>(faceIndex), protocol::TopologyKind::Face,
-                                 firstIndex, static_cast<quint32>(segment.indices.size()) - firstIndex,
-                                 measure->second.areaMm2, measure->second.radiusMm});
+        protocol::TopologyRange range{static_cast<quint32>(faceIndex), protocol::TopologyKind::Face,
+                                      firstIndex, static_cast<quint32>(segment.indices.size()) - firstIndex,
+                                      measure->second.areaMm2, measure->second.radiusMm};
+        setAxis(range, measure->second.axis, placement, sourceToMillimeters);
+        segment.topology.append(range);
     }
     return segments;
 }

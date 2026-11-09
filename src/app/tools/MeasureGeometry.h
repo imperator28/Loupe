@@ -22,6 +22,7 @@ struct MeasureEntity final {
         CircleCentre, // the centre of a circular edge
         Edge,         // a whole edge
         Face,         // a whole face
+        Axis,         // the centerline of a round face or circular edge, taken as a line
     };
 
     Kind kind{Kind::None};
@@ -48,6 +49,13 @@ struct MeasureEntity final {
     QVector3D direction;
     QVector3D centre;
     QVector3D axis;
+    // A round face's exact centerline (from the B-rep): through `centre` along `axis`, drawn
+    // from axisFrom to axisTo, a little past the feature (and any coaxial ones) at each end.
+    // An Axis entity is that line, with `point` the place on it nearest where it was picked
+    // and `planePoint` where on the face it was picked.
+    bool hasAxis{false};
+    QVector3D axisFrom;
+    QVector3D axisTo;
     // The face's triangles (three points each) or the edge's polyline, in scene coordinates.
     // Only a pick that is accepted carries them; a hover does not need them.
     QVector<QVector3D> triangles;
@@ -83,6 +91,16 @@ namespace measure {
 // The gap between two parallel flat faces, measured square to the first, with the two ends
 // of that measurement: from the second face's pick point to its foot on the first plane.
 [[nodiscard]] ClosestPoints planeGap(const MeasureEntity& first, const MeasureEntity& second);
+
+// A round face's or circular edge's centerline as a pick of its own (Kind::Axis): a line
+// through its centre along its axis, which measures and turns like a straight edge. `near`
+// places its point, the spot on it nearest the pointer. Invalid when the source has no axis.
+[[nodiscard]] MeasureEntity axisEntity(const MeasureEntity& source, const QVector3D& near);
+
+// Point to point when either pick is an axis, taken as an infinite line: a point's distance
+// square to it, two parallel axes' distance apart, or two skew axes' closest approach.
+// Invalid when neither is an axis.
+[[nodiscard]] ClosestPoints lineDistance(const MeasureEntity& first, const MeasureEntity& second);
 
 // The angle between two flat faces or straight edges, in degrees: between face normals
 // 0..180, between lines 0..90, between a line and a plane 0..90. Negative when either has

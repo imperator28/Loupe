@@ -27,6 +27,8 @@
 #include <QMimeData>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlContext>
+#include <QQmlExpression>
 #include <QJsonDocument>
 #include <QJSValue>
 #include <QQuaternion>
@@ -100,6 +102,7 @@ private slots:
     void sectionViewActivatesWithRenderedMesh();
     void viewportCaptureUsesRequestedRenderResolution();
     void aCaptureHoldsTheMeasurementOnlyWhenAskedAndWhereItIs();
+    void aRoundFaceOffersItsAxisAndACornerStillWins();
     void viewportDrawsAFacingFaceInItsPickedColour();
     void viewportRightClickKeepsTheSelectionAndViewsNormalToAFace();
     void explodedViewHandlesMoveAndTurnTheSelection();
@@ -1375,6 +1378,83 @@ void QmlSmokeTest::everyWorkspaceSidePanelGoesDownToTheSameMinimum()
                                   qPrintable(QStringLiteral("%1 %2: %3").arg(QString::fromLatin1(file), QString::fromLatin1(splitterName))
                                                  .arg(panel->width())), 3000);
     }
+}
+
+void QmlSmokeTest::aRoundFaceOffersItsAxisAndACornerStillWins()
+{
+    // The shared picker (measure, pivot, section): over a round face it takes the face's axis,
+    // but a corner inside the snap radius still wins; Alt takes the point on the face.
+    loupe::app::ApplicationController controller;
+    QQmlEngine engine;
+    QQmlComponent themeComponent(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_QML_DIR) + QStringLiteral("/Theme.qml")));
+    std::unique_ptr<QObject> theme(themeComponent.create());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(LOUPE_INSPECT_QML_DIR) + QStringLiteral("/StepViewport.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {QStringLiteral("controller"), QVariant::fromValue(static_cast<QObject*>(&controller))},
+        {QStringLiteral("theme"), QVariant::fromValue(theme.get())}}));
+    QVERIFY2(object != nullptr, qPrintable(component.errorString()));
+    auto* viewport = qobject_cast<QQuickItem*>(object.get());
+    QQuickWindow window;
+    window.resize(640, 480);
+    viewport->setParentItem(window.contentItem());
+    viewport->setSize(QSizeF(640, 480));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    // A quarter of a hole's wall, radius 10 about z, 20 deep, and the straight edge along one side.
+    QVector<float> vertices;
+    QVector<float> normals;
+    QVector<quint32> indices;
+    for (int column = 0; column <= 8; ++column) {
+        const auto angle = static_cast<float>(column) / 8.0F * static_cast<float>(std::numbers::pi / 2.0);
+        for (const auto z : {0.0F, 20.0F}) {
+            vertices << 10.0F * std::cos(angle) << 10.0F * std::sin(angle) << z;
+            normals << -std::cos(angle) << -std::sin(angle) << 0.0F;
+        }
+    }
+    for (quint32 column = 0; column < 8; ++column)
+        indices << column * 2 << column * 2 + 1 << column * 2 + 3 << column * 2 << column * 2 + 3 << column * 2 + 2;
+    loupe::protocol::TopologyRange wall{41, loupe::protocol::TopologyKind::Face, 0, static_cast<quint32>(indices.size()), 314.0F, 10.0F};
+    wall.axisOrigin = {0.0F, 0.0F, 0.0F};
+    wall.axisDirection = {0.0F, 0.0F, 1.0F};
+    const loupe::protocol::MeshPayload mesh{1, 1, QStringLiteral("definition"), QStringLiteral("node"), QStringLiteral("segment"),
+                                            QStringLiteral("#67d5c0"), 1, vertices, normals, indices, {wall}};
+    const loupe::protocol::EdgePayload edge{1, 1, QStringLiteral("definition"), QStringLiteral("node"), 1,
+                                            {10.0F, 0.0F, 0.0F, 10.0F, 0.0F, 20.0F}, {0, 1},
+                                            {{7, loupe::protocol::TopologyKind::Edge, 0, 2, 20.0F, 0.0F}}};
+    QVERIFY(QMetaObject::invokeMethod(&controller, "meshReady", Q_ARG(QString, QStringLiteral("node")),
+                                      Q_ARG(QString, QStringLiteral("segment")), Q_ARG(QString, QStringLiteral("#67d5c0")),
+                                      Q_ARG(QByteArray, loupe::protocol::encodeGeometry(mesh))));
+    QVERIFY(QMetaObject::invokeMethod(&controller, "edgeReady", Q_ARG(QString, QStringLiteral("node")),
+                                      Q_ARG(QByteArray, loupe::protocol::encodeGeometry(edge))));
+    QTest::qWait(300);
+
+    // What the picker takes for a hit at `at`, with Alt held or not, as point to point does.
+    const auto pickKind = [&](const QVector3D& at, const QVector3D& normal, bool alternate) {
+        viewport->setProperty("pickAlternate", alternate);
+        QQmlExpression expression(qmlContext(viewport), viewport,
+            QStringLiteral("(function() { const pick = measureCandidateAt({ objectHit: modelByNode['segment'], "
+                           "scenePosition: Qt.vector3d(%1, %2, %3), sceneNormal: Qt.vector3d(%4, %5, %6) }, false, 0); "
+                           "return pick ? pick.info.kind + '|' + (pick.info.hint || '') + '|' + pick.info.point.z : 'none' })()")
+                .arg(at.x()).arg(at.y()).arg(at.z()).arg(normal.x()).arg(normal.y()).arg(normal.z()));
+        const auto value = expression.evaluate().toString();
+        if (expression.hasError()) return expression.error().toString();
+        return value;
+    };
+    // Snap radius in scene units at this zoom: the middle of the wall must be well outside it.
+    QQmlExpression tolerance(qmlContext(viewport), viewport, QStringLiteral("worldPerPixelAt(Qt.vector3d(7, 7, 10)) * measureVertexPixels"));
+    const auto radius = tolerance.evaluate().toDouble();
+    QVERIFY2(radius > 0.0 && radius < 3.0, qPrintable(QString::number(radius)));
+
+    const auto middle = pickKind({7.071F, 7.071F, 10.0F}, {-0.7071F, -0.7071F, 0.0F}, false);
+    QVERIFY2(middle.startsWith(QStringLiteral("axis|")), qPrintable(middle));
+    QVERIFY2(middle.endsWith(QStringLiteral("|10")), qPrintable(middle)); // its point: on the axis, level with the hit
+    const auto surface = pickKind({7.071F, 7.071F, 10.0F}, {-0.7071F, -0.7071F, 0.0F}, true);
+    QVERIFY2(surface.startsWith(QStringLiteral("surfacePoint|")), qPrintable(surface));
+    const auto corner = pickKind({10.0F, static_cast<float>(radius * 0.2), 20.0F}, {-1.0F, 0.0F, 0.0F}, false);
+    QVERIFY2(corner.startsWith(QStringLiteral("vertex|")), qPrintable(corner));
+    viewport->setProperty("pickAlternate", false);
 }
 
 void QmlSmokeTest::aCaptureHoldsTheMeasurementOnlyWhenAskedAndWhereItIs()

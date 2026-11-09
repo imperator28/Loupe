@@ -109,6 +109,9 @@ Item {
     // Where the pointer is, for the measurement hover chip.
     property point hoverPointer: Qt.point(0, 0)
     // How close, in pixels, the pointer must be to take an edge, and an edge's end.
+    // Alt held at the last hover or click: on a round face, the picker takes the face (or the
+    // point on it) where it would take the axis, and the axis where it would take the face.
+    property bool pickAlternate: false
     readonly property real measureEdgePixels: 7
     readonly property real measureVertexPixels: 10
     property var acceptedTopologies: []
@@ -380,7 +383,9 @@ Item {
         let point = Qt.vector3d(hit.scenePosition.x, hit.scenePosition.y, hit.scenePosition.z)
         let direction = hit.sceneNormal ? Qt.vector3d(hit.sceneNormal.x, hit.sceneNormal.y, hit.sceneNormal.z) : null
         if (info && info.point !== undefined) point = Qt.vector3d(info.point.x, info.point.y, info.point.z)
-        if (info && info.kind === "centre" && info.axis !== undefined && info.axis.length() > 0)
+        // On a circle's centre or an axis, the handle lines up with the axis: its arrow slides
+        // along it and its ring turns about it, as a hinge or a shaft would.
+        if (info && (info.kind === "centre" || info.kind === "axis") && info.axis !== undefined && info.axis.length() > 0)
             direction = Qt.vector3d(info.axis.x, info.axis.y, info.axis.z)
         const normal = direction ? model.mapDirectionFromScene(direction) : null
         handlePivot = { nodeId: model.nodeId, local: model.mapPositionFromScene(point),
@@ -1769,6 +1774,8 @@ Item {
         let sourceGeometry = null
         let topologyId = 0
         let placementNode = model.parent
+        // What Alt would take instead, for the hover chip to say.
+        let alternateHint = ""
 
         const takeFace = function() {
             const geometry = model.geometry
@@ -1779,6 +1786,14 @@ Item {
             entityKind = "face"
             sourceGeometry = geometry
             topologyId = info.topologyId
+            return true
+        }
+        // A round face's or circular edge's centerline, in place of the face or edge taken.
+        const takeAxis = function() {
+            if (!entity) return false
+            const axis = measurement.axisEntity(entity, hit.scenePosition)
+            if (!axis) return false
+            entity = axis
             return true
         }
         const takeEdge = function(round) {
@@ -1805,22 +1820,33 @@ Item {
                 topologyId = measurement.describe(snap).topologyId
                 placementNode = edgeModel ? edgeModel.parent : model.parent
             } else {
-                // A point on the face, with the face lit so it is clear which one.
+                // A round face's axis, away from its edges; else (or with Alt) the point on the
+                // face. The face is lit either way, so it is clear which one.
                 takeFace()
-                entity = measurement.surfacePointEntity(hit.scenePosition, hit.sceneNormal)
+                if (root.pickAlternate || !takeAxis())
+                    entity = measurement.surfacePointEntity(hit.scenePosition, hit.sceneNormal)
+                else
+                    alternateHint = qsTr("Alt: a point on the face")
             }
         } else if (mode === 1) {
             takeEdge(false)
-        } else if (mode === 2 || mode === 5) {
+        } else if (mode === 2) {
+            // The face; with Alt, a round face's axis.
+            if (takeFace() && root.pickAlternate) takeAxis()
+            else if (entity && measurement.axisEntity(entity, hit.scenePosition)) alternateHint = qsTr("Alt: its axis")
+        } else if (mode === 5) {
             takeFace()
         } else if (mode === 3) {
             // Round first; failing that, whatever is there, so the hover can say it is not round.
             if (!takeEdge(true) && !takeFace()) takeEdge(false)
         } else if (mode === 4) {
+            // A circular edge or round face has no single direction, but its axis has.
             if (!takeEdge(false)) takeFace()
+            if (!root.pickAlternate && takeAxis()) alternateHint = qsTr("Alt: the face or edge itself")
         }
         if (!entity) return null
         const info = measurement.describe(entity)
+        if (alternateHint.length > 0) info.hint = alternateHint
         return {
             nodeId: nodeId,
             entity: entity,
@@ -1846,7 +1872,29 @@ Item {
     // the hover previews; a curved one is lit but refused.
     function sectionPlaneCandidateAt(hit) {
         const pick = measureCandidateAt(hit, false, 2)
-        if (!pick || !pick.info || pick.info.kind !== "face") return null
+        if (!pick || !pick.info) return null
+        // A round face sections through its axis, facing the viewer; with Alt, across it at
+        // the pointer. (measureCandidateAt gives the axis itself under Alt.)
+        if (pick.info.kind === "face" && pick.info.planar !== true) {
+            const axis = root.controller.measurement.axisEntity(pick.entity, hit.scenePosition)
+            if (axis) {
+                pick.entity = axis
+                pick.info = root.controller.measurement.describe(axis)
+            }
+        }
+        if (pick.info.kind === "axis") {
+            const across = root.pickAlternate
+            const plane = sectionAxisPlane(pick.info, across)
+            pick.info.eligible = plane !== null
+            pick.info.sectionAcross = across
+            pick.info.detail = across ? qsTr("Section across its axis") : qsTr("Section through its axis")
+            pick.info.hint = across ? qsTr("Alt released: through the axis") : qsTr("Alt: across the axis, here")
+            pick.info.reason = ""
+            pick.info.previewNormal = plane ? plane.normal : undefined
+            pick.info.previewAt = plane ? plane.point : undefined
+            return pick
+        }
+        if (pick.info.kind !== "face") return null
         const flat = pick.info.planar === true
         pick.info.eligible = flat
         pick.info.detail = flat ? qsTr("Section along its plane") : ""
@@ -1854,6 +1902,23 @@ Item {
         pick.info.previewNormal = flat ? pick.info.planeNormal : undefined
         pick.info.previewAt = flat ? pick.info.point : undefined
         return pick
+    }
+
+    // The plane a section along an axis takes: through it, square to the view across it (so it
+    // is seen edge on to the viewer no more than it must be), or across it at the pick.
+    function sectionAxisPlane(info, across) {
+        const axis = info.axis
+        if (!axis || axis.length() === 0) return null
+        if (across) return { normal: axis.normalized(), point: info.point }
+        const camera = view.camera
+        const forward = camera ? camera.forward : Qt.vector3d(0, 0, -1)
+        let normal = forward.minus(axis.times(forward.dotProduct(axis)))
+        if (normal.length() < 1e-6) {
+            // Looking down the axis: any plane through it will do.
+            normal = Qt.vector3d(1, 0, 0).crossProduct(axis)
+            if (normal.length() < 1e-6) normal = Qt.vector3d(0, 1, 0).crossProduct(axis)
+        }
+        return { normal: normal.normalized(), point: info.centre }
     }
 
     // The point the exploded view's pivot would go to, snapped as point to point measurement
@@ -1864,7 +1929,7 @@ Item {
         if (!pick || !pick.info) return null
         pick.info.eligible = true
         pick.info.reason = ""
-        pick.info.detail = pick.info.kind === "centre" ? qsTr("Pivot on its axis") : qsTr("Pivot here")
+        pick.info.detail = pick.info.kind === "centre" || pick.info.kind === "axis" ? qsTr("Pivot on its axis") : qsTr("Pivot here")
         return pick
     }
 
@@ -1878,7 +1943,14 @@ Item {
     readonly property bool toolPicking: sectionPlanePicking || pickingPivot
     function pickSectionPlaneAt(x, y) {
         const pick = sectionPlaneCandidateAt(view.pick(x, y))
-        if (!pick || !pick.info.eligible || !root.controller.sectionAlongFace(pick.nodeId, pick.entity)) return false
+        if (!pick || !pick.info.eligible) return false
+        if (pick.info.kind === "axis") {
+            const plane = sectionAxisPlane(pick.info, pick.info.sectionAcross === true)
+            if (!plane || !root.controller.sectionAlongAxis(pick.nodeId, plane.normal, plane.point, pick.info.sectionAcross === true))
+                return false
+        } else if (!root.controller.sectionAlongFace(pick.nodeId, pick.entity)) {
+            return false
+        }
         root.sectionPlaneFace = { nodeId: pick.nodeId, entityKind: "face", topologyId: pick.topologyId,
                                   sourceGeometry: pick.sourceGeometry, placementNode: pick.placementNode,
                                   label: root.controller.section.planeLabel }
@@ -2690,6 +2762,7 @@ Item {
                     if (root.hoveredNodeId !== "") root.hoveredNodeId = ""
                     return
                 }
+                root.pickAlternate = (mouse.modifiers & Qt.AltModifier) !== 0
                 root.updateHover(mouse.x, mouse.y)
                 return
             }
@@ -2749,6 +2822,7 @@ Item {
                 pressButton = Qt.NoButton
                 return
             }
+            root.pickAlternate = (mouse.modifiers & Qt.AltModifier) !== 0
             // Picking the pivot: a click puts the handle on the part there, selecting nothing.
             if (root.pickingPivot && !dragging && pressButton === Qt.LeftButton) {
                 root.pickPivotAt(mouse.x, mouse.y)

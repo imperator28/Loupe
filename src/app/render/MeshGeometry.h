@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include <QMatrix4x4>
 #include <QVariant>
 #include <QVariantList>
@@ -80,6 +82,10 @@ signals:
     void sectionBusyChanged();
 
 private:
+    // Where the faces of this mesh on the line (origin, direction) run along it, as distances
+    // from origin: every face whose own axis is that line counts.
+    [[nodiscard]] std::pair<float, float> axisExtent(const QVector3D& origin, const QVector3D& direction) const;
+
     friend class CadEdgeGeometry;
 
     void upload();

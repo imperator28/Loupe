@@ -15,7 +15,8 @@ namespace loupe::protocol {
 namespace {
 
 constexpr quint32 kMagic = 0x4c504750; // LPGP
-constexpr quint16 kVersion = 2;
+// 3: topology ranges carry a round face's axis.
+constexpr quint16 kVersion = 3;
 constexpr quint32 kMaximumStringBytes = 4 * 1024;
 constexpr quint32 kMaximumVertices = 10 * 1000 * 1000;
 constexpr quint32 kMaximumIndices = 30 * 1000 * 1000;
@@ -148,6 +149,13 @@ void validate(const Payload& payload)
         else if (range.firstIndex < previousEnd) reason = "firstIndex overlaps previous range";
         else if (!std::isfinite(range.measureMm) || range.measureMm < 0.0F) reason = "measureMm invalid";
         else if (!std::isfinite(range.radiusMm) || range.radiusMm < 0.0F) reason = "radiusMm invalid";
+        else if (!std::all_of(range.axisOrigin.begin(), range.axisOrigin.end(), [](float v) { return std::isfinite(v); })
+                 || !std::all_of(range.axisDirection.begin(), range.axisDirection.end(), [](float v) { return std::isfinite(v); }))
+            reason = "axis not finite";
+        else if (range.hasAxis()
+                 && std::abs(range.axisDirection[0] * range.axisDirection[0] + range.axisDirection[1] * range.axisDirection[1]
+                             + range.axisDirection[2] * range.axisDirection[2] - 1.0F) > 1e-3F)
+            reason = "axis direction not unit";
         if (reason) {
             throw ProtocolError(std::string("Geometry topology range is invalid: ") + reason
                                 + " (topologyId=" + std::to_string(range.topologyId)
@@ -203,6 +211,8 @@ void writeData(Writer& writer, const Payload& payload)
         writer.u32(range.indexCount);
         writer.number(range.measureMm);
         writer.number(range.radiusMm);
+        for (const auto value : range.axisOrigin) writer.number(value);
+        for (const auto value : range.axisDirection) writer.number(value);
     }
 }
 
@@ -226,8 +236,16 @@ void readData(Reader& reader, Payload& payload, const quint32 vertexCount, const
     }
     payload.topology.reserve(topologyCount);
     for (quint32 index = 0; index < topologyCount; ++index) {
-        payload.topology.append({reader.u32(), static_cast<TopologyKind>(reader.u8()), reader.u32(), reader.u32(),
-                                 reader.number(), reader.number()});
+        TopologyRange range;
+        range.topologyId = reader.u32();
+        range.kind = static_cast<TopologyKind>(reader.u8());
+        range.firstIndex = reader.u32();
+        range.indexCount = reader.u32();
+        range.measureMm = reader.number();
+        range.radiusMm = reader.number();
+        for (auto& value : range.axisOrigin) value = reader.number();
+        for (auto& value : range.axisDirection) value = reader.number();
+        payload.topology.append(range);
     }
     validate(payload);
 }
@@ -355,7 +373,7 @@ double meshFaceArea(const QByteArray& bytes) noexcept
         for (quint32 index = 0; index < topologyCount; ++index) {
             reader.skip(4 + 1 + 4 + 4); // topologyId, kind, firstIndex, indexCount
             const auto measure = reader.number();
-            reader.skip(4); // radiusMm
+            reader.skip(4 + 6 * 4); // radiusMm, axis origin and direction
             if (std::isfinite(measure) && measure > 0.0F) area += measure;
         }
         return area;

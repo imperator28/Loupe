@@ -328,6 +328,9 @@ public:
     // Sections along a picked face's plane (Section > Pick face plane). False for anything
     // but a flat face: a curved one has no plane to cut along.
     Q_INVOKABLE bool sectionAlongFace(const QString& nodeId, const QVariant& entity);
+    // Sections along a plane through (or, `across`, square to) a picked axis of a part: the
+    // plane is worked out by the viewport, which knows the view it faces.
+    Q_INVOKABLE bool sectionAlongAxis(const QString& nodeId, const QVector3D& normal, const QVector3D& point, bool across);
     Q_INVOKABLE bool acceptTopologyPick(const QString& nodeId, const QString& entityKind, quint32 topologyId,
                                         double x, double y, double z, double normalX, double normalY, double normalZ,
                                         double measureMm, double radiusMm);

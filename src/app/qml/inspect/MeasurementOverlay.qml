@@ -106,6 +106,37 @@ Item {
         for (const point of clipped) result.push(projectInFront(point))
         return result
     }
+    // Screen runs as a centerline, the drafting way: long dashes with a dot between.
+    function svgDashDot(runs) {
+        const dash = 14
+        const gap = 3.5
+        const dot = 1.5
+        const period = dash + gap + dot + gap
+        let path = ""
+        const f = function(value) { return value.toFixed(1) }
+        for (const run of runs) {
+            let phase = 0
+            for (let index = 0; index + 1 < run.length; ++index) {
+                const a = run[index]
+                const b = run[index + 1]
+                const length = Math.hypot(b.x - a.x, b.y - a.y)
+                if (!(length > 0) || length > 20000) continue
+                const ux = (b.x - a.x) / length
+                const uy = (b.y - a.y) / length
+                // Each stroke of the pattern that falls on this piece, carried on from the last.
+                for (let at = -phase; at < length; at += period) {
+                    for (const stroke of [[0, dash], [dash + gap, dash + gap + dot]]) {
+                        const start = Math.max(0, at + stroke[0])
+                        const end = Math.min(length, at + stroke[1])
+                        if (end <= start) continue
+                        path += " M " + f(a.x + ux * start) + " " + f(a.y + uy * start) + " L " + f(a.x + ux * end) + " " + f(a.y + uy * end)
+                    }
+                }
+                phase = (phase + length) % period
+            }
+        }
+        return path.trim()
+    }
     // Screen runs as one SVG path, a move to the start of each.
     function svgRuns(runs) {
         let path = ""
@@ -137,6 +168,7 @@ Item {
             title: modelData.title
             annotation: modelData.annotation
             edges: modelData.edges
+            axes: modelData.axes !== undefined ? modelData.axes : []
             points: modelData.points
         }
     }
@@ -154,7 +186,14 @@ Item {
         edges: {
             const result = []
             for (const entry of root.measurement ? root.measurement.pickedEntities : []) {
-                if (entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
+                if (entry.entityKind !== "axis" && entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
+            }
+            return result
+        }
+        axes: {
+            const result = []
+            for (const entry of root.measurement ? root.measurement.pickedEntities : []) {
+                if (entry.entityKind === "axis" && entry.polyline && entry.polyline.length > 1) result.push(entry.polyline)
             }
             return result
         }
@@ -166,8 +205,9 @@ Item {
         if (!root.showHover || !root.hover || !root.hover.info || !root.hover.info.polyline) return []
         return root.projectPath(root.hover.info.polyline)
     }
-    // As an SVG path: what the icons draw with, on every graphics back end.
-    readonly property string hoverPath: svgRuns(hoverRuns)
+    // As an SVG path: what the icons draw with, on every graphics back end. An axis is drawn as
+    // a centerline, not as an edge.
+    readonly property string hoverPath: hoverKind === "axis" ? svgDashDot(hoverRuns) : svgRuns(hoverRuns)
     Shape {
         objectName: "measurementHoverEdge"
         anchors.fill: parent
@@ -175,7 +215,7 @@ Item {
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
             strokeColor: Qt.rgba(root.haloColor.r, root.haloColor.g, root.haloColor.b, 0.5)
-            strokeWidth: 5
+            strokeWidth: root.hoverKind === "axis" ? 4.5 : 5
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
@@ -183,7 +223,7 @@ Item {
         }
         ShapePath {
             strokeColor: root.hoverColor
-            strokeWidth: 3
+            strokeWidth: root.hoverKind === "axis" ? 2 : 3
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
@@ -337,7 +377,12 @@ Item {
         // Below and right of the pointer, flipped where it would leave the viewport.
         x: Math.round(root.pointer.x + gap + width > root.width ? root.pointer.x - gap - width : root.pointer.x + gap)
         y: Math.round(root.pointer.y + gap + height > root.height ? root.pointer.y - gap - height : root.pointer.y + gap)
-        width: Math.min(260, Math.max(titleRow.implicitWidth, root.hoverEligible ? 0 : reasonLabel.implicitWidth) + 20)
+        width: Math.min(260, Math.max(titleRow.implicitWidth, root.hoverEligible ? hintWidth.width : reasonLabel.implicitWidth) + 20)
+        TextMetrics {
+            id: hintWidth
+            text: root.hoverInfo && root.hoverInfo.hint ? root.hoverInfo.hint : ""
+            font.pixelSize: root.theme ? root.theme.fontCaption : 11
+        }
         height: chipContent.implicitHeight + 12
         radius: root.theme ? root.theme.radius2 : 0
         color: root.theme ? root.theme.surface3 : "transparent"
@@ -376,6 +421,15 @@ Item {
                     font.pixelSize: root.theme ? root.theme.fontSection : 12
                     font.features: { "tnum": 1 }
                 }
+            }
+            Label {
+                objectName: "measurementHoverHint"
+                width: chipContent.width
+                visible: root.hoverEligible && text.length > 0
+                text: root.hoverInfo && root.hoverInfo.hint ? root.hoverInfo.hint : ""
+                wrapMode: Text.WordWrap
+                color: root.theme ? root.theme.muted : "transparent"
+                font.pixelSize: root.theme ? root.theme.fontCaption : 11
             }
             Label {
                 id: reasonLabel
