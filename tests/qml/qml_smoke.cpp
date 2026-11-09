@@ -1302,6 +1302,8 @@ void QmlSmokeTest::updateIndicatorShowsTheDownloadAsARing()
 
 void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
 {
+    // Updated from 0.1.4 to 0.1.6: both releases since are marked, 0.1.6 shown first, 0.1.5 a
+    // click (or Down, or Older) away, and closing marks it seen.
     QQmlEngine engine;
     QQmlComponent component(&engine);
     component.setData(QByteArrayLiteral(
@@ -1310,14 +1312,21 @@ void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
         "import \"..\"\n"
         "Window {\n"
         "  id: host\n"
-        "  width: 800; height: 700; visible: true\n"
+        "  width: 900; height: 640; visible: true\n"
         "  property alias dialog: dialog\n"
         "  property int seen: 0\n"
         "  Theme { id: theme }\n"
         "  property QtObject updates: QtObject {\n"
-        "    property var whatsNewItems: [{icon: \"tabs\", title: \"Tabs and windows\", body: \"Several files.\"},\n"
-        "                                 {icon: \"explode\", title: \"Exploded view\", body: \"Pull it apart.\"}]\n"
-        "    property string whatsNewVersion: \"0.1.5\"\n"
+        "    property var whatsNewReleases: [\n"
+        "      {version: \"0.1.6\", current: true, unseen: true, items: [\n"
+        "        {icon: \"fit\", title: \"Opens faster\", body: \"Big assemblies open in about a third less time, and repeated parts load once.\"},\n"
+        "        {icon: \"measure\", title: \"Measure by snapping\", body: \"See what a click takes, from corners and hole centres to the axes of round features.\"},\n"
+        "        {icon: \"section\", title: \"Sections you aim\", body: \"Cut along a face or through a hole's axis.\"}]},\n"
+        "      {version: \"0.1.5\", current: false, unseen: true, items: [\n"
+        "        {icon: \"tabs\", title: \"Tabs and windows\", body: \"Several files.\"},\n"
+        "        {icon: \"explode\", title: \"Exploded view\", body: \"Pull it apart.\"}]},\n"
+        "      {version: \"0.1.4\", current: false, unseen: false, items: [\n"
+        "        {icon: \"check\", title: \"Earlier\", body: \"Before.\"}]}]\n"
         "    function markWhatsNewSeen() { seen += 1 }\n"
         "  }\n"
         "  WhatsNewDialog { id: dialog; theme: theme; updates: host.updates }\n"
@@ -1331,9 +1340,34 @@ void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
     auto* dialog = host->property("dialog").value<QObject*>();
     QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
     QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(), 3000);
-    QCOMPARE(dialog->property("items").toList().size(), 2);
+    QCOMPARE(dialog->property("currentIndex").toInt(), 0);
+    QCOMPARE(dialog->property("items").toList().size(), 3);
+    QCOMPARE(dialog->property("unseenCount").toInt(), 2);
     auto* title = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewTitle"));
-    QVERIFY(title == nullptr || title->property("text").toString().contains(QStringLiteral("What's New")));
+    QVERIFY(title != nullptr);
+    QCOMPARE(title->property("text").toString(), QStringLiteral("Loupe 0.1.6"));
+    auto* list = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewReleaseList"));
+    QVERIFY(list != nullptr && list->isVisible());
+    if (const auto path = qEnvironmentVariable("LOUPE_WHATS_NEW_SCREENSHOT"); !path.isEmpty()) {
+        QTest::qWait(300);
+        window->grabWindow().save(path);
+    }
+
+    // Older steps to 0.1.5; its row is selectable directly too.
+    auto* older = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewOlder"));
+    QVERIFY(older != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(older, "clicked"));
+    QCOMPARE(dialog->property("currentIndex").toInt(), 1);
+    QCOMPARE(title->property("text").toString(), QStringLiteral("Loupe 0.1.5"));
+    QCOMPARE(dialog->property("items").toList().size(), 2);
+    auto* earliest = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewRelease-0.1.4"));
+    QVERIFY(earliest != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(earliest, "clicked"));
+    QCOMPARE(dialog->property("currentIndex").toInt(), 2);
+    QVERIFY(!older->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(dialog, "step", Q_ARG(QVariant, -2)));
+    QCOMPARE(dialog->property("currentIndex").toInt(), 0);
+
     QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
     QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 3000);
     QCOMPARE(host->property("seen").toInt(), 1);

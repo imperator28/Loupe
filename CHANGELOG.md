@@ -32,6 +32,10 @@ captures. Published as a pre-release; everything in v0.1.6-beta.4 is included.
     lift to take what is shown.
   - Not yet tried on touch hardware.
 - **Cmd/Ctrl+A** selects every part shown in Inspect, and checks every part in Export.
+- **What's New lists every release since yours**: releases down the left, the chosen one's
+  highlights on the right. An update through the app over several releases marks each one
+  new, and earlier releases stay a click away (or Up and Down, or the button to the older
+  one). The 0.1.6 highlights are rewritten shorter.
 
 ### Fixed
 

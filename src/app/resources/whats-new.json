@@ -1,43 +1,38 @@
 {
-  "_comment": "Shown once after each update, and from Help > What's New in Loupe. One entry per release version (X.Y.Z, betas share it): a few highlights, each a ToolIcon glyph, a short title and one line. A test fails if the project version has no entry.",
+  "_comment": "Help > What's New in Loupe, and once after each update. One entry per release version (X.Y.Z, betas share it): a few highlights, each a ToolIcon glyph, a short title and one line. The dialog lists this release and the ones before it, marking those since the version the user updated from. A test fails if the project version has no entry.",
   "versions": [
     {
       "version": "0.1.6",
       "items": [
         {
+          "icon": "fit",
+          "title": "Opens faster",
+          "body": "Big assemblies open in about a third less time, and repeated parts load once."
+        },
+        {
           "icon": "measure",
-          "title": "Measure what you mean",
-          "body": "See what a click takes before you click, the gap between faces, angles drawn as arcs, and pinned results that stay in view."
+          "title": "Measure by snapping",
+          "body": "See what a click takes, from corners and hole centres to the axes of round features. Pinned results can be dragged and coloured."
         },
         {
           "icon": "section",
-          "title": "Solid sections",
-          "body": "Cut parts show filled, with their holes open, even when their faces are different colours."
+          "title": "Sections you aim",
+          "body": "Cut along a face or through a hole's axis. Cut parts show solid, with their holes open."
         },
         {
           "icon": "explode",
-          "title": "Saved exploded layouts",
-          "body": "Keep a spread or a hinge turned open, and come back to it in one click."
-        },
-        {
-          "icon": "fit",
-          "title": "Opens faster",
-          "body": "Large assemblies open in about a third less time, measuring each part once and meshing on every core."
-        },
-        {
-          "icon": "isolate",
-          "title": "Repeated parts drawn once",
-          "body": "Every copy of a screw or fastener shares one shape, so big assemblies load faster and use less memory."
+          "title": "Exploded views that explain",
+          "body": "Save layouts, turn parts about a snapped pivot, and follow dashed lines back to where each part goes."
         },
         {
           "icon": "check",
-          "title": "Every copy of a sub-assembly",
-          "body": "An assembly using the same sub-assembly several times now shows and exports each copy, not just the first."
+          "title": "Every copy counts",
+          "body": "Each copy of a repeated sub-assembly shows and exports on its own."
         },
         {
-          "icon": "download",
-          "title": "Export repeated parts",
-          "body": "Select all exports every part once, numbering different parts that share a name instead of refusing the batch."
+          "icon": "trackpadPinch",
+          "title": "Touch, and select all",
+          "body": "On a touchscreen, one finger orbits and two pan and zoom. Cmd/Ctrl+A selects every part."
         }
       ]
     },

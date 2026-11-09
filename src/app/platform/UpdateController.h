@@ -45,6 +45,11 @@ class UpdateController final : public QObject {
     // to be shown -- the first launch after an update, once per version.
     Q_PROPERTY(QVariantList whatsNewItems READ whatsNewItems CONSTANT)
     Q_PROPERTY(QString whatsNewVersion READ whatsNewVersion CONSTANT)
+    // Every release's highlights up to this one, newest first: [{version, items, unseen,
+    // current}]. `unseen` marks the releases since the one the user came from (the version
+    // the in-app updater replaced, else the last whose What's New was seen), so an update
+    // over several releases shows each of them.
+    Q_PROPERTY(QVariantList whatsNewReleases READ whatsNewReleases CONSTANT)
     Q_PROPERTY(bool whatsNewPending READ whatsNewPending NOTIFY changed)
     // Loupe is in a folder only an administrator may change (C:\Program Files): Windows will
     // ask for permission when the update is put in place.
@@ -116,6 +121,12 @@ public:
     // Whether to show them on this launch: there are some, and this release's were not
     // shown before.
     [[nodiscard]] static bool shouldShowWhatsNew(const QString& lastShown, const QString& release, bool hasItems);
+    // The releases in whats-new.json up to `version`, newest first, each marked unseen when it
+    // is newer than `since` (or, with no `since`, only `version`'s own release), and at most
+    // `limit` of them -- always the unseen ones and the one before them.
+    [[nodiscard]] static QVariantList whatsNewReleasesFor(const QByteArray& whatsNewJson, const QString& version,
+                                                         const QString& since, int limit = 6);
+    [[nodiscard]] QVariantList whatsNewReleases() const { return whatsNewReleases_; }
     // The app turns this on, as for automatic checks; tests and the self-check leave it off.
     static void setShowWhatsNewOnLaunch(bool enabled);
     [[nodiscard]] QVariantList whatsNewItems() const { return whatsNewItems_; }
@@ -167,6 +178,7 @@ private:
     bool includePrereleases_{false};
     bool userInitiated_{false};
     QVariantList whatsNewItems_;
+    QVariantList whatsNewReleases_;
     bool whatsNewPending_{false};
     bool dismissed_{false};
     qint64 bytesReceived_{};

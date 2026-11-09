@@ -12,6 +12,8 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSettings>
+
+#include <algorithm>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QUrl>
@@ -25,6 +27,8 @@ constexpr auto kIncludePrereleasesKey = "updates/includePrereleases";
 bool automaticChecks = false;
 bool showWhatsNewOnLaunch = false;
 constexpr auto kWhatsNewShownKey = "whatsNew/lastShownVersion";
+// The release the in-app updater replaced, so What's New can show every release since it.
+constexpr auto kUpdatedFromKey = "whatsNew/updatedFromVersion";
 
 QString buildVersion()
 {
@@ -77,7 +81,14 @@ UpdateController::UpdateController(QObject* parent)
     if (automaticChecks && supported()) QTimer::singleShot(4000, this, [this] { checkForUpdates(false); });
 
     QFile whatsNew(QStringLiteral(":/whats-new/whats-new.json"));
-    if (whatsNew.open(QIODevice::ReadOnly)) whatsNewItems_ = whatsNewFor(whatsNew.readAll(), currentVersion_);
+    if (whatsNew.open(QIODevice::ReadOnly)) {
+        const auto json = whatsNew.readAll();
+        whatsNewItems_ = whatsNewFor(json, currentVersion_);
+        QSettings settings;
+        auto since = settings.value(QString::fromLatin1(kUpdatedFromKey)).toString();
+        if (since.isEmpty()) since = settings.value(QString::fromLatin1(kWhatsNewShownKey)).toString();
+        whatsNewReleases_ = whatsNewReleasesFor(json, currentVersion_, since);
+    }
     whatsNewPending_ = showWhatsNewOnLaunch
         && shouldShowWhatsNew(QSettings().value(QString::fromLatin1(kWhatsNewShownKey)).toString(),
                               releaseVersionOf(currentVersion_), !whatsNewItems_.isEmpty());
@@ -127,9 +138,46 @@ bool UpdateController::shouldShowWhatsNew(const QString& lastShown, const QStrin
     return hasItems && !release.isEmpty() && lastShown != release;
 }
 
+QVariantList UpdateController::whatsNewReleasesFor(const QByteArray& whatsNewJson, const QString& version,
+                                                   const QString& since, const int limit)
+{
+    const auto current = parseVersion(releaseVersionOf(version));
+    if (!current) return {};
+    const auto from = parseVersion(releaseVersionOf(since));
+    struct Release {
+        Version version;
+        QString name;
+    };
+    QVector<Release> releases;
+    const auto versions = QJsonDocument::fromJson(whatsNewJson).object().value(QStringLiteral("versions")).toArray();
+    for (const auto& entry : versions) {
+        const auto name = entry.toObject().value(QStringLiteral("version")).toString();
+        const auto parsed = parseVersion(name);
+        if (!parsed || compareVersions(*parsed, *current) > 0) continue;
+        releases.append({*parsed, name});
+    }
+    std::sort(releases.begin(), releases.end(), [](const Release& a, const Release& b) { return compareVersions(a.version, b.version) > 0; });
+    QVariantList result;
+    int unseenCount = 0;
+    for (const auto& release : releases) {
+        const auto isCurrent = compareVersions(release.version, *current) == 0;
+        const auto unseen = from ? compareVersions(release.version, *from) > 0 : isCurrent;
+        if (unseen) ++unseenCount;
+        // The unseen ones and the one before them always; older ones up to the limit.
+        if (!unseen && result.size() >= std::max(limit, unseenCount + 1)) break;
+        const auto items = whatsNewFor(whatsNewJson, release.name);
+        if (items.isEmpty()) continue;
+        result.append(QVariantMap{{QStringLiteral("version"), release.name}, {QStringLiteral("items"), items},
+                                  {QStringLiteral("unseen"), unseen}, {QStringLiteral("current"), isCurrent}});
+    }
+    return result;
+}
+
 void UpdateController::markWhatsNewSeen()
 {
-    QSettings().setValue(QString::fromLatin1(kWhatsNewShownKey), releaseVersionOf(currentVersion_));
+    QSettings settings;
+    settings.setValue(QString::fromLatin1(kWhatsNewShownKey), releaseVersionOf(currentVersion_));
+    settings.remove(QString::fromLatin1(kUpdatedFromKey));
     if (!whatsNewPending_) return;
     whatsNewPending_ = false;
     emit changed();
@@ -650,6 +698,11 @@ void UpdateController::finishSelfCheck(const int exitCode, const QProcess::ExitS
         fail(tr("Could not start the update."));
         return;
     }
+    // The release being replaced, kept (once, over updates not yet opened) so the new one's
+    // What's New shows every release since it.
+    QSettings settings;
+    if (!settings.contains(QString::fromLatin1(kUpdatedFromKey)))
+        settings.setValue(QString::fromLatin1(kUpdatedFromKey), releaseVersionOf(currentVersion_));
     setState(State::Installing, tr("Restarting into Loupe %1…").arg(release_ ? release_->version : QString{}));
     emit quitRequested();
 }
