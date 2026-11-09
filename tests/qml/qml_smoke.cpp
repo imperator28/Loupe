@@ -1360,8 +1360,9 @@ void QmlSmokeTest::whatsNewListsTheReleaseAndIsMarkedSeenWhenClosed()
     QCOMPARE(dialog->property("currentIndex").toInt(), 1);
     QCOMPARE(title->property("text").toString(), QStringLiteral("Loupe 0.1.5"));
     QCOMPARE(dialog->property("items").toList().size(), 2);
-    auto* earliest = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewRelease-0.1.4"));
-    QVERIFY(earliest != nullptr);
+    // The list makes its rows once it is laid out.
+    QQuickItem* earliest = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT((earliest = findItemByObjectName(window->contentItem(), QStringLiteral("whatsNewRelease-0.1.4"))) != nullptr, 3000);
     QVERIFY(QMetaObject::invokeMethod(earliest, "clicked"));
     QCOMPARE(dialog->property("currentIndex").toInt(), 2);
     QVERIFY(!older->property("enabled").toBool());
