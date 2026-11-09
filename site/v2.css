@@ -1016,6 +1016,8 @@ html.no-rail .rail { display: none; }
   .stage-copy .sc p { font-size: 0.86rem; line-height: 1.45; }
   .stage-copy .ws-list li { padding-top: 6px; padding-bottom: 6px; }
 }
+/* very short (a phone on its side): the workspace list keeps just its three names */
+@media (max-height: 450px) { .stage-copy .ws-list span { display: none; } }
 
 /* ---------- Narrow screens ---------- */
 @media (max-width: 899px) {
@@ -1110,7 +1112,9 @@ html.snap .measured { scroll-snap-align: start; }
 }
 
 /* ---------- Big displays: the scene copy and its text cards scale with the stage (--pz, 1 to 1.4) ---------- */
-.stage-copy .sc > *, #pop-race > *, #pop-bench > *, #pop-mass > *, #pop-onefile > * { zoom: var(--pz, 1); }
+.stage-copy .sc > *, #pop-bench > *, #pop-mass > * { zoom: var(--pz, 1); }
+/* cards with a set height also shrink to the room left under the copy (--fit, set by measure()) */
+#pop-race > *, #pop-onefile > *, #pop-measure > * { zoom: calc(var(--pz, 1) * var(--fit, 1)); }
 
 /* Phones: no room under the scene for the export card or the colour palettes */
 @media (max-width: 599px) {

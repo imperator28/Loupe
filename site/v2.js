@@ -1297,6 +1297,7 @@ const stacked = () => layoutMode() === 'stack';
 const compactApp = () => narrow() || stacked();
 // The smallest each scene's display is still worth showing at; with less room under the copy
 // (a short screen) it is left out rather than cut off at the bottom of the screen.
+const POP_FIXED = new Set(['pop-race', 'pop-measure', 'pop-onefile']);
 const POP_MIN = { 'pop-race': 140, 'pop-layers': 110, 'pop-explode': 170, 'pop-measure': 130, 'pop-slice': 90, 'pop-mass': 150, 'pop-onefile': 170, 'pop-outline': 110 };
 
 const POP_SCENE = { 'pop-race': 'speed', 'pop-layers': 'present', 'pop-explode': 'explode', 'pop-measure': 'measure', 'pop-slice': 'section', 'pop-mass': 'mass', 'pop-onefile': 'trim', 'pop-outline': 'drawing' };
@@ -1377,7 +1378,16 @@ function measure() {
     el.style.top = `${top}px`;
     el.style.setProperty('--avail', `${Math.max(110, limit - top)}px`);
     if (id === 'pop-mass') el.classList.toggle('tight', limit - top < 370);
-    el.classList.toggle('no-room', limit - top < POP_MIN[id]);
+    // Cards with a set height of their own (not sized to the room) shrink to fit what is left,
+    // down to 0.62x; past that they are left out too.
+    el.classList.remove('no-room');
+    let fit = 1;
+    if (POP_FIXED.has(id)) {
+      el.style.setProperty('--fit', 1);
+      fit = Math.min(1, (limit - top + 8) / (el.offsetHeight || 1));
+      el.style.setProperty('--fit', Math.max(0.62, fit).toFixed(3));
+    }
+    el.classList.toggle('no-room', limit - top < POP_MIN[id] || fit < 0.62);
   }
   const ft = below('split'), benchH = $('#pop-bench').offsetHeight || 140;
   const rowsN = stack ? 4 : 8;
